@@ -12,8 +12,11 @@
 
 typedef struct {
     void* pages_start;
+    void* usable_pages_start;
+
     atomic_uintptr_t pages_end;
     atomic_size_t pages;
+    atomic_size_t usable_pages;
 
     skiplist_t pages_list;
 
@@ -43,3 +46,5 @@ FORCEINLINE void* get_page_address(page_pool_t* pool, size_t index) {
     }
 }
 
+//void kernel_page_alloc_free(void* ptr);
+void kernel_page_alloc_free(size_t index, size_t size);

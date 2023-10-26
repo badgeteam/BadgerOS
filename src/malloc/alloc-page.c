@@ -5,6 +5,8 @@
 #include "debug.h"
 #include "util.h"
 
+#include "skiplist-impl.h"
+
 #include <stdatomic.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -16,6 +18,13 @@ page_pool_t       *kernel_pool      = {0};
 
 /* clang-format */
 
+void kernel_page_alloc_free(size_t index, size_t size) {
+    //size_t page_index = (ptr - kernel_pool->usable_pages_start) / PAGE_SIZE;
+    //printf("Freeing page %zi\n", page_index);
+    
+    skiplist_insert(&kernel_pool->pages_list, index, size);
+}
+
 static void set_kernel_split(void *ptr) {
     (void)ptr;
     BADGEROS_MALLOC_MSG_INFO("Setting kernel split to: %p", ptr);
@@ -25,13 +34,19 @@ static void page_pool_set_pages(page_pool_t *pool, size_t pages) {
     size_t page_list_size = sizeof(skiplist_node_t) * page_alloc_state.pages;
     size_t page_list_pages = (page_list_size + (PAGE_SIZE - 1)) / PAGE_SIZE;
 
-    atomic_store(&pool->pages, pages - page_list_pages);
+    atomic_store(&pool->pages, pages);
+    atomic_store(&pool->usable_pages, pages - page_list_pages);
+
     pool->pages_list.nodes = pool->pages_start;
     pool->pages_list.size = pages - page_list_pages;
+    pool->usable_pages_start = ALIGN_PAGE_UP(pool->pages_start + page_list_size);
 
     for (size_t i = 0; i < pool->pages_list.size; ++i) {
         atomic_flag_clear(&pool->pages_list.nodes[i].modifying);
+	pool->pages_list.nodes[i].size = 0;
     }
+
+    //skiplist_insert(&pool->pages_list, 0, pool->usable_pages);
 
     if (pool->grows_up) {
         atomic_store(&pool->pages_end, (uintptr_t)(pool->pages_start + (pages * PAGE_SIZE)));
@@ -95,11 +110,11 @@ void page_alloc_init(void *start, void *end) {
         user_pool->pages
     );
     BADGEROS_MALLOC_MSG_INFO(
-        "Kernel page_pool: %p pages_start  : %p, pages_end: %p, pages: %zi",
+        "Kernel page_pool: %p pages: %zi, usable pages: %zi, overhead: %.02f%%",
         kernel_pool,
-        kernel_pool->pages_start,
-        (void *)kernel_pool->pages_end,
-        kernel_pool->pages
+        kernel_pool->pages,
+        kernel_pool->usable_pages,
+	(((float)kernel_pool->pages - (float)kernel_pool->usable_pages) / (float)kernel_pool->pages) * 100.0
     );
     if (initial_user_size) {
         BADGEROS_MALLOC_MSG_INFO(
