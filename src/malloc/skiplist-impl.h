@@ -4,9 +4,12 @@
 
 #include "skiplist.h"
 
+#define LOCK_GROUP_MAX_SIZE SKIPLIST_MAX_HEIGHT * 4
+
 typedef struct {
-    skiplist_node_t *nodes[SKIPLIST_MAX_HEIGHT * 2];
+    skiplist_node_t *nodes[LOCK_GROUP_MAX_SIZE];
     uint8_t locked_count;
+    uint8_t total_locked_count;
 } skiplist_lock_group_t;
 
 enum lock_group_status {
@@ -62,34 +65,51 @@ __attribute__((always_inline)) static inline uint8_t determine_node_height(void 
 }
 
 __attribute__((always_inline)) static inline bool try_lock_node(skiplist_t* list, skiplist_node_t *node) {
-    BADGEROS_MALLOC_MSG_TRACE("try_lock_node(%zi)", get_node_index(list, node));
+    BADGEROS_MALLOC_MSG_TRACE("try_lock_node(%zi) %p", get_node_index(list, node), node);
     return !atomic_flag_test_and_set_explicit(&node->modifying, memory_order_acquire);
 }
 
-__attribute__((always_inline)) static inline void unlock_node(skiplist_t* list, skiplist_node_t *node) {
-    BADGEROS_MALLOC_MSG_TRACE("unlock_node(%zi)", get_node_index(list, node));
+__attribute__((always_inline)) static inline void unlock_node(skiplist_t* list, skiplist_node_t *node, skiplist_lock_group_t* lock_group) {
+    BADGEROS_MALLOC_MSG_TRACE("unlock_node(%zi) %p", get_node_index(list, node), node);
+    lock_group->total_locked_count -= 1;
     atomic_flag_clear_explicit(&node->modifying, memory_order_release);
 }
 
+__attribute__((always_inline)) static inline bool lockgroup_is_locked(skiplist_t* list, skiplist_node_t *node, skiplist_lock_group_t* lock_group) {
+    for (int i = 0; i < lock_group->locked_count; i++) {
+        if (lock_group->nodes[i] == node) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 __attribute__((always_inline)) static inline void lockgroup_lock_add(skiplist_t* list, skiplist_node_t *node, skiplist_lock_group_t* lock_group) {
+    BADGEROS_MALLOC_MSG_TRACE("lockgroup_lock_add(%zi) %p", get_node_index(list, node), node);
+    BADGEROS_MALLOC_ASSERT_ERROR(lock_group->locked_count < LOCK_GROUP_MAX_SIZE, "Lock group full");
+    BADGEROS_MALLOC_ASSERT_DEBUG(!lockgroup_is_locked(list, node, lock_group), "Node already locked");
+
     lock_group->nodes[lock_group->locked_count] = node;
     lock_group->locked_count += 1;
 }
 
 // This function will try to lock a node, but only if it hasn't been locked before
 __attribute__((always_inline)) static inline enum lock_group_status lockgroup_lock(skiplist_t* list, skiplist_node_t *node, skiplist_lock_group_t* lock_group, bool add) {
-    BADGEROS_MALLOC_MSG_TRACE("lockgroup_lock(%zi)", get_node_index(list, node));
-    for (int i = 0; i < lock_group->locked_count; i++) {
-        if (lock_group->nodes[i] == node) {
-            return RELOCK;  // Node was previously locked by us
-        }
+    BADGEROS_MALLOC_MSG_TRACE("lockgroup_lock(%zi) %p", get_node_index(list, node), node);
+    if (lockgroup_is_locked(list, node, lock_group)) {
+       BADGEROS_MALLOC_MSG_TRACE("node (%zi) already locked, relock", get_node_index(list, node));
+       return RELOCK;  // Node was previously locked by us
     }
 
     if (try_lock_node(list, node)) {
+        lock_group->total_locked_count += 1;
         if (add) {
             lockgroup_lock_add(list, node, lock_group);
+            BADGEROS_MALLOC_MSG_TRACE("node (%zi) locked, count: %i, added", get_node_index(list, node), lock_group->locked_count);
+        } else {
+            BADGEROS_MALLOC_MSG_TRACE("node (%zi) locked, count: %i, not added", get_node_index(list, node), lock_group->locked_count);
         }
-        BADGEROS_MALLOC_MSG_TRACE("node (%zi) locked, count: %i", get_node_index(list, node), lock_group->locked_count);
         return LOCK;
     }
 
@@ -98,10 +118,11 @@ __attribute__((always_inline)) static inline enum lock_group_status lockgroup_lo
 }
 
 __attribute__((always_inline)) static inline void lockgroup_unlock(skiplist_t* list, skiplist_lock_group_t* lock_group) {
-     for (int j = 0; j < lock_group->locked_count; j++) {
-         unlock_node(list, lock_group->nodes[j]);
-     }
-     lock_group->locked_count = 0;
+    BADGEROS_MALLOC_ASSERT_ERROR(lock_group->locked_count == lock_group->total_locked_count, "Lock group leaked %i nodes", lock_group->total_locked_count - lock_group->locked_count);
+    for (int j = 0; j < lock_group->locked_count; j++) {
+        unlock_node(list, lock_group->nodes[j], lock_group);
+    }
+    lock_group->locked_count = 0;
 }
 
 __attribute__((always_inline)) static inline void skiplist_index_find_prev(skiplist_t *list, size_t index, skiplist_node_t *prev[SKIPLIST_MAX_HEIGHT], skiplist_lock_group_t* lock_group) {
@@ -125,8 +146,9 @@ start:
             }
 
             skiplist_node_t* next = &list->nodes[current->next_index[i]];
+            BADGEROS_MALLOC_ASSERT_ERROR(current != next, "loop detected in index skiplist");
 	    if (lock_status == LOCK) {
-            	unlock_node(list, current);
+            	unlock_node(list, current, lock_group);
 	    }
             current = next;
 
@@ -134,10 +156,10 @@ start:
                 BADGEROS_MALLOC_MSG_TRACE("node(%zi) locked, retrying", get_node_index(list, current));
 
 		for (int j = initial_locked_count; j < lock_group->locked_count; j++) {
-		    unlock_node(list, lock_group->nodes[j]);
+		    unlock_node(list, lock_group->nodes[j], lock_group);
 		}
 		lock_group->locked_count = initial_locked_count;
-
+                BADGEROS_MALLOC_ASSERT_ERROR(lock_group->locked_count == lock_group->total_locked_count, "leaked a lock");
                 goto start;
             }
         }
@@ -148,7 +170,8 @@ start:
         prev[i] = current;
     }
 
-    BADGEROS_MALLOC_MSG_TRACE("locked %i nodes", lock_group->locked_count - initial_locked_count);
+    BADGEROS_MALLOC_ASSERT_ERROR(lock_group->locked_count == lock_group->total_locked_count, "leaked a lock");
+    BADGEROS_MALLOC_MSG_TRACE("prev at index %i, locked %i nodes", get_node_index(list, prev[0]), lock_group->locked_count - initial_locked_count);
 }
 
 __attribute__((always_inline)) static inline void skiplist_size_find_prev(skiplist_t *list, size_t size, skiplist_node_t *prev[SKIPLIST_MAX_HEIGHT], skiplist_lock_group_t* lock_group) {
@@ -169,28 +192,33 @@ start:
         // Traverse to find insertion point
         while (current->next_size[i]) {
             skiplist_node_t* next = &list->nodes[current->next_size[i]];
+            BADGEROS_MALLOC_ASSERT_ERROR(current != next, "loop detected in size skiplist");
 
             if (!(next_lock_status = lockgroup_lock(list, next, lock_group, false))) {
-                BADGEROS_MALLOC_MSG_TRACE("node(%zi) locked, retrying", get_node_index(list, current));
+                BADGEROS_MALLOC_MSG_TRACE("node(%zi) locked, retrying", get_node_index(list, next));
 
 		for (int j = initial_locked_count; j < lock_group->locked_count; j++) {
-		    unlock_node(list, lock_group->nodes[j]);
+		    unlock_node(list, lock_group->nodes[j], lock_group);
 		}
 		lock_group->locked_count = initial_locked_count;
 
+                if (lock_status == LOCK) {
+                    unlock_node(list, current, lock_group);
+                }
+                BADGEROS_MALLOC_ASSERT_ERROR(lock_group->locked_count == lock_group->total_locked_count, "leaked a lock");
                 goto start;
 	    }
 
 	    if (next->size > size) {
 		// Current node is the prior node
    	        if (next_lock_status == LOCK) {
-            	    unlock_node(list, next);
+            	    unlock_node(list, next, lock_group);
 	        }
 		break;
 	    }
 
             if (lock_status == LOCK) {
-                unlock_node(list, current);
+                unlock_node(list, current, lock_group);
             }
 
             current = next;
@@ -204,7 +232,8 @@ start:
         prev[i] = current;
     }
 
-    BADGEROS_MALLOC_MSG_TRACE("locked %i nodes", lock_group->locked_count - initial_locked_count);
+    BADGEROS_MALLOC_ASSERT_ERROR(lock_group->locked_count == lock_group->total_locked_count, "leaked a lock");
+    BADGEROS_MALLOC_MSG_TRACE("prev at index %i, locked %i nodes", get_node_index(list, prev[0]), lock_group->locked_count - initial_locked_count);
 }
 
 __attribute__((always_inline)) static inline int compare_range_size_index(skiplist_t *list, skiplist_node_t* a, skiplist_node_t* b) {
@@ -223,10 +252,11 @@ __attribute__((always_inline)) static inline int compare_range_size_index(skipli
 }
 
 __attribute__((always_inline)) static inline bool skiplist_lock_index_neighbors(skiplist_t* list, skiplist_node_t *node, skiplist_lock_group_t* lock_group) {
-    BADGEROS_MALLOC_MSG_TRACE("skiplist_lock_index_neighbors(%zi)", get_node_index(list, node));
     uint8_t node_height = node->height;
+    BADGEROS_MALLOC_MSG_TRACE("skiplist_lock_index_neighbors(%zi) height: %i", get_node_index(list, node), node_height);
 
     for (int i = 0; i < node_height; i++) {
+        BADGEROS_MALLOC_MSG_TRACE("locking level %i", i);
         skiplist_node_t* prev_index;
 
         if (node->prev_index[i]) {
@@ -254,10 +284,11 @@ __attribute__((always_inline)) static inline bool skiplist_lock_index_neighbors(
 }
 
 __attribute__((always_inline)) static inline bool skiplist_lock_size_neighbors(skiplist_t* list, skiplist_node_t *node, skiplist_lock_group_t* lock_group) {
-    BADGEROS_MALLOC_MSG_TRACE("skiplist_lock_size_neighbors(%zi)", get_node_index(list, node));
     uint8_t node_height = node->height;
+    BADGEROS_MALLOC_MSG_TRACE("skiplist_lock_size_neighbors(%zi) height: %i", get_node_index(list, node), node_height);
 
     for (int i = 0; i < node_height; i++) {
+        BADGEROS_MALLOC_MSG_TRACE("locking level %i", i);
         skiplist_node_t* prev_size;
 
         if (node->prev_size[i]) {
@@ -284,47 +315,51 @@ __attribute__((always_inline)) static inline bool skiplist_lock_size_neighbors(s
     return true;
 }
 
-__attribute__((always_inline)) static inline void skiplist_remove_index(skiplist_t *list, skiplist_node_t *node) {
+__attribute__((always_inline)) static inline void skiplist_remove_index(skiplist_t *list, skiplist_node_t *node, skiplist_lock_group_t* lock_group) {
     uint8_t node_height = node->height;
 
     for (int i = 0; i < node_height; i++) {
         if (node->next_index[i]) {
             skiplist_node_t* next = &list->nodes[node->next_index[i]];
+            BADGEROS_MALLOC_ASSERT_DEBUG(lockgroup_is_locked(list, next, lock_group), "node not locked");
             BADGEROS_MALLOC_MSG_TRACE("level %i, updating next index %i, previous: %i, new: %i", i, node->next_index[i], next->next_index[i], node->prev_index[i]);
             next->prev_index[i] = node->prev_index[i];
         }
 
-        skiplist_node_t* prev_index;
+        skiplist_node_t* prev;
         if (node->prev_index[i]) {
-            prev_index = &list->nodes[node->prev_index[i]];
+            prev = &list->nodes[node->prev_index[i]];
         } else {
-            prev_index = &list->head_index; // 0 means head in prev
+            prev = &list->head_index; // 0 means head in prev
         }
 
-        BADGEROS_MALLOC_MSG_TRACE("level %i, updating prev index %i, previous: %i, new: %i", i, node->prev_index[i], prev_index->next_index[i], node->next_index[i]);
-        prev_index->next_index[i] = node->next_index[i];
+        BADGEROS_MALLOC_ASSERT_DEBUG(lockgroup_is_locked(list, prev, lock_group), "node not locked");
+        BADGEROS_MALLOC_MSG_TRACE("level %i, updating prev index %i, previous: %i, new: %i", i, node->prev_index[i], prev->next_index[i], node->next_index[i]);
+        prev->next_index[i] = node->next_index[i];
     }
 }
 
-__attribute__((always_inline)) static inline void skiplist_remove_size(skiplist_t *list, skiplist_node_t *node) {
+__attribute__((always_inline)) static inline void skiplist_remove_size(skiplist_t *list, skiplist_node_t *node, skiplist_lock_group_t* lock_group) {
     uint8_t node_height = node->height;
 
     for (int i = 0; i < node_height; i++) {
         if (node->next_size[i]) {
             skiplist_node_t* next = &list->nodes[node->next_size[i]];
-            BADGEROS_MALLOC_MSG_TRACE("level %i, updating next size %i, previous: %i, new: %i", i, node->next_size[i], next->next_size[i], node->prev_size[i]);
+            BADGEROS_MALLOC_ASSERT_DEBUG(lockgroup_is_locked(list, next, lock_group), "node not locked");
+            BADGEROS_MALLOC_MSG_TRACE("level %i, updating next size %i, previous: %i, new: %i", i, node->next_size[i], next->prev_size[i], node->prev_size[i]);
             next->prev_size[i] = node->prev_size[i];
         }
 
-        skiplist_node_t* prev_size;
+        skiplist_node_t* prev;
         if (node->prev_size[i]) {
-            prev_size = &list->nodes[node->prev_size[i]];
+            prev = &list->nodes[node->prev_size[i]];
         } else {
-            prev_size = &list->head_size; // 0 means head in prev
+            prev = &list->head_size; // 0 means head in prev
         }
 
-        BADGEROS_MALLOC_MSG_TRACE("level %i, updating prev size %i, previous: %i, new: %i", i, node->prev_size[i], prev_size->next_size[i], node->next_size[i]);
-        prev_size->next_size[i] = node->next_size[i];
+        BADGEROS_MALLOC_ASSERT_DEBUG(lockgroup_is_locked(list, prev, lock_group), "node not locked");
+        BADGEROS_MALLOC_MSG_TRACE("level %i, updating prev size %i, previous: %i, new: %i", i, node->prev_size[i], prev->next_size[i], node->next_size[i]);
+        prev->next_size[i] = node->next_size[i];
     }
 }
 
@@ -338,7 +373,6 @@ __attribute__((always_inline)) static inline bool skiplist_remove(skiplist_t *li
         return false;
     }
 
-    // Lock all of our neighbors
     if (!skiplist_lock_index_neighbors(list, node, lock_group)) {
         BADGEROS_MALLOC_MSG_TRACE("failed to lock index neighbors, exiting");
         return false;
@@ -349,8 +383,8 @@ __attribute__((always_inline)) static inline bool skiplist_remove(skiplist_t *li
         return false;
     }
 
-    skiplist_remove_index(list, node);
-    skiplist_remove_size(list, node);
+    skiplist_remove_index(list, node, lock_group);
+    skiplist_remove_size(list, node, lock_group);
 
     return true;
 }
@@ -359,32 +393,34 @@ bool skiplist_insert(skiplist_t *list, size_t index, size_t size) {
     BADGEROS_MALLOC_MSG_TRACE("skiplist_insert(%zi, %zi)", index, size); 
     BADGEROS_MALLOC_ASSERT_ERROR(index <= list->size, "Invalid Free: index %zi > list size %zi", index, list->size);
     index += 1; // index 0 is our free page
-    skiplist_node_t *node = &list->nodes[index];
-
-start:
-    skiplist_node_t *prev[SKIPLIST_MAX_HEIGHT] = {0};
-    skiplist_node_t *prev_size[SKIPLIST_MAX_HEIGHT] = {0};
     skiplist_lock_group_t lock_group = {0};
 
-    int node_height = determine_node_height(&list->nodes[index]);
+start:
+    skiplist_node_t *node = &list->nodes[index];
+    node->height = determine_node_height(&list->nodes[index]);
 
+    skiplist_node_t *prev[SKIPLIST_MAX_HEIGHT] = {0};
+    skiplist_node_t *prev_size[SKIPLIST_MAX_HEIGHT] = {0};
+    size_t new_size = size;
+
+    // Find the index insertion point and lock all neighbors
     skiplist_index_find_prev(list, index, prev, &lock_group);
-
-    if (!skiplist_lock_index_neighbors(list, prev[0], &lock_group)) {
-        BADGEROS_MALLOC_MSG_TRACE("failed to lock index neigbors, retrying"); 
-        lockgroup_unlock(list, &lock_group);
-        wait();
-        goto start;
+    BADGEROS_MALLOC_ASSERT_DEBUG(lockgroup_is_locked(list, prev[0], &lock_group), "node not locked");
+    for (int i = 0; i < node->height; ++i) {
+        if (!skiplist_lock_index_neighbors(list, prev[i], &lock_group)) {
+            BADGEROS_MALLOC_MSG_TRACE("failed to lock index neigbors, retrying"); 
+            goto restart;
+        }
     }
 
     // At this point, all necessary nodes are locked
-
-    if (prev[0]->next_index[0] && prev[0]->next_index[0] < (index + size)) {
-        BADGEROS_MALLOC_MSG_ERROR("Invalid Free: %zi of size %zi overlaps next index: %i", index - 1, size, prev[0]->next_index[0] - 1);
+    if (prev[0]->next_index[0] && prev[0]->next_index[0] < (index + new_size)) {
+        BADGEROS_MALLOC_MSG_ERROR("Invalid Free: %zi of size %zi overlaps next index: %i", index - 1, new_size, prev[0]->next_index[0] - 1);
         goto out;
     }
+
     if (get_node_index(list, prev[0]) + prev[0]->size > index) {
-        BADGEROS_MALLOC_MSG_ERROR("Invalid Free: %zi of size %zi overlaps prev index: %zi of size %i", index - 1, size, get_node_index(list, prev[0]), prev[0]->size);
+        BADGEROS_MALLOC_MSG_ERROR("Invalid Free: %zi of size %zi overlaps prev index: %zi of size %i", index - 1, new_size, get_node_index(list, prev[0]), prev[0]->size);
         goto out;
     }
     
@@ -392,96 +428,116 @@ start:
     if (prev[0]->next_index[0] == (index + size)) {
         skiplist_node_t* next = &list->nodes[prev[0]->next_index[0]];
 
-        BADGEROS_MALLOC_MSG_TRACE("coalescing into next node"); 
+        BADGEROS_MALLOC_MSG_ERROR("coalescing into next node"); 
         if(!skiplist_remove(list, prev[0]->next_index[0], &lock_group)) {
             BADGEROS_MALLOC_MSG_TRACE("coalescing failed: can't remove next node, retrying"); 
-            lockgroup_unlock(list, &lock_group);
-            goto start;
+            goto restart;
         }
 
-        size += next->size;
+        new_size += next->size;
     }
 
     // Check to see if we need to coalesce into the previous node
     if (prev[0] != &list->head_index) {
         if (get_node_index(list, prev[0]) + prev[0]->size == index) {
             BADGEROS_MALLOC_MSG_TRACE("coalescing into previous node"); 
-
 #if 0
+
             if (!skiplist_lock_size_neighbors(list, prev[0], &lock_group)) {
                 BADGEROS_MALLOC_MSG_ERROR("failed to lock size neighbors, retrying");
-                lockgroup_unlock(list, &lock_group);
-                goto start;
+                goto restart;
             }
 
-            skiplist_remove_size(list, prev[0]);
-
-            skiplist_size_find_prev(list, prev[0]->size + size, prev_size, &lock_group);
+            skiplist_remove_size(list, prev[0], &lock_group);
+            skiplist_size_find_prev(list, prev[0]->size + new_size, prev_size, &lock_group);
             if (!skiplist_lock_size_neighbors(list, prev_size[0], &lock_group)) {
                 BADGEROS_MALLOC_MSG_ERROR("failed to lock new size neigbors, retrying"); 
-                for (int i = 0; i < node_height; i++) {
-                    skiplist_node_t *old_prev = &list->nodes[prev[0]->prev_size[i]];
-                    skiplist_node_t *old_next = &list->nodes[prev[0]->next_size[i]];
-
-                    old_prev->next_size[i] = get_node_index(list, prev[0]);
-                    old_next->prev_size[i] = get_node_index(list, prev[0]);
-                }
-                lockgroup_unlock(list, &lock_group);
-                goto start;
+                skiplist_reinsert_size(list, prev[0], &lock_group);
+                goto restart;
             }
+
+            prev[0]->size += new_size;
             node = prev[0];
+            goto out_size;
+            //prev[0]->size += new_size;
+            //goto out;
 #endif
-            prev[0]->size += size;
-            goto out;
+            if (skiplist_remove(list, get_node_index(list, prev[0]), &lock_group)) {
+                size = prev[0]->size + new_size;
+                BADGEROS_MALLOC_MSG_DEBUG("re-inserting previous node (%i) %p with new size %zi instead of %i", get_node_index(list, prev[0]), prev[0], size, index);
+                index = get_node_index(list, prev[0]);
+                goto start;
+            } else {
+                BADGEROS_MALLOC_MSG_TRACE("failed to remove previous node");
+                goto restart;
+            }
+
+            //prev[0]->size += new_size;
+            //goto out;
         }
     }
 
-    node->size = size;
-    node->height = node_height;
+    node->size = new_size;
 
     skiplist_size_find_prev(list, node->size, prev_size, &lock_group);
-    if (!skiplist_lock_size_neighbors(list, prev_size[0], &lock_group)) {
-        BADGEROS_MALLOC_MSG_TRACE("failed to lock size neigbors, retrying"); 
-        goto start;
+    for (int i = 0; i < node->height; ++i) {
+        if (!skiplist_lock_size_neighbors(list, prev_size[i], &lock_group)) {
+            BADGEROS_MALLOC_MSG_TRACE("failed to lock size neigbors, retrying"); 
+            goto restart;
+        }
     }
 
     // Perform the index insertion
-    for (int i = 0; i < node_height; i++) {
+    BADGEROS_MALLOC_MSG_TRACE("index: inserting node(%i) %p at height %i", index, node, node->height); 
+    for (int i = 0; i < node->height; i++) {
         if (prev[i]->next_index[i]) {
             skiplist_node_t* next = &list->nodes[prev[i]->next_index[i]];
+            BADGEROS_MALLOC_ASSERT_ERROR(next != node, "creating loop in index skiplist (next == node)");
+            BADGEROS_MALLOC_ASSERT_DEBUG(lockgroup_is_locked(list, next, &lock_group), "node(%i) %p not locked at height %i", get_node_index(list, next), next, i);
             next->prev_index[i] = index;
         }
 
+        BADGEROS_MALLOC_ASSERT_ERROR(prev[i] != node, "creating loop in index skiplist (prev[%i] == node)", i);
         node->next_index[i] = prev[i]->next_index[i];
         node->prev_index[i] = get_node_index(list, prev[i]);
+        BADGEROS_MALLOC_ASSERT_DEBUG(lockgroup_is_locked(list, prev[i], &lock_group), "node not locked");
         prev[i]->next_index[i] = index;
     }
 
-out_size:
     // Perform the size insertion
-    for (int i = 0; i < node_height; i++) {
+    BADGEROS_MALLOC_MSG_TRACE("size: inserting node(%i) %p at height %i", index, node, node->height); 
+    for (int i = 0; i < node->height; i++) {
         if (prev_size[i]->next_size[i]) {
             skiplist_node_t* next = &list->nodes[prev_size[i]->next_size[i]];
+            BADGEROS_MALLOC_ASSERT_ERROR(next != node, "creating loop in size skiplist (next == node)");
+            BADGEROS_MALLOC_ASSERT_DEBUG(lockgroup_is_locked(list, next, &lock_group), "node(%i) %p not locked at height %i", get_node_index(list, next), next, i);
             next->prev_size[i] = get_node_index(list, node);
         }
 
+        BADGEROS_MALLOC_ASSERT_ERROR(prev_size[i] != node, "creating loop in size skiplist (prev_size[%i] == node)", i);
         node->next_size[i] = prev_size[i]->next_size[i];
         node->prev_size[i] = get_node_index(list, prev_size[i]);
+        BADGEROS_MALLOC_ASSERT_DEBUG(lockgroup_is_locked(list, prev_size[i], &lock_group), "node not locked");
         prev_size[i]->next_size[i] = get_node_index(list, node);
     }
 
 out:
     lockgroup_unlock(list, &lock_group);
     return true;
+
+restart:
+    lockgroup_unlock(list, &lock_group);
+    wait();
+    goto start;
 }
 
 #ifdef BADGEROS_MALLOC_STANDALONE
 void print_skiplist(skiplist_t* list) {
     printf("Index skiplist:\n");
+    size_t count = 0;
     for (int i = SKIPLIST_MAX_HEIGHT - 1; i >= 0; i--) {
         skiplist_node_t *current = &list->head_index;
         printf("Level %i: ", i);
-        size_t count = 0;
         while (current != &list->nodes[0]) {
             int32_t current_index = get_node_index(list, current);
             printf("%i<(%i)>%i (%i-%i:%i) -> ", current->prev_index[i], current_index, current->next_index[i], current_index, current_index + current->size, current->size);
@@ -496,14 +552,15 @@ void print_skiplist(skiplist_t* list) {
             }
             ++count;
         }
-       printf("\n");
+        printf("\n");
     }
+    printf("%zi nodes\n", count);
 
+    count = 0;
     printf("Size skiplist:\n");
     for (int i = SKIPLIST_MAX_HEIGHT - 1; i >= 0; i--) {
         skiplist_node_t *current = &list->head_size;
         printf("Level %i: ", i);
-        size_t count = 0;
         while (current != &list->nodes[0]) {
             uint16_t current_index = get_node_index(list, current);
             printf("%i<(%i)>%i (%i-%i:%i) -> ", current->prev_size[i], current_index, current->next_size[i], current_index, current_index + current->size, current->size);
@@ -519,6 +576,19 @@ void print_skiplist(skiplist_t* list) {
             ++count;
         }
         printf("\n");
+    }
+    printf("%zi nodes\n", count);
+
+    if (atomic_flag_test_and_set(&list->head_index)) {
+        printf("Index head is locked\n");
+    } else {
+        atomic_flag_clear(&list->head_index);
+    }
+
+    if (atomic_flag_test_and_set(&list->head_size)) {
+        printf("Size head is locked\n");
+    } else {
+        atomic_flag_clear(&list->head_size);
     }
 
     for (size_t i = 0; i < list->size; ++i) {

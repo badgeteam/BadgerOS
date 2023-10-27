@@ -45,6 +45,8 @@ static void page_pool_set_pages(page_pool_t *pool, size_t pages) {
         atomic_flag_clear(&pool->pages_list.nodes[i].modifying);
 	pool->pages_list.nodes[i].size = 0;
     }
+    pool->pages_list.head_index.height = SKIPLIST_MAX_HEIGHT;
+    pool->pages_list.head_size.height = SKIPLIST_MAX_HEIGHT;
 
     //skiplist_insert(&pool->pages_list, 0, pool->usable_pages);
 
