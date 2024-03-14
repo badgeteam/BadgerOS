@@ -51,5 +51,7 @@ mkShell {
     cmake
     esptool
     picocom
+    clang-tools
+    jq
   ];
 }
