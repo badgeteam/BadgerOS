@@ -146,8 +146,13 @@ static void kernel_init() {
 #define SCLK_PIN 0
 #define MOSI_PIN 10
 #define MISO_PIN 1
+#define SS_PIN 11
 
-static uint8_t foobar[] = "foobarfoobarfoobarfoobarfoobarfoobarfoobarfoobar";
+// static uint8_t foobar[] = "foobarfoobarfoobarfoobarfoobarfoobarfoobarfoobar";
+// static uint8_t foobar[] = "foobarfoobarfoob";
+static uint8_t foobar[] = "0123456789ABCDEF";
+// static uint8_t foobar[] = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+
 
 void deboug() {
     badge_err_t ec = {0};
@@ -165,7 +170,7 @@ void deboug() {
     i2c_master_write_to(&ec, 0, CH_ADDR, &wdata, 4);
     badge_err_assert_always(&ec);
 
-    spi_master_init(&ec, 0, SCLK_PIN, MOSI_PIN, MISO_PIN);
+    spi_master_init(&ec, 0, SCLK_PIN, MOSI_PIN, MISO_PIN, SS_PIN);
     spi_write_buffer(&ec, foobar, sizeof(foobar)-1);
 }
 
