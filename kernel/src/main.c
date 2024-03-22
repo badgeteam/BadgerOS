@@ -148,11 +148,14 @@ static void kernel_init() {
 #define MISO_PIN 1
 #define SS_PIN 11
 
-// static uint8_t foobar[] = "foobarfoobarfoobarfoobarfoobarfoobarfoobarfoobar";
-// static uint8_t foobar[] = "foobarfoobarfoob";
-static uint8_t foobar[] = "0123456789ABCDEF";
-// static uint8_t foobar[] = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
-
+static uint8_t spi_test_data[] =
+"0123456789ABCDEF"
+"0123456789ABCDEF"
+"0123456789ABCDEF"
+"0123456789ABCDEF"
+"0123456789ABCDEF"
+"0123456789ABCDE"
+;
 
 void deboug() {
     badge_err_t ec = {0};
@@ -171,7 +174,7 @@ void deboug() {
     badge_err_assert_always(&ec);
 
     spi_master_init(&ec, 0, SCLK_PIN, MOSI_PIN, MISO_PIN, SS_PIN);
-    spi_write_buffer(&ec, foobar, sizeof(foobar)-1);
+    spi_write_buffer(&ec, spi_test_data, sizeof(spi_test_data)-1);
 }
 
 // After kernel initialization, the booting CPU core continues here.
