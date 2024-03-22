@@ -173,7 +173,7 @@ void deboug() {
     i2c_master_write_to(&ec, 0, CH_ADDR, &wdata, 4);
     badge_err_assert_always(&ec);
 
-    spi_master_init(&ec, 0, SCLK_PIN, MOSI_PIN, MISO_PIN, SS_PIN);
+    spi_master_init(&ec, 0, SCLK_PIN, MOSI_PIN, MISO_PIN, SS_PIN, 1*1000*1000);
     spi_write_buffer(&ec, spi_test_data, sizeof(spi_test_data)-1);
 }
 
