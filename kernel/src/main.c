@@ -148,7 +148,7 @@ static void kernel_init() {
 #define MISO_PIN 1
 #define SS_PIN 11
 
-static uint8_t spi_test_data[] =
+static char spi_test_data[] =
 "0123456789ABCDEF"
 "0123456789ABCDEF"
 "0123456789ABCDEF"
@@ -173,8 +173,15 @@ void deboug() {
     i2c_master_write_to(&ec, 0, CH_ADDR, &wdata, 4);
     badge_err_assert_always(&ec);
 
-    spi_master_init(&ec, 0, SCLK_PIN, MOSI_PIN, MISO_PIN, SS_PIN, 1*1000*1000);
-    spi_write_buffer(&ec, spi_test_data, sizeof(spi_test_data)-1);
+
+    spi_controller_init(&ec, 0, SCLK_PIN, MOSI_PIN, MISO_PIN, SS_PIN, 40*1000*1000);
+    badge_err_assert_always(&ec);
+
+    // Transfer test data in full duplex mode. Bridge MOSI and MISO to get echo.
+    logkf(LOG_INFO, "SPI tx: %{cs}", spi_test_data);
+    spi_controller_transfer(&ec, 0, spi_test_data, sizeof(spi_test_data)-1, true);
+    badge_err_assert_always(&ec);
+    logkf(LOG_INFO, "SPI rx: %{cs}", spi_test_data);
 }
 
 // After kernel initialization, the booting CPU core continues here.
