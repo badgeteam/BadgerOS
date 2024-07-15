@@ -328,6 +328,11 @@ void mem_set(void *dest, uint8_t value, size_t size) {
 
 
 // Function call emitted by the compiler.
+size_t strlen(char const *a) {
+    return cstr_length(a);
+}
+
+// Function call emitted by the compiler.
 void *memset(void *dst, int byte, size_t len) {
     mem_set(dst, (uint8_t)byte, len);
     return dst;
