@@ -106,15 +106,13 @@ static bool critical_section_had_interrupts = false;
 // During a critical section, no thread switches can occurr.
 static void enter_critical_section(void) {
     assert_dev_drop(!critical_section_active);
-    critical_section_had_interrupts = isr_global_disable();
+    critical_section_had_interrupts = irq_disable();
     critical_section_active         = true;
 }
 
 static void leave_critical_section(void) {
     assert_dev_drop(critical_section_active);
-    if (critical_section_had_interrupts) {
-        isr_global_enable();
-    }
+    irq_enable_if(critical_section_had_interrupts);
     critical_section_active = false;
 }
 
@@ -221,7 +219,7 @@ void sched_exec() {
     scheduler_enabled = true;
 
     // Invoke the first context switch.
-    isr_global_disable();
+    irq_disable();
     sched_request_switch_from_isr();
     isr_context_switch();
 
@@ -565,7 +563,7 @@ void sched_yield(void) {
     sched_thread_t *const current_thread = sched_get_current_thread();
     assert_always(current_thread != NULL);
 
-    isr_global_disable();
+    irq_disable();
     sched_request_switch_from_isr();
     isr_context_switch();
 }
