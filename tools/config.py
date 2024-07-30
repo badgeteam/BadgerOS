@@ -41,7 +41,7 @@ targets = {
     "generic": {
         "cpu":       ["riscv64"],
         "cc-match":  "^riscv64.*-linux-",
-        "cc-prefer": ["^riscv64-linux-"],
+        "cc-prefer": ["^riscv64-badgeros-", "^riscv64-linux-"],
         "float":     True,
         "port":      "generic",
         "options":   {
@@ -83,8 +83,10 @@ def option_select(prompt: str, options: list, prefer=0):
     global use_default
     prefer += 1
     if len(options) == 1:
+        print(f"Using {prompt} {options[0]}")
         return options[0]
     elif use_default:
+        print(f"Using {prompt} {options[prefer-1]}")
         return options[prefer-1]
     else:
         print(f"Available {prompt}s:")
@@ -120,7 +122,9 @@ def find_compilers():
                 candidates.append(path + "/" + bin)
         except FileNotFoundError:
             pass
-    return candidates, prefer_idx
+    if not len(candidates):
+        print(f"ERROR: No suitable compilers found for target `{target}`")
+    return candidates, prefer_idx or 0
 
 def handle_option_arg(arg: str|None, id: str, name: str) -> str:
     global target, target_options
@@ -153,7 +157,7 @@ config["fp_spec"]  = handle_option_arg(args.fp_spec,  "float_spec", "float spec"
 config["vec_spec"] = handle_option_arg(args.vec_spec, "vec_spec",   "vector spec")
 
 config["target"]    = target
-cc_re = re.match("^(.+?)\w+$", config["compiler"])
+cc_re = re.match("^(.+?)\\w+$", config["compiler"])
 if not cc_re:
     print("ERROR: Cannot determine toolchain prefix")
     exit(1)
@@ -178,5 +182,5 @@ with open(".config/config.h", "w") as fd:
     fd.write(f'#pragma once\n')
     for opt in config:
         fd.write(f'#define CONFIG_{opt.upper()} "{config[opt]}"\n')
-        if re.match('^\w+$', config[opt]):
+        if re.match('^\\w+$', config[opt]):
             fd.write(f'#define CONFIG_{opt.upper()}_{config[opt]}\n')

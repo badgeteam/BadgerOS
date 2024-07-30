@@ -29,9 +29,14 @@ After that, see [Project structure](./docs/project_structure.md) for reference a
 - `git`
 - `build-essential`
 - `cmake`
-- `gcc-riscv64-linux-gnu`
+- `gcc-riscv64-linux-gnu` (ubuntu) / `riscv64-gnu-toolchain-glibc-bin` (arch)
 - `python3`
 - `picocom`
+## For RISC-V PC port
+If you don't know what this is, you don't need this.
+- `mtools`
+- `swig`
+- `gptfdisk`
 
 
 
@@ -39,11 +44,10 @@ After that, see [Project structure](./docs/project_structure.md) for reference a
 The build system is based on Makefiles and CMake.
 The following commands can be used to perform relevant actions:
 
-To select target chip, choose one of:
-- `export BADGEROS_PORT=esp32p4`
-- `export BADGEROS_PORT=esp32c6` (default)
-
-Before building, first run: `make prepare`
+To select target platform, choose one of:
+- `make config` (manual configuration)
+- `make hh24_defconfig` (HackerHotel 2024 badge)
+- `make why2025_defconfig` (WHY2025 badge)
 
 To build: `make build`
 

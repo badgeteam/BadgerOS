@@ -16,6 +16,9 @@
 #elif __STDC_VERSION__ < 202311L // C23
 #define static_assert _Static_assert
 #endif
+#ifndef __FILE_NAME__
+#define __FILE_NAME__ (__builtin_strrchr(__FILE__, "/") ?: __FILE__ - 1) + 1
+#endif
 
 
 
@@ -23,11 +26,7 @@
 #define assert_always(condition)                                                                                       \
     do {                                                                                                               \
         if (__builtin_expect((condition) == 0, 0)) {                                                                   \
-            logk(                                                                                                      \
-                LOG_FATAL,                                                                                             \
-                __FILE__ ":" convert_macro_to_string(__LINE__) ": " convert_macro_to_string(__func__                   \
-                ) ": Assertion `" #condition "` failed."                                                               \
-            );                                                                                                         \
+            logkf(LOG_FATAL, "%{cs}:%{d}: Assertion `%{cs}` failed", __FILE_NAME__, __LINE__, #condition);             \
             __builtin_trap();                                                                                          \
         }                                                                                                              \
     } while (false)
