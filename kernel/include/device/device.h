@@ -6,16 +6,31 @@
 #pragma once
 
 #include "device/address.h"
+#include "device/dev_class.h"
+
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
 
 
 
-// Represents a single connected device.
+// A single connected device.
 typedef struct device device_t;
+// A device driver.
+typedef struct driver driver_t;
 
-// Represents a single connected device.
+// A single connected device.
 struct device {
     // Device address.
-    dev_addr_t addr;
+    dev_addr_t      addr;
+    // What class of device this is.
+    dev_class_t     dev_class;
     // TODO: Assigned driver.
-    void      *driver;
+    driver_t const *driver;
+};
+
+// A device driver.
+struct driver {
+    // What class of devices this driver targets.
+    dev_class_t dev_class;
 };

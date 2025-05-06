@@ -7,6 +7,6 @@
 
 
 
-// Block device driver functions.
+// TTY device driver functions.
 typedef struct {
-} driver_block_t;
+} driver_tty_t;
