@@ -82,6 +82,8 @@ add_executable(${target}
     ${CMAKE_CURRENT_LIST_DIR}/src/blockdevice/blkdev_ram.c
     ${CMAKE_CURRENT_LIST_DIR}/src/blockdevice/blockdevice.c
     
+    ${CMAKE_CURRENT_LIST_DIR}/src/device/device.c
+    
     ${CMAKE_CURRENT_LIST_DIR}/src/filesystem/filesystem.c
     ${CMAKE_CURRENT_LIST_DIR}/src/filesystem/syscall_impl.c
     ${CMAKE_CURRENT_LIST_DIR}/src/filesystem/fs_fat.c
