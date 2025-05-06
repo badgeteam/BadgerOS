@@ -5,7 +5,7 @@
 
 #pragma once
 
-#include "device/address.h"
+#include "device/dev_addr.h"
 #include "device/dev_class.h"
 
 #include <stdbool.h>
