@@ -9,12 +9,10 @@
 
 
 
-// Represents a single connected device.
-typedef struct device device_t;
-
-
 // Represents a type of way that a device can be addressed by computer.
 typedef enum {
+    // Device has no address.
+    DEV_ATYPE_NONE,
     // Memory-mapped I/O.
     DEV_ATYPE_MMIO,
     // PCI or PCI express addressed.
@@ -36,8 +34,6 @@ typedef struct {
 
 // Represents a PCI or PCI express address.
 typedef struct {
-    // PCIe segment; identifies the controller.
-    uint8_t seg;
     // PCIe cotroller's bus number.
     uint8_t bus;
     // PCIe bus's device number.
@@ -48,12 +44,10 @@ typedef struct {
 
 // Represents an AHCI address.
 typedef struct {
-    // Parent AHCI controller.
-    device_t *parent;
     // Port number.
-    uint8_t   port;
+    uint8_t port;
     // Port multiplier index.
-    uint8_t   pmul_port;
+    uint8_t pmul_port;
 } dev_ahci_addr_t;
 
 

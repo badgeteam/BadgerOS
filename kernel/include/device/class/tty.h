@@ -5,8 +5,11 @@
 
 #pragma once
 
+#include "device/device.h"
+
 
 
 // TTY device driver functions.
 typedef struct {
+    driver_t base;
 } driver_tty_t;

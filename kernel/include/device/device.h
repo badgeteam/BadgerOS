@@ -16,24 +16,38 @@
 
 
 // A single connected device.
-typedef struct device device_t;
+typedef struct device         device_t;
+// A device interrupt pin connection.
+typedef struct device_irqconn device_irqconn_t;
 // A device driver.
-typedef struct driver driver_t;
+typedef struct driver         driver_t;
 
 // A single connected device.
 struct device {
     // Parent device, if any.
-    device_t       *parent;
+    device_t         *parent;
     // Globally unique device ID.
-    uint32_t        id;
+    uint32_t          id;
     // Device address.
-    dev_addr_t      addr;
+    dev_addr_t        addr;
     // What class of device this is.
-    dev_class_t     dev_class;
+    dev_class_t       dev_class;
     // Assigned driver.
-    driver_t const *driver;
+    driver_t const   *driver;
     // Set of children.
-    set_t          *children;
+    set_t            *children;
+    // Number of outgoing interrupts.
+    size_t            irq_count;
+    // Outgoing interrupt connections.
+    device_irqconn_t *irq_parents;
+};
+
+// A device interrupt pin connection.
+struct device_irqconn {
+    // Connected device; must be a `device_irqctl_t` for interrupt parents.
+    device_t *device;
+    // Connected device's incoming pin.
+    size_t    pin;
 };
 
 // A device driver.
@@ -46,7 +60,13 @@ struct driver {
     void (*add)(device_t *device);
     // Remove a device from this driver.
     void (*remove)(device_t *device);
+    // Device interrupt handler.
+    void (*interrupt)(device_t *device, size_t int_pin);
 };
+
+// Register a driver statically.
+#define DRIVER_ADD_STATIC(driver_name)                                                                                 \
+    __attribute__((section(".rodata.driver-table"))) static driver_t const *driver_name##_driver_table_entry;
 
 
 
