@@ -7,7 +7,7 @@
 
 #include "arrays.h"
 #include "assertions.h"
-#include "device/dev_addr.h"
+#include "device/class/irqctl.h"
 #include "mutex.h"
 #include "set.h"
 #include "time.h"
@@ -82,6 +82,18 @@ static uint32_t device_remove_impl(uint32_t id) {
     if (res.found) {
         device_t *device = devs[res.index];
 
+        // Disconnect from interrupt parents, if any.
+        for (size_t i = 0; i < device->irq_count; i++) {
+            if (device->driver) {
+                device->driver->enable_irq(device, i, false);
+            }
+            device_irqctl_t *irqctl = (void *)device->irq_parents[i].device;
+            if (irqctl) {
+                irqctl->irq_children[device->irq_parents[i].pin].device = NULL;
+            }
+            device->irq_parents[i].device = NULL;
+        }
+
         // First remove child devices, if any.
         if (device->children) {
             set_foreach(device_t, child, device->children) {
@@ -89,8 +101,8 @@ static uint32_t device_remove_impl(uint32_t id) {
             }
         }
 
-        // Children removed, remove the device itself.
         if (device->driver) {
+            // Children removed, remove the device itself.
             device->driver->remove(device);
         }
 
@@ -107,6 +119,13 @@ bool device_remove(uint32_t id) {
     bool success = device_remove_impl(id);
     mutex_release(&devs_mtx);
     return success;
+}
+
+// Notify of a device interrupt.
+void device_interrupt(device_t *device, size_t irq_pin) {
+    if (device->driver) {
+        device->driver->interrupt(device, irq_pin);
+    }
 }
 
 

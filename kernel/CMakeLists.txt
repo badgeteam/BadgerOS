@@ -84,6 +84,7 @@ add_executable(${target}
     
     ${CMAKE_CURRENT_LIST_DIR}/src/device/device.c
     ${CMAKE_CURRENT_LIST_DIR}/src/device/class/block.c
+    ${CMAKE_CURRENT_LIST_DIR}/src/device/class/irqctl.c
     
     ${CMAKE_CURRENT_LIST_DIR}/src/filesystem/filesystem.c
     ${CMAKE_CURRENT_LIST_DIR}/src/filesystem/syscall_impl.c

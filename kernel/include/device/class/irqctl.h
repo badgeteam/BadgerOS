@@ -11,11 +11,11 @@
 
 // Interrupt controller device.
 typedef struct {
-    device_t          base;
+    device_t   base;
     // Number of incoming interrupts.
-    size_t            incoming_len;
+    size_t     incoming_len;
     // Interrupt children.
-    device_irqconn_t *irq_children;
+    irqconn_t *irq_children;
 } device_irqctl_t;
 
 // Interrupt controller driver functions.

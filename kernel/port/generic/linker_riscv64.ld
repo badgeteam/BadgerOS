@@ -31,6 +31,9 @@ SECTIONS
     .rodata : {
         *(.rodata .rodata.* .srodata .srodata.*)
         . = ALIGN(16);
+        __start_kmodules = .;
+        KEEP(*(.kmodules .kmodules.*))
+        __stop_kmodules = .;
         __start_drivers = .;
         KEEP(*(.drivers .drivers.*))
         __stop_drivers = .;

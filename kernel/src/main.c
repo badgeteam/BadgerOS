@@ -9,6 +9,7 @@
 #include "housekeeping.h"
 #include "interrupt.h"
 #include "isr_ctx.h"
+#include "kmodule.h"
 #include "log.h"
 #include "malloc.h"
 #include "memprotect.h"
@@ -28,11 +29,13 @@
 // 0: Do nothing.
 // 1: Shut down (default).
 // 2: Reboot.
-atomic_int           kernel_shutdown_mode;
+atomic_int              kernel_shutdown_mode;
 // Temporary file image.
-extern uint8_t const elf_rom[];
-extern size_t const  elf_rom_len;
-
+extern uint8_t const    elf_rom[];
+extern size_t const     elf_rom_len;
+// Built-in kernel modules.
+extern kmodule_t const *start_kmodules[] asm("__start_kmodules");
+extern kmodule_t const *stop_kmodules[] asm("__stop_kmodules");
 
 #define show_csr(name)                                                                                                 \
     do {                                                                                                               \
@@ -100,6 +103,12 @@ void basic_runtime_init() {
 
 // Manages the kernel's lifetime after basic runtime initialization.
 static void kernel_lifetime_func() {
+    // Initialize the built-in kernel modules.
+    for (kmodule_t const **cur = start_kmodules; cur != stop_kmodules; cur++) {
+        logkf(LOG_INFO, "Init built-in module '%{cs}'", (**cur).name);
+        (**cur).init();
+    }
+
     // Start the kernel services.
     kernel_init();
     // Start other CPUs.

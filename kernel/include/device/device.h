@@ -18,28 +18,28 @@
 // A single connected device.
 typedef struct device         device_t;
 // A device interrupt pin connection.
-typedef struct device_irqconn device_irqconn_t;
+typedef struct device_irqconn irqconn_t;
 // A device driver.
 typedef struct driver         driver_t;
 
 // A single connected device.
 struct device {
     // Parent device, if any.
-    device_t         *parent;
+    device_t       *parent;
     // Globally unique device ID.
-    uint32_t          id;
+    uint32_t        id;
     // Device address.
-    dev_addr_t        addr;
+    dev_addr_t      addr;
     // What class of device this is.
-    dev_class_t       dev_class;
+    dev_class_t     dev_class;
     // Assigned driver.
-    driver_t const   *driver;
+    driver_t const *driver;
     // Set of children.
-    set_t            *children;
+    set_t          *children;
     // Number of outgoing interrupts.
-    size_t            irq_count;
+    size_t          irq_count;
     // Outgoing interrupt connections.
-    device_irqconn_t *irq_parents;
+    irqconn_t      *irq_parents;
 };
 
 // A device interrupt pin connection.
@@ -61,12 +61,10 @@ struct driver {
     // Remove a device from this driver.
     void (*remove)(device_t *device);
     // Device interrupt handler.
-    void (*interrupt)(device_t *device, size_t int_pin);
+    void (*interrupt)(device_t *device, size_t irq_pin);
+    // Enable a certain interrupt.
+    void (*enable_irq)(device_t *device, size_t irq_pin, bool enable);
 };
-
-// Register a driver statically.
-#define DRIVER_ADD_STATIC(driver_name)                                                                                 \
-    __attribute__((section(".rodata.driver-table"))) static driver_t const *driver_name##_driver_table_entry;
 
 
 
@@ -76,6 +74,8 @@ struct driver {
 bool device_add(device_t *device);
 // Remove a device and its children.
 bool device_remove(uint32_t id);
+// Notify of a device interrupt.
+void device_interrupt(device_t *device, size_t irq_pin);
 
 // Register a new driver.
 bool driver_add(driver_t const *driver);

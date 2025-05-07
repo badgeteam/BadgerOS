@@ -41,9 +41,9 @@ CheckOptions:
   readability-identifier-naming.TypedefPrefix: ''
 
   # Types have an '_t' suffix:
-  readability-identifier-naming.StructSuffix: '_t'
-  readability-identifier-naming.UnionSuffix: '_t'
-  readability-identifier-naming.EnumSuffix: '_t'
+  readability-identifier-naming.StructSuffix: ''
+  readability-identifier-naming.UnionSuffix: ''
+  readability-identifier-naming.EnumSuffix: ''
   readability-identifier-naming.TypedefSuffix: '_t'
 
 
