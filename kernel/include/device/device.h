@@ -7,6 +7,7 @@
 
 #include "device/dev_addr.h"
 #include "device/dev_class.h"
+#include "device/dtb/dtb.h"
 #include "set.h"
 
 #include <stdatomic.h>
@@ -32,11 +33,17 @@ typedef struct driver      driver_t;
 // All information required to match drivers with devices and install said drivers.
 struct device_info {
     // Parent device, if any.
-    device_t  *parent;
+    device_t     *parent;
     // Globally unique device ID; if 0, the device is not in the tree and cannot be used.
-    uint32_t   id;
-    // Device address.
-    dev_addr_t addr;
+    uint32_t      id;
+    // Number of device addresses, usually at least 1.
+    size_t        addrs_len;
+    // Device addresses.
+    dev_addr_t   *addrs;
+    // DTB handle, if any.
+    dtb_handle_t *dtb_handle;
+    // DTB node, if any.
+    dtb_node_t   *dtb_node;
 };
 
 // A single connected device.
@@ -87,6 +94,8 @@ struct driver {
 
 
 
+// Test a device info against a set of DTB compatible strings.
+bool      device_test_dtb_compat(device_info_t const *info, size_t compats_len, char const *const *compats);
 // Register a new device.
 // Returns a nonzero ID if successful.
 uint32_t  device_add(device_info_t info);

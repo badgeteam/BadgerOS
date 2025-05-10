@@ -11,12 +11,12 @@
 
 // Represents a type of way that a device can be addressed by computer.
 typedef enum {
-    // Device has no address.
-    DEV_ATYPE_NONE,
     // Memory-mapped I/O.
     DEV_ATYPE_MMIO,
     // PCI or PCI express addressed.
     DEV_ATYPE_PCI,
+    // I2C addressed.
+    DEV_ATYPE_I2C,
     // SATA ACHI addressed.
     DEV_ATYPE_AHCI,
 } dev_atype_t;
@@ -57,6 +57,7 @@ typedef struct {
     union {
         dev_mmio_addr_t mmio;
         dev_pci_addr_t  pci;
+        uint16_t        i2c;
         dev_ahci_addr_t ahci;
     };
 } dev_addr_t;

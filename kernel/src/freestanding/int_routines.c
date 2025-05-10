@@ -272,4 +272,16 @@ int __ctzti2(__uint128_t a) {
 }
 #endif
 
+int __ffsdi2(uint64_t a) __attribute__((weak));
+int __ffsdi2(uint64_t a) {
+    return a ? __ctzdi2(a) + 1 : 0;
+}
+
+#ifdef do_ti_math
+int __ffsti2(__uint128_t a) __attribute__((weak));
+int __ffsti2(__uint128_t a) {
+    return a ? __ctzti2(a) + 1 : 0;
+}
+#endif
+
 // NOLINTEND

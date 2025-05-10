@@ -191,6 +191,14 @@ void smp_init_dtb(dtb_handle_t *dtb) {
     irq_enable_if(ie);
 }
 
+// Get the CPU-local data for some CPU.
+cpulocal_t *smp_get_cpulocal(int cpu) {
+    if (cpu < 0 || cpu >= smp_count) {
+        return NULL;
+    }
+    return &cpu_status[cpu].cpulocal;
+}
+
 // The the SMP CPU index of the calling CPU.
 int smp_cur_cpu() {
     if (!smp_map_len) {

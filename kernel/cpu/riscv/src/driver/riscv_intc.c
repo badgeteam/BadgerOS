@@ -20,42 +20,38 @@
 void riscv_sbi_timer_interrupt();
 #endif
 
-bool riscv_intc_match(device_t *device) {
-    for (size_t i = 0; i < device->compat_count; i++) {
-        if (cstr_equals(device->compats[i], "riscv,cpu-intc")) {
-            return true;
-        }
-    }
-    return false;
+bool riscv_intc_match(device_info_t *info) {
+    return device_test_dtb_compat(info, 1, (char const *const[]){"riscv,cpu-intc"});
 }
 
-void riscv_intc_add(device_t *device) {
+bool riscv_intc_add(device_t *device) {
     asm("csrwi sie, 0");
+    return true;
 }
 
 void riscv_intc_remove(device_t *device) {
 }
 
-void riscv_intc_interrupt(device_t *device, size_t int_no) {
+void riscv_intc_interrupt(device_t *device, irqpin_t pin) {
     device_irqctl_t *irqctl = (void *)device;
-    if (int_no == RISCV_INT_SUPERVISOR_EXT && irqctl->irq_children[int_no].device) {
-        device_interrupt(irqctl->irq_children[int_no].device, irqctl->irq_children[int_no].pin);
+    if (pin == RISCV_INT_SUPERVISOR_EXT && irqctl->irq_children[pin].len) {
+        device_irqctl_forward_interrupt((device_irqctl_t *)device, pin);
 #ifdef CPU_RISCV_ENABLE_SBI_TIME
-    } else if (int_no == RISCV_INT_SUPERVISOR_TIMER) {
+    } else if (pin == RISCV_INT_SUPERVISOR_TIMER) {
         asm("csrc sie, %0" ::"r"(1 << RISCV_INT_SUPERVISOR_TIMER));
         riscv_sbi_timer_interrupt();
 #endif
     } else {
-        logkf_from_isr(LOG_FATAL, "Unhandled interrupt 0x%{size;x}", int_no);
+        logkf_from_isr(LOG_FATAL, "Unhandled interrupt 0x%{size;x}", pin);
         panic_abort();
     }
 }
 
-bool riscv_intc_enable_irq(device_t *device, size_t pin, bool enable) {
+bool riscv_intc_enable_irq(device_t *device, irqpin_t pin, bool enable) {
     return false;
 }
 
-bool riscv_intc_enable_in(device_t *device, size_t pin, bool enable) {
+bool riscv_intc_enable_in(device_irqctl_t *device, irqpin_t pin, bool enable) {
     if (pin == 0 || pin > 32) {
         return false;
     }

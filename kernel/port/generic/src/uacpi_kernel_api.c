@@ -13,6 +13,7 @@
 #include "spinlock.h"
 #include "time.h"
 #include "uacpi/kernel_api.h"
+#include "uacpi/status.h"
 
 #ifdef CONFIG_CPU_amd64
 #include "cpu/x86_ioport.h"
@@ -66,7 +67,6 @@ uacpi_status uacpi_kernel_io_map(uacpi_io_addr base, uacpi_size len, uacpi_handl
 void uacpi_kernel_io_unmap(uacpi_handle handle) {
 }
 
-#ifdef CONFIG_CPU_amd64
 /*
  * Read/Write the IO range mapped via uacpi_kernel_io_map
  * at a 0-based 'offset' within the range.
@@ -75,6 +75,7 @@ void uacpi_kernel_io_unmap(uacpi_handle handle) {
  * You are NOT allowed to break e.g. a 4-byte access into four 1-byte accesses.
  * Hardware ALWAYS expects accesses to be of the exact width.
  */
+#ifdef CONFIG_CPU_amd64
 uacpi_status uacpi_kernel_io_read8(uacpi_handle handle, uacpi_size offset, uacpi_u8 *out_value) {
     *out_value = inb((size_t)handle + offset);
     return UACPI_STATUS_OK;
@@ -101,6 +102,25 @@ uacpi_status uacpi_kernel_io_write32(uacpi_handle handle, uacpi_size offset, uac
     return UACPI_STATUS_OK;
 }
 #else
+uacpi_status uacpi_kernel_io_read8(uacpi_handle handle, uacpi_size offset, uacpi_u8 *out_value) {
+    return UACPI_STATUS_UNIMPLEMENTED;
+}
+uacpi_status uacpi_kernel_io_read16(uacpi_handle handle, uacpi_size offset, uacpi_u16 *out_value) {
+    return UACPI_STATUS_UNIMPLEMENTED;
+}
+uacpi_status uacpi_kernel_io_read32(uacpi_handle handle, uacpi_size offset, uacpi_u32 *out_value) {
+    return UACPI_STATUS_UNIMPLEMENTED;
+}
+
+uacpi_status uacpi_kernel_io_write8(uacpi_handle handle, uacpi_size offset, uacpi_u8 in_value) {
+    return UACPI_STATUS_UNIMPLEMENTED;
+}
+uacpi_status uacpi_kernel_io_write16(uacpi_handle handle, uacpi_size offset, uacpi_u16 in_value) {
+    return UACPI_STATUS_UNIMPLEMENTED;
+}
+uacpi_status uacpi_kernel_io_write32(uacpi_handle handle, uacpi_size offset, uacpi_u32 in_value) {
+    return UACPI_STATUS_UNIMPLEMENTED;
+}
 #endif
 
 void *uacpi_kernel_map(uacpi_phys_addr paddr, uacpi_size len) {
@@ -200,12 +220,12 @@ uacpi_handle uacpi_kernel_create_mutex(void) {
     mutex_t *mutex = calloc(1, sizeof(mutex_t));
     if (!mutex)
         return NULL;
-    mutex_init(NULL, mutex, false);
+    mutex_init(mutex, false);
     return mutex;
 }
 
 void uacpi_kernel_free_mutex(uacpi_handle handle) {
-    mutex_destroy(NULL, handle);
+    mutex_destroy(handle);
     free(handle);
 }
 

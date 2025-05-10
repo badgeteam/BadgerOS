@@ -17,4 +17,10 @@ typedef enum {
     DEV_CLASS_IRQCTL,
     // TTY devices, e.g. USB CDC-ACM, kernel console, etc.
     DEV_CLASS_TTY,
+    // PCI or PCIe controllers.
+    DEV_CLASS_PCICTL,
+    // I2C controllers.
+    DEV_CLASS_I2CCTL,
+    // AHCI controllers.
+    DEV_CLASS_AHCI,
 } dev_class_t;

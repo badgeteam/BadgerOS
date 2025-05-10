@@ -22,10 +22,10 @@ typedef struct {
 typedef struct {
     driver_t base;
     // Enable an incoming interrupt.
-    bool (*enable_in)(device_irqctl_t *device, size_t irq_in_pin, bool enabled);
+    bool (*enable_in)(device_irqctl_t *device, irqpin_t irq_in_pin, bool enabled);
 } driver_irqctl_t;
 
-// Get the number of incoming interrupts.
-size_t device_irqctl_incoming_len(device_t *device);
 // Enable an incoming interrupt.
-bool   device_irqctl_enable_in(device_t *device, size_t irq_in_pin, bool enabled);
+bool device_irqctl_enable_in(device_irqctl_t *device, irqpin_t irq_in_pin, bool enabled);
+// Send an interrupt to all children on a certain pin.
+void device_irqctl_forward_interrupt(device_irqctl_t *device, irqpin_t irq_in_pin);

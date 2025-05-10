@@ -1,12 +1,15 @@
 
 // SPDX-License-Identifier: MIT
 
-#include "port/dtparse.h"
+#include "device/dtb/dtparse.h"
 
+#include "arrays.h"
 #include "assertions.h"
-#include "badge_strings.h"
-#include "driver.h"
-#include "port/dtb.h"
+#include "device/dev_addr.h"
+#include "device/dev_class.h"
+#include "device/device.h"
+#include "device/dtb/dtb.h"
+#include "log.h"
 #include "rawprint.h"
 #include "smp.h"
 
@@ -20,22 +23,105 @@
 
 
 
-// Check if we have a driver for some compat string.
-static bool check_drivers(
-    dtb_handle_t *handle, dtb_node_t *node, uint32_t addr_cells, uint32_t size_cells, char const *compat_str
-) {
-    for (driver_t const *driver = start_drivers; driver != stop_drivers; driver++) {
-        if (driver->type != DRIVER_TYPE_DTB) {
-            continue;
-        }
-        for (size_t j = 0; j < driver->dtb_supports_len; j++) {
-            if (cstr_equals(compat_str, driver->dtb_supports[j])) {
-                driver->dtb_init(handle, node, addr_cells, size_cells);
-                return true;
-            }
+// Determine what type of address is expected.
+static bool determine_atype(device_t *parent_device, dev_atype_t *atype) {
+    *atype = DEV_ATYPE_MMIO;
+    while (parent_device) {
+        switch (parent_device->dev_class) {
+            case DEV_CLASS_UNKNOWN: // Unknown device, unknown address.
+            case DEV_CLASS_BLOCK:   // Has no standard child address format.
+            case DEV_CLASS_IRQCTL:  // Has no standard child address format.
+            case DEV_CLASS_TTY:     // Has no standard child address format.
+            case DEV_CLASS_AHCI:    // Should not be in the DTB.
+                return false;
+
+            case DEV_CLASS_PCICTL: *atype = DEV_ATYPE_PCI; return true;
+            case DEV_CLASS_I2CCTL: *atype = DEV_ATYPE_I2C; return true;
         }
     }
-    return false;
+    return atype;
+}
+
+// Try to extract the address from a DTB node.
+static void get_node_addr(
+    dtb_handle_t *handle, dtb_node_t *node, uint32_t alen, uint32_t slen, device_t *parent_device, device_info_t *info
+) {
+    dev_atype_t atype;
+    if (!determine_atype(parent_device, &atype)) {
+        return;
+    }
+
+    dtb_prop_t *reg = dtb_get_prop(handle, node, "reg");
+    if (!reg) {
+        return;
+    }
+
+    size_t n_ents = reg->content_len / 4 / (alen + slen);
+    if (reg->content_len != 4 * (alen + slen)) {
+        return;
+    }
+
+    switch (atype) {
+        default: __builtin_unreachable();
+        case DEV_ATYPE_AHCI: // Cannot be parsed from DTB.
+        case DEV_ATYPE_PCI:  // Cannot be parsed from DTB.
+            return;
+
+        case DEV_ATYPE_MMIO:
+            for (size_t i = 0; i < n_ents; i++) {
+                dev_addr_t ent = {
+                    .type       = DEV_ATYPE_MMIO,
+                    .mmio.paddr = dtb_prop_read_cells(handle, reg, i * (alen + slen), alen),
+                    .mmio.size  = dtb_prop_read_cells(handle, reg, i * (alen + slen) + alen, slen),
+                };
+                array_len_insert(&info->addrs, sizeof(dev_addr_t), &info->addrs_len, &ent, info->addrs_len);
+            }
+            return;
+
+        case DEV_ATYPE_I2C:
+            if (alen != 1 || slen != 0) {
+                return;
+            }
+            for (size_t i = 0; i < n_ents; i++) {
+                dev_addr_t ent = {
+                    .type = DEV_ATYPE_I2C,
+                    .i2c  = dtb_prop_read_cells(handle, reg, i, 1),
+                };
+                array_len_insert(&info->addrs, sizeof(dev_addr_t), &info->addrs_len, &ent, info->addrs_len);
+            }
+            return;
+    }
+}
+
+// Recursive DTB parsing imlpementation that walks the SOC for devices and registers them all.
+static uint32_t
+    dtparse_impl(dtb_handle_t *handle, dtb_node_t *node, uint32_t alen, uint32_t slen, device_t *parent_device) {
+    device_t *device = NULL;
+    uint32_t  dev_id = 0;
+
+    if (dtb_get_prop(handle, node, "compatible")) {
+        // If a compatible node is present, register it as a device.
+        device_info_t info = {
+            .parent     = parent_device,
+            .dtb_handle = handle,
+            .dtb_node   = node,
+        };
+        get_node_addr(handle, node, alen, slen, parent_device, &info);
+        device = device_get(dev_id = device_add(info));
+    }
+
+    // Walk child nodes.
+    uint32_t inner_alen = dtb_read_uint(handle, node, "#address-cells");
+    uint32_t inner_slen = dtb_read_uint(handle, node, "#size-cells");
+    for (dtb_node_t *child = node->nodes; child; child = child->next) {
+        dtparse_impl(handle, child, inner_alen ?: alen, inner_slen ?: slen, device ?: parent_device);
+    }
+
+    if (device) {
+        device_pop_ref(device);
+    }
+
+    return dev_id;
 }
 
 // Parse the DTB and add found devices.
@@ -46,6 +132,7 @@ void dtparse(void *dtb_ptr) {
     dtb_node_t *root = dtb_root_node(handle);
 
     // The SOC node contains devices for which we may have drivers.
+    dtb_node_t *cpus     = dtb_get_node(handle, root, "cpus");
     dtb_node_t *soc      = dtb_get_node(handle, root, "soc");
     uint32_t    soc_alen = dtb_read_uint(handle, soc, "#address-cells");
     uint32_t    soc_slen = dtb_read_uint(handle, soc, "#size-cells");
@@ -55,26 +142,32 @@ void dtparse(void *dtb_ptr) {
     // Initialise SMP.
     smp_init_dtb(handle);
 
-    // Walk the SOC node to detect devices and install drivers.
-    dtb_node_t *node = soc->nodes;
-    while (node) {
-        // Read which drivers the device is compatible with.
-        dtb_prop_t *compatible = dtb_get_prop(handle, node, "compatible");
-        uint32_t    compat_len = 0;
-        char const *compat_str = (char *)dtb_prop_content(handle, compatible, &compat_len);
-
-        // Check all compatible options.
-        while (compat_len) {
-            size_t len = cstr_length(compat_str);
-            if (check_drivers(handle, node, soc_alen, soc_slen, compat_str)) {
-                break;
-            }
-            compat_str += len + 1;
-            compat_len -= len + 1;
+    // Walk the CPU nodes to find CPU root interrupt controllers.
+    for (dtb_node_t *cpu = cpus->nodes; cpu; cpu = cpu->next) {
+        dtb_prop_t *reg = dtb_get_prop(handle, cpu, "reg");
+        if (!reg) {
+            continue;
         }
+        int smp_idx = smp_get_cpu(dtb_prop_read_uint(handle, reg));
+        if (smp_idx == -1) {
+            continue;
+        }
+        dtb_node_t *irqctl_node = dtb_get_node(handle, cpu, "interrupt-controller");
+        if (!irqctl_node) {
+            logkf(LOG_ERROR, "Missing interrupt controller for CPU%{d}", smp_idx);
+            continue;
+        }
+        device_t *irqctl = device_get(dtparse_impl(handle, irqctl_node, 0, 0, NULL));
+        if (!irqctl || !irqctl->driver || irqctl->dev_class != DEV_CLASS_IRQCTL) {
+            logkf(LOG_ERROR, "Invalid interrupt controller for CPU%{d}", smp_idx);
+        } else {
+            smp_get_cpulocal(smp_idx)->root_irqctl = irqctl;
+        }
+    }
 
-        // Next device.
-        node = node->next;
+    // Walk the SOC node to detect devices and install drivers.
+    for (dtb_node_t *node = soc->nodes; node; node = node->next) {
+        dtparse_impl(handle, node, soc_alen, soc_slen, NULL);
     }
 }
 

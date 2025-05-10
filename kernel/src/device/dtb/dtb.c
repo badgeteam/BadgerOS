@@ -1,7 +1,7 @@
 
 // SPDX-License-Identifier: MIT
 
-#include "port/dtb.h"
+#include "device/dtb/dtb.h"
 
 #include "arrays.h"
 #include "assertions.h"

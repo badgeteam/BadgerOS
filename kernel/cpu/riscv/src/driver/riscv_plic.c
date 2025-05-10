@@ -10,6 +10,7 @@
 #include "cpu/riscv.h"
 #include "cpulocal.h"
 #include "device/class/irqctl.h"
+#include "device/dev_addr.h"
 #include "device/device.h"
 #include "log.h"
 #include "panic.h"
@@ -29,58 +30,53 @@
         REG_WRITE(atmp, REG_READ(atmp) & ~mask);                                                                       \
     })
 
-static bool riscv_plic_match(device_t *device);
-static void riscv_plic_add(device_t *device);
+static bool riscv_plic_match(device_info_t *device);
+static bool riscv_plic_add(device_t *device);
 static void riscv_plic_remove(device_t *device);
-static void riscv_plic_interrupt(device_t *device, size_t pin);
-static bool riscv_plic_enable_irq(device_t *device, size_t pin, bool enable);
-static bool riscv_plic_enable_in(device_t *device, size_t pin, bool enable);
+static void riscv_plic_interrupt(device_t *device, irqpin_t pin);
+static bool riscv_plic_enable_irq(device_t *device, irqpin_t pin, bool enable);
+static bool riscv_plic_enable_in(device_irqctl_t *device, irqpin_t pin, bool enable);
 
 
 
-static bool riscv_plic_match(device_t *device) {
-    for (size_t i = 0; i < device->compat_count; i++) {
-        if (cstr_equals(device->compats[i], "riscv,plic0")) {
-            return true;
-        }
-        if (cstr_equals(device->compats[i], "sifive,plic-1.0.0")) {
-            return true;
-        }
-    }
-    return false;
+static bool riscv_plic_match(device_info_t *info) {
+    return device_test_dtb_compat(info, 1, (char const *const[]){"riscv,plic0", "sifive,plic-1.0.0"});
 }
 
-static void riscv_plic_add(device_t *device) {
+static bool riscv_plic_add(device_t *device) {
+    if (device->info.addrs_len != 1 || device->info.addrs[0].type != DEV_ATYPE_MMIO) {
+        return false;
+    }
     device_riscv_plic_t *plic = (void *)device;
     for (size_t i = 0; i < plic->base.incoming_len; i++) {
-        riscv_plic_enable_in(device, i, false);
+        riscv_plic_enable_in((device_irqctl_t *)device, i, false);
     }
+    return true;
 }
 
 static void riscv_plic_remove(device_t *device) {
 }
 
-static void riscv_plic_interrupt(device_t *device, size_t pin) {
-    device_riscv_plic_t *plic = (void *)device;
-    uint32_t             irq  = REG_READ(PLIC_CLAIM_OFF(plic->ctx_no) + device->addr.mmio.vaddr);
+static void riscv_plic_interrupt(device_t *device, irqpin_t pin) {
+    device_riscv_plic_t *plic  = (void *)device;
+    size_t               vaddr = device->info.addrs[0].mmio.vaddr;
+    uint32_t             irq   = REG_READ(PLIC_CLAIM_OFF(plic->ctx_no) + vaddr);
     if (irq) {
-        irqconn_t conn = plic->base.irq_children[pin];
-        if (conn.device) {
-            device_interrupt(conn.device, conn.pin);
-        }
+        device_irqctl_forward_interrupt((device_irqctl_t *)device, irq);
     }
 }
 
-static bool riscv_plic_enable_irq(device_t *device, size_t pin, bool enable) {
+static bool riscv_plic_enable_irq(device_t *device, irqpin_t pin, bool enable) {
     return false;
 }
 
-static bool riscv_plic_enable_in(device_t *device, size_t pin, bool enable) {
-    device_riscv_plic_t *plic = (void *)device;
+static bool riscv_plic_enable_in(device_irqctl_t *device, irqpin_t pin, bool enable) {
+    device_riscv_plic_t *plic  = (void *)device;
+    size_t               vaddr = device->base.info.addrs[0].mmio.vaddr;
     if (enable) {
-        REG_SET_BIT(PLIC_ENABLE_OFF(plic->ctx_no) + pin / 32 * 4 + device->addr.mmio.vaddr, pin % 32);
+        REG_SET_BIT(PLIC_ENABLE_OFF(plic->ctx_no) + pin / 32 * 4 + vaddr, pin % 32);
     } else {
-        REG_CLEAR_BIT(PLIC_ENABLE_OFF(plic->ctx_no) + pin / 32 * 4 + device->addr.mmio.vaddr, pin % 32);
+        REG_CLEAR_BIT(PLIC_ENABLE_OFF(plic->ctx_no) + pin / 32 * 4 + vaddr, pin % 32);
     }
     return false;
 }

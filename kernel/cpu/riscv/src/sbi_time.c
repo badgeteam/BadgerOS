@@ -3,9 +3,10 @@
 
 #include "assertions.h"
 #include "cpu/riscv_sbi.h"
+#include "device/dtb/dtb.h"
 #include "interrupt.h"
-#include "port/dtb.h"
 #include "port/hardware_allocation.h"
+#include "port/time.h"
 #include "scheduler/isr.h"
 #include "time.h"
 #include "time_private.h"
@@ -115,4 +116,8 @@ timestamp_us_t time_us() {
 // Called by the interrupt handler when the CPU-local timer fires.
 void riscv_sbi_timer_interrupt() {
     time_cpu_timer_isr();
+}
+
+// TODO: This is a dummy function; it should probably not be here.
+void time_init_before_acpi() {
 }

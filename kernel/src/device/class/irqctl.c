@@ -5,23 +5,21 @@
 
 #include "device/class/irqctl.h"
 
-#include "assertions.h"
-#include "device/dev_class.h"
+#include "device/device.h"
+#include "list.h"
 
 
-
-// Get the number of incoming interrupts.
-size_t device_irqctl_incoming_len(device_t *device) {
-    assert_always(device->dev_class == DEV_CLASS_IRQCTL);
-    if (!device->driver)
-        return 0;
-    return ((device_irqctl_t *)device)->incoming_len;
-}
 
 // Enable an incoming interrupt.
-bool device_irqctl_enable_in(device_t *device, size_t irq_in_pin, bool enabled) {
-    assert_always(device->dev_class == DEV_CLASS_IRQCTL);
-    if (!device->driver)
+bool device_irqctl_enable_in(device_irqctl_t *device, irqpin_t irq_in_pin, bool enabled) {
+    if (!device->base.driver)
         return false;
-    return ((driver_irqctl_t const *)device->driver)->enable_in(device, irq_in_pin, enabled);
+    return ((driver_irqctl_t const *)device->base.driver)->enable_in(device, irq_in_pin, enabled);
+}
+
+// Send an interrupt to all children on a certain pin.
+void device_irqctl_forward_interrupt(device_irqctl_t *device, irqpin_t irq_in_pin) {
+    dlist_foreach(irqconn_t, conn, parent.node, &device->irq_children[irq_in_pin]) {
+        device_interrupt(conn->child.device, conn->child.pin);
+    }
 }

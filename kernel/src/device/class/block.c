@@ -84,41 +84,50 @@ void device_block_free_cache(device_block_t *device) {
 // Write device blocks.
 // The caller must ensure that `data` is aligned at least as much as needed for DMA.
 bool device_block_write_blocks(device_block_t *device, uint64_t start, uint64_t count, void const *data) {
+    __builtin_trap();
 }
 
 // Read device blocks.
 // The caller must ensure that `data` is aligned at least as much as needed for DMA.
 bool device_block_read_blocks(device_block_t *device, uint64_t start, uint64_t count, void *data) {
+    __builtin_trap();
 }
 
 // Erase blocks.
 bool device_block_erase_blocks(device_block_t *device, uint64_t start, uint64_t count, blkdev_erase_t mode) {
+    __builtin_trap();
 }
 
 // Write block device bytes.
 // The alignment for DMA is handled by this function.
 bool device_block_write_bytes(device_block_t *device, uint64_t offset, uint64_t size, void const *data) {
+    __builtin_trap();
 }
 
 // Read block device bytes.
 // The alignment for DMA is handled by this function.
 bool device_block_read_bytes(device_block_t *device, uint64_t offset, uint64_t size, void *data) {
+    __builtin_trap();
 }
 
 // Erase block device bytes.
 bool device_block_erase_bytes(device_block_t *device, uint64_t offset, uint64_t size, blkdev_erase_t mode) {
+    __builtin_trap();
 }
 
 
 
 // Apply all pending changes.
 bool device_block_sync_all(device_block_t *device) {
+    __builtin_trap();
 }
 
 // Apply pending changes in a range of blocks.
 bool device_block_sync_blocks(device_block_t *device, uint64_t start, uint64_t count) {
+    __builtin_trap();
 }
 
 // Apply pending changes in a range of bytes.
 bool device_block_sync_bytes(device_block_t *device, uint64_t offset, uint64_t size) {
+    __builtin_trap();
 }
