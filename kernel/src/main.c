@@ -15,6 +15,8 @@
 #include "panic.h"
 #include "port/port.h"
 #include "process/process.h"
+#include "radixtree.h"
+#include "rawprint.h"
 #include "scheduler/scheduler.h"
 #include "time.h"
 
@@ -138,16 +140,42 @@ void syscall_sys_shutdown(bool is_reboot) {
 
 
 
+void dummy_print(int indent, void *ptr) {
+    rawprint(ptr);
+    rawputc('\n');
+}
+
+char msg1[16] = "Value 1";
+char msg2[16] = "Value 2";
+char msg3[16] = "Value 3";
+char msg4[16] = "Value 4";
+char msg5[16] = "Value 5";
+char msg6[16] = "Value 6";
+
 // After basic runtime initialization, the booting CPU core continues here.
 // This finishes the initialization of all kernel systems, resources and services.
 // When finished, the non-booting CPUs will be started (method and entrypoints to be determined).
 static void kernel_init() {
     badge_err_t ec = {0};
 
+    logkf(LOG_DEBUG, "", msg1, msg2, msg3, msg4, msg5, msg6);
+
     // Memory protection initialization.
     memprotect_init();
     // Full hardware initialization.
     port_init();
+
+    rtree_t tree = RTREE_T_INIT(16, 64, 4);
+    rtree_set(&tree, 0xffff0000ffff0000, msg1);
+    rtree_set(&tree, 0xffff0000efff0000, msg2);
+    rtree_set(&tree, 0xffff0000cccc0100, msg3);
+    rtree_set(&tree, 0xffff0000cccc0101, msg4);
+    rtree_dump(&tree, dummy_print);
+    rtree_remove(&tree, 0xffff0000ffff0000);
+    rtree_remove(&tree, 0xffff0000efff0000);
+    rtree_remove(&tree, 0xffff0000cccc0100);
+    rtree_remove(&tree, 0xffff0000cccc0101);
+    rtree_dump(&tree, dummy_print);
 
     // Temporary filesystem image.
     fs_mount(&ec, "ramfs", NULL, FILE_NONE, "/", 1, 0);
