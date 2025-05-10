@@ -15,7 +15,6 @@
 #include "panic.h"
 #include "port/port.h"
 #include "process/process.h"
-#include "radixtree.h"
 #include "rawprint.h"
 #include "scheduler/scheduler.h"
 #include "time.h"
@@ -148,11 +147,25 @@ void syscall_sys_shutdown(bool is_reboot) {
 
 
 
+void dummy_print(int indent, void *ptr) {
+    rawprint(ptr);
+    rawputc('\n');
+}
+
+char msg1[16] = "Value 1";
+char msg2[16] = "Value 2";
+char msg3[16] = "Value 3";
+char msg4[16] = "Value 4";
+char msg5[16] = "Value 5";
+char msg6[16] = "Value 6";
+
 // After basic runtime initialization, the booting CPU core continues here.
 // This finishes the initialization of all kernel systems, resources and services.
 // When finished, the non-booting CPUs will be started (method and entrypoints to be determined).
 static void kernel_init() {
     badge_err_t ec = {0};
+
+    logkf(LOG_DEBUG, "", msg1, msg2, msg3, msg4, msg5, msg6);
 
     // Memory protection initialization.
     memprotect_init();
