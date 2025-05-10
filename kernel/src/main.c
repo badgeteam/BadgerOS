@@ -15,7 +15,6 @@
 #include "panic.h"
 #include "port/port.h"
 #include "process/process.h"
-#include "radixtree.h"
 #include "rawprint.h"
 #include "scheduler/scheduler.h"
 #include "time.h"
@@ -164,23 +163,6 @@ static void kernel_init() {
     memprotect_init();
     // Full hardware initialization.
     port_init();
-
-    rtree_t tree = RTREE_T_INIT(16, 64, 4);
-    rtree_set(&tree, 0xffff0000ffff0000, msg1);
-    rtree_set(&tree, 0xffff0000efff0000, msg2);
-    rtree_set(&tree, 0xffff0000cccc0100, msg3);
-    rtree_set(&tree, 0xffff0000cccc0101, msg4);
-    rtree_dump(&tree, dummy_print);
-
-    rtree_foreach(iter, &tree) {
-        logkf(LOG_DEBUG, "0x%{size;x} -> %{cs}", iter.key, iter.value);
-    }
-
-    rtree_remove(&tree, 0xffff0000ffff0000);
-    rtree_remove(&tree, 0xffff0000efff0000);
-    rtree_remove(&tree, 0xffff0000cccc0100);
-    rtree_remove(&tree, 0xffff0000cccc0101);
-    rtree_dump(&tree, dummy_print);
 
     // Temporary filesystem image.
     fs_mount(&ec, "ramfs", NULL, FILE_NONE, "/", 1, 0);
