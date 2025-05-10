@@ -264,16 +264,9 @@ void rtree_clear(rtree_t *tree) {
     tree->root = NULL;
 }
 
-// Get the next entry in the radix tree.
-static rtree_iter_t rtree_next_impl(rtree_t const *tree, rtree_node_t const *node, uint64_t key) {
-    return (rtree_iter_t){0};
-}
-
 // Get the first entry in the radix tree.
-static rtree_iter_t rtree_first_impl(rtree_t const *tree) {
-    rtree_node_t const *node          = tree->root;
-    uint64_t            key           = 0;
-    uint8_t             remaining_key = tree->key_width;
+static rtree_iter_t
+    rtree_first_impl(rtree_t const *tree, rtree_node_t const *node, uint64_t key, uint8_t remaining_key) {
     while (1) {
         if (!node) {
             return (rtree_iter_t){0};
@@ -296,7 +289,10 @@ static rtree_iter_t rtree_first_impl(rtree_t const *tree) {
         node                            = NULL;
         for (int i = 0; i < 1 << level_bits; i++) {
             if (children[i]) {
-                node = children[i];
+                node            = children[i];
+                key           <<= level_bits;
+                key            |= i;
+                remaining_key  -= level_bits;
                 break;
             }
         }
@@ -304,12 +300,70 @@ static rtree_iter_t rtree_first_impl(rtree_t const *tree) {
 }
 
 // Get the next entry in the radix tree.
+// Returns 0 on failure, 1 on success, 2 if the next sibling to `node` is needed.
+static int rtree_next_impl(
+    rtree_t const      *tree,
+    rtree_node_t const *node,
+    rtree_iter_t       *next_out,
+    uint64_t const      orig_key,
+    uint64_t            key,
+    uint8_t             remaining_key
+) {
+    if (!node) {
+        return 0;
+    }
+    if (key >> (64 - node->subkey_bits) != node->subkey) {
+        return 0;
+    }
+    key           <<= node->subkey_bits;
+    remaining_key  -= node->subkey_bits;
+
+    if (node->is_leaf) {
+        // Target node found; indicate that the next sibling is needed.
+        return 2;
+    }
+
+    // Try to find the next among children.
+    uint8_t        level_bits = remaining_key < tree->bits_per_node ? remaining_key : tree->bits_per_node;
+    rtree_node_t **children   = (void *)&node->data;
+    int            child_idx  = key >> (64 - level_bits);
+    if (!children[child_idx]) {
+        return 0;
+    }
+    int res =
+        rtree_next_impl(tree, children[child_idx], next_out, orig_key, key << level_bits, remaining_key - level_bits);
+    if (res != 2) {
+        return res;
+    }
+
+    // The child node wants its next sibling.
+    for (int i = child_idx + 1; i < 1 << level_bits; i++) {
+        if (children[i]) {
+            key             = orig_key >> (64 - tree->key_width + remaining_key);
+            key           <<= level_bits;
+            key            |= i;
+            remaining_key  += level_bits;
+            *next_out       = rtree_first_impl(tree, children[i], key, remaining_key);
+            return 1;
+        }
+    }
+
+    // There is no next child node; want this node's next sibling.
+    return 2;
+}
+
+// Get the next entry in the radix tree.
 // If `iter` is `NULL`, the first entry is returned.
 rtree_iter_t rtree_next(rtree_t const *tree, rtree_iter_t *cur) {
     if (cur == NULL) {
-        return rtree_first_impl(tree);
+        return rtree_first_impl(tree, tree->root, 0, tree->key_width);
     }
-    return (rtree_iter_t){0};
+    rtree_iter_t iter = {0};
+    int          res  = rtree_next_impl(tree, tree->root, &iter, cur->key, cur->key, tree->key_width);
+    if (res == 0 || res == 2) {
+        return (rtree_iter_t){0};
+    }
+    return iter;
 }
 
 // Default print function for `rtree_dump`.

@@ -171,6 +171,11 @@ static void kernel_init() {
     rtree_set(&tree, 0xffff0000cccc0100, msg3);
     rtree_set(&tree, 0xffff0000cccc0101, msg4);
     rtree_dump(&tree, dummy_print);
+
+    rtree_foreach(iter, &tree) {
+        logkf(LOG_DEBUG, "0x%{size;x} -> %{cs}", iter.key, iter.value);
+    }
+
     rtree_remove(&tree, 0xffff0000ffff0000);
     rtree_remove(&tree, 0xffff0000efff0000);
     rtree_remove(&tree, 0xffff0000cccc0100);
