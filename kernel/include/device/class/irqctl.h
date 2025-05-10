@@ -11,18 +11,18 @@
 
 // Interrupt controller device.
 typedef struct {
-    device_t   base;
+    device_t base;
     // Number of incoming interrupts.
-    size_t     incoming_len;
-    // Interrupt children.
-    irqconn_t *irq_children;
+    size_t   incoming_len;
+    // Interrupt children; list of `irqconn_t`.
+    dlist_t *irq_children;
 } device_irqctl_t;
 
 // Interrupt controller driver functions.
 typedef struct {
     driver_t base;
     // Enable an incoming interrupt.
-    bool (*enable_in)(device_t *device, size_t irq_in_pin, bool enabled);
+    bool (*enable_in)(device_irqctl_t *device, size_t irq_in_pin, bool enabled);
 } driver_irqctl_t;
 
 // Get the number of incoming interrupts.

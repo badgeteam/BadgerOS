@@ -3,7 +3,7 @@
 
 #pragma once
 
-#include "port/dtb.h"
+#include "device/dtb/dtb.h"
 
 // Initialise timer using the DTB.
 void time_init_dtb(dtb_handle_t *dtb);

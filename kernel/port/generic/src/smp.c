@@ -7,10 +7,10 @@
 #include "assertions.h"
 #include "cpu/mmu.h"
 #include "cpulocal.h"
+#include "device/dtb/dtb.h"
 #include "interrupt.h"
 #include "isr_ctx.h"
 #include "mutex.h"
-#include "port/dtb.h"
 
 #include <limine.h>
 
@@ -101,7 +101,6 @@ static REQ struct limine_smp_request smp_req = {
 };
 
 
-#ifdef PORT_ENABLE_DTB
 // Initialise the SMP subsystem.
 void smp_init_dtb(dtb_handle_t *dtb) {
 #ifdef __riscv
@@ -191,7 +190,6 @@ void smp_init_dtb(dtb_handle_t *dtb) {
 
     irq_enable_if(ie);
 }
-#endif
 
 // The the SMP CPU index of the calling CPU.
 int smp_cur_cpu() {

@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: MIT
 
 #include "assertions.h"
-#include "attributes.h"
 #include "blockdevice/blkdev_ram.h"
 #include "cpulocal.h"
 #include "filesystem.h"
@@ -16,6 +15,8 @@
 #include "panic.h"
 #include "port/port.h"
 #include "process/process.h"
+#include "radixtree.h"
+#include "rawprint.h"
 #include "scheduler/scheduler.h"
 #include "time.h"
 
@@ -207,7 +208,7 @@ static void userland_shutdown() {
     logk(LOG_INFO, "Sending SIGHUP to init");
     proc_raise_signal(NULL, 1, SIGHUP);
     // Wait for a couple seconds to give it time.
-    timestamp_us_t lim = time_us() + 5 * 1000000;
+    timestamp_us_t lim = time_us() + 5000000;
     while (time_us() < lim) {
         if (!(proc_getflags(NULL, 1) & PROC_RUNNING)) {
             // When the init process stops, userland has successfully been shut down.

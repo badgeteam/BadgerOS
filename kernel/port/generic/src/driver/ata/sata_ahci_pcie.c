@@ -106,7 +106,7 @@ static void driver_sata_ahci_pci_init(pci_addr_t addr) {
     // Enable interrupts.
     int cpu_irq = pci_trace_irq_pin(addr, hdr->irq_pin);
     isr_install(cpu_irq, sata_ahci_isr, handle);
-    irq_ch_enable(cpu_irq);
+    // irq_ch_enable(cpu_irq);
     ghc->irq_status = -1;
     ghc->ghc.irq_en = true;
 

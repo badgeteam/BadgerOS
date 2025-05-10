@@ -18,6 +18,7 @@ set(port_src
     ${CMAKE_CURRENT_LIST_DIR}/src/memprotect.c
     ${CMAKE_CURRENT_LIST_DIR}/src/port.c
     ${CMAKE_CURRENT_LIST_DIR}/src/smp.c
+    ${CMAKE_CURRENT_LIST_DIR}/src/uacpi_kernel_api.c
 )
 set(port_include
     ${CMAKE_CURRENT_LIST_DIR}/include
@@ -30,19 +31,6 @@ set(port_link
 set(port_flags)
 set_target_properties(${target} PROPERTIES LINK_DEPENDS ${CMAKE_CURRENT_LIST_DIR}/linker.ld)
 
-if(${CONFIG_CPU} STREQUAL "amd64")
-    include(lib/uacpi/uacpi.cmake)
-    set(port_src ${port_src} ${UACPI_SOURCES})
-    set(port_include ${port_include} ${UACPI_INCLUDES})
-    
-    set(port_flags ${port_flags} -DPORT_ENABLE_ACPI)
-    set(port_src ${port_src}
-        ${CMAKE_CURRENT_LIST_DIR}/src/uacpi_kernel_api.c
-    )
-else()
-    set(port_flags ${port_flags} -DPORT_ENABLE_DTB)
-    set(port_src ${port_src} 
-        ${CMAKE_CURRENT_LIST_DIR}/src/dtb.c
-        ${CMAKE_CURRENT_LIST_DIR}/src/dtparse.c
-    )
-endif()
+include(lib/uacpi/uacpi.cmake)
+set(port_src ${port_src} ${UACPI_SOURCES})
+set(port_include ${port_include} ${UACPI_INCLUDES})

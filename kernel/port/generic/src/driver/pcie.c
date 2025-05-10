@@ -234,7 +234,6 @@ int pci_trace_irq_pin(pci_addr_t addr, int pci_irq) {
 
 
 
-#ifdef PORT_ENABLE_DTB
 // Extract ranges from DTB.
 static bool pci_dtb_ranges(dtb_handle_t *handle, dtb_node_t *node) {
     dtb_prop_t *ranges = dtb_get_prop(handle, node, "ranges");
@@ -412,11 +411,9 @@ malformed_dtb:
     logk(LOG_WARN, "Initialization failed; ignoring this PCIe controller!");
 }
 #endif
-#endif
 
 
 
-#ifdef PORT_ENABLE_DTB
 // Driver for normal no-nonsense PCIe.
 DRIVER_DECL(pcie_driver_dtb) = {
     .type             = DRIVER_TYPE_DTB,
@@ -433,5 +430,4 @@ DRIVER_DECL(pcie_fu740_driver_dtb) = {
     .dtb_supports     = (char const *[]){"sifive,fu740-pcie"},
     .dtb_init         = pcie_fu740_driver_dtbinit,
 };
-#endif
 #endif

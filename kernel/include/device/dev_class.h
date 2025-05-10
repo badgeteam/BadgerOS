@@ -9,6 +9,8 @@
 
 // Distinguishes classes of device by purpose.
 typedef enum {
+    // Unknown class.
+    DEV_CLASS_UNKNOWN,
     // Block devices, e.g. SSDs, CD drives, etc.
     DEV_CLASS_BLOCK,
     // Interrupt controllers.

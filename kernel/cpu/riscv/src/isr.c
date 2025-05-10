@@ -5,7 +5,10 @@
 
 #include "assertions.h"
 #include "backtrace.h"
+#include "cpu/hardware.h"
 #include "cpu/isr_ctx.h"
+#include "cpulocal.h"
+#include "device/device.h"
 #include "interrupt.h"
 #include "log.h"
 #include "panic.h"
@@ -59,7 +62,20 @@ static void kill_proc_on_trap() {
     assert_unreachable();
 }
 
-// Called from ASM on non-system call trap.
+// Called from ASM on interrupt.
+void riscv_interrupt_handler() {
+    device_t *device = isr_ctx_get()->cpulocal->root_irqctl;
+    if (!device) {
+        claim_panic();
+        logkf_from_isr(LOG_FATAL, "Interrupt without interrupt controller");
+        panic_abort_unchecked();
+    }
+    long cause;
+    asm volatile("csrr %0, " CSR_CAUSE_STR : "=r"(cause));
+    device_interrupt(device, cause & RISCV_VT_ICAUSE_MASK);
+}
+
+// Called from ASM on trap.
 void riscv_trap_handler() {
     // Redirect interrupts to the interrupt handler.
     long cause, status, tval, epc;

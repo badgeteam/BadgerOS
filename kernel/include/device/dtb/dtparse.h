@@ -3,7 +3,7 @@
 
 #pragma once
 
-#include "port/dtb.h"
+#include "device/dtb/dtb.h"
 
 
 

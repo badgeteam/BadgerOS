@@ -9,6 +9,11 @@
 
 
 
+// TTY device.
+typedef struct {
+    device_t base;
+} device_tty_t;
+
 // TTY device driver functions.
 typedef struct {
     driver_t base;

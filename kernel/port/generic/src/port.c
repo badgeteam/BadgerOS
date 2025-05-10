@@ -5,16 +5,14 @@
 
 #include "assertions.h"
 #include "cpu/mmu.h"
+#include "device/dtb/dtparse.h"
 #include "driver/pcie.h"
 #include "interrupt.h"
 #include "memprotect.h"
 #include "panic.h"
-#include "port/dtparse.h"
 #include "port/hardware_allocation.h"
 #include "rawprint.h"
-#ifdef PORT_ENABLE_ACPI
 #include "uacpi/uacpi.h"
-#endif
 #ifdef __x86_64__
 #include "cpu/x86_ioport.h"
 #endif
@@ -38,12 +36,10 @@ static REQ struct limine_memmap_request mm_req = {
     .revision = 3,
 };
 
-#ifdef PORT_ENABLE_DTB
 static REQ struct limine_dtb_request dtb_req = {
     .id       = LIMINE_DTB_REQUEST,
     .revision = 3,
 };
-#endif
 
 static REQ struct limine_rsdp_request rsdp_req = {
     .id       = LIMINE_RSDP_REQUEST,
@@ -62,7 +58,6 @@ static REQ struct limine_hhdm_request hhdm_req = {
 
 __attribute__((section(".requests_end"))) LIMINE_REQUESTS_END_MARKER;
 
-#ifdef PORT_ENABLE_ACPI
 // Returns the PHYSICAL address of the RSDP structure via *out_rsdp_address.
 uacpi_status uacpi_kernel_get_rsdp(uacpi_phys_addr *out_rsdp_address) {
     if (rsdp_req.response) {
@@ -73,7 +68,6 @@ uacpi_status uacpi_kernel_get_rsdp(uacpi_phys_addr *out_rsdp_address) {
         return UACPI_STATUS_NOT_FOUND;
     }
 }
-#endif
 
 
 
@@ -89,17 +83,10 @@ void port_early_init() {
         logk_from_isr(LOG_FATAL, "Limine memmap response missing");
         panic_poweroff();
     }
-#ifdef PORT_ENABLE_DTB
     if (!dtb_req.response && !rsdp_req.response) {
         logk_from_isr(LOG_FATAL, "Both Limine DTB and Limine RSDP response missing");
         panic_poweroff();
     }
-#else
-    if (!rsdp_req.response) {
-        logk_from_isr(LOG_FATAL, "Limine RSDP response missing");
-        panic_poweroff();
-    }
-#endif
     if (!addr_req.response) {
         logk_from_isr(LOG_FATAL, "Limine kernel address response missing");
         panic_poweroff();
@@ -146,19 +133,15 @@ void port_early_init() {
         if (entry->type == LIMINE_MEMMAP_KERNEL_AND_MODULES) {
             kernel_len = entry->length;
         }
-#ifdef PORT_ENABLE_DTB
         // Workaround: Limine has a bug where the DTB is in usable, not reclaimable, memory.
         if ((size_t)dtb_req.response->dtb_ptr - hhdm_req.response->offset < entry->base ||
             (size_t)dtb_req.response->dtb_ptr - hhdm_req.response->offset >= entry->base + entry->length) {
-#endif
             // This second check was always there and just picks the largest candidate.
             if (entry->type == LIMINE_MEMMAP_USABLE && entry->length > biggest_pool_size) {
                 biggest_pool_index = i;
                 biggest_pool_size  = entry->length;
             }
-#ifdef PORT_ENABLE_DTB
         }
-#endif
         if (entry->type != LIMINE_MEMMAP_BAD_MEMORY && entry->type != LIMINE_MEMMAP_RESERVED) {
             mmu_hhdm_size = entry->base + entry->length;
         }
@@ -205,15 +188,11 @@ void port_postheap_init() {
 
 // Full hardware initialization.
 void port_init() {
-#ifdef PORT_ENABLE_DTB
     if (dtb_req.response) {
         // Parse and process DTB.
         // dtdump(dtb_req.response->dtb_ptr);
         dtparse(dtb_req.response->dtb_ptr);
-    } else
-#endif
-    {
-#ifdef PORT_ENABLE_ACPI
+    } else {
         // Initialize ACPI.
         time_init_before_acpi();
         uacpi_status st = uacpi_initialize(0);
@@ -222,7 +201,6 @@ void port_init() {
         assert_always(st == UACPI_STATUS_OK);
         // st = uacpi_namespace_initialize();
         // assert_always(st == UACPI_STATUS_OK);
-#endif
     }
 
     // Enumerate PCIe devices.

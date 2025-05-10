@@ -5,15 +5,13 @@
 
 #include "device/class/block.h"
 
+#include "malloc.h"
 #include "mutex.h"
 
 
 
 // Block device cache entry.
 typedef struct {
-    // Cache line mutex.
-    // Taken exclusive for syncing, shared for read/write ops.
-    mutex_t  mtx;
     // Actual device block index.
     uint64_t block;
     // Entry is present.
@@ -31,42 +29,96 @@ typedef struct {
 } blk_cache_line_t;
 
 // Block device cache.
-typedef struct {
+struct blk_cache {
+    // Cache mutex; taken exclusive for syncing, shared for read/write ops.
+    mutex_t           mtx;
     // Number of entries; must be a power of 2.
     size_t            lines_len;
     // Cache entries.
     blk_cache_line_t *lines;
-} blk_cache_t;
+};
 
 
 
-// Get device block size.
-uint64_t device_block_block_size(device_t *device);
-// Get number of blocks.
-uint64_t device_block_block_count(device_t *device);
-// Get device DMA alignment.
-size_t   device_block_dma_align(device_t *device);
+// Initialize a block device's cache.
+// Number of lines must be a power of 2 at least 4.
+// Optional for block devices with byte access methods.
+bool device_block_init_cache(device_block_t *device, size_t num_lines) {
+    // Allocate memory for the cache.
+    blk_cache_t *cache = malloc(sizeof(blk_cache_t));
+    if (!cache) {
+        return false;
+    }
+
+    cache->lines_len = num_lines;
+    cache->lines     = calloc(num_lines, sizeof(blk_cache_line_t));
+    if (!cache->lines) {
+        free(cache);
+        return false;
+    }
+
+    mutex_init(&cache->mtx, true);
+    return true;
+}
+
+// Clean up a block device's cache.
+// Implicitly called by the device subsystem if a `device_block_t` is freed.
+void device_block_free_cache(device_block_t *device) {
+    blk_cache_t *cache = device->cache;
+    if (!cache) {
+        return;
+    }
+    device->cache = NULL;
+
+    for (size_t i = 0; i < cache->lines_len; i++) {
+        if (cache->lines[i].is_present && !cache->lines[i].is_erase) {
+            free(cache->lines[i].data);
+        }
+    }
+    free(cache->lines);
+    free(cache);
+}
+
+
+
 // Write device blocks.
 // The caller must ensure that `data` is aligned at least as much as needed for DMA.
-void     device_block_write_blocks(device_t *device, uint64_t start, uint64_t count, void const *data);
+bool device_block_write_blocks(device_block_t *device, uint64_t start, uint64_t count, void const *data) {
+}
+
 // Read device blocks.
 // The caller must ensure that `data` is aligned at least as much as needed for DMA.
-void     device_block_read_blocks(device_t *device, uint64_t start, uint64_t count, void *data);
-// Erase blocks.
-void     device_block_erase_blocks(device_t *device, uint64_t start, uint64_t count, blkdev_erase_t mode);
+bool device_block_read_blocks(device_block_t *device, uint64_t start, uint64_t count, void *data) {
+}
 
-// Apply all pending changes.
-void device_block_sync_all(device_t *device);
-// Apply pending changes in a range of blocks.
-void device_block_sync_blocks(device_t *device, uint64_t start, uint64_t count);
-// Apply pending changes in a range of bytes.
-void device_block_sync_bytes(device_t *device, uint64_t offset, uint64_t size);
+// Erase blocks.
+bool device_block_erase_blocks(device_block_t *device, uint64_t start, uint64_t count, blkdev_erase_t mode) {
+}
 
 // Write block device bytes.
 // The alignment for DMA is handled by this function.
-void device_block_write_bytes(device_t *device, uint64_t offset, uint64_t size, void const *data);
+bool device_block_write_bytes(device_block_t *device, uint64_t offset, uint64_t size, void const *data) {
+}
+
 // Read block device bytes.
 // The alignment for DMA is handled by this function.
-void device_block_read_bytes(device_t *device, uint64_t offset, uint64_t size, void *data);
+bool device_block_read_bytes(device_block_t *device, uint64_t offset, uint64_t size, void *data) {
+}
+
 // Erase block device bytes.
-void device_block_erase_bytes(device_t *device, uint64_t offset, uint64_t size, blkdev_erase_t mode);
+bool device_block_erase_bytes(device_block_t *device, uint64_t offset, uint64_t size, blkdev_erase_t mode) {
+}
+
+
+
+// Apply all pending changes.
+bool device_block_sync_all(device_block_t *device) {
+}
+
+// Apply pending changes in a range of blocks.
+bool device_block_sync_blocks(device_block_t *device, uint64_t start, uint64_t count) {
+}
+
+// Apply pending changes in a range of bytes.
+bool device_block_sync_bytes(device_block_t *device, uint64_t offset, uint64_t size) {
+}

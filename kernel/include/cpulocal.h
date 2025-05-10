@@ -4,6 +4,7 @@
 #pragma once
 
 #include "cpu/arch_cpulocal.h"
+#include "device/class/irqctl.h"
 #include "time_private.h"
 
 #include <stddef.h>
@@ -29,6 +30,8 @@ typedef struct cpulocal_t {
     time_cpulocal_t   time;
     // Arch-specific CPU-local data.
     arch_cpulocal_t   arch;
+    // CPU's root interrupt controller.
+    device_t         *root_irqctl;
 } cpulocal_t;
 
 // Per-CPU CPU-local data.
