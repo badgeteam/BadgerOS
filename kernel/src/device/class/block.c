@@ -5,129 +5,357 @@
 
 #include "device/class/block.h"
 
+#include "assertions.h"
+#include "badge_strings.h"
+#include "cache.h"
+#include "log.h"
 #include "malloc.h"
-#include "mutex.h"
+#include "refcount.h"
+#include "time.h"
 
-
-
-// Block device cache entry.
-typedef struct {
-    // Actual device block index.
-    uint64_t block;
-    // Entry is present.
-    bool     is_present;
-    // Entry is dirty (cache newer than device).
-    bool     is_dirty;
-    // Entry is erase, not data.
-    bool     is_erase;
-    union {
-        // Data in this block.
-        uint8_t       *data;
-        // Block erase mode.
-        blkdev_erase_t erase_mode;
-    };
-} blk_cache_line_t;
-
-// Block device cache.
-struct blk_cache {
-    // Cache mutex; taken exclusive for syncing, shared for read/write ops.
-    mutex_t           mtx;
-    // Number of entries; must be a power of 2.
-    size_t            lines_len;
-    // Cache entries.
-    blk_cache_line_t *lines;
-};
-
-
-
-// Initialize a block device's cache.
-// Number of lines must be a power of 2 at least 4.
-// Optional for block devices with byte access methods.
-bool device_block_init_cache(device_block_t *device, size_t num_lines) {
-    // Allocate memory for the cache.
-    blk_cache_t *cache = malloc(sizeof(blk_cache_t));
-    if (!cache) {
-        return false;
-    }
-
-    cache->lines_len = num_lines;
-    cache->lines     = calloc(num_lines, sizeof(blk_cache_line_t));
-    if (!cache->lines) {
-        free(cache);
-        return false;
-    }
-
-    mutex_init(&cache->mtx, true);
-    return true;
-}
-
-// Clean up a block device's cache.
-// Implicitly called by the device subsystem if a `device_block_t` is freed.
-void device_block_free_cache(device_block_t *device) {
-    blk_cache_t *cache = device->cache;
-    if (!cache) {
-        return;
-    }
-    device->cache = NULL;
-
-    for (size_t i = 0; i < cache->lines_len; i++) {
-        if (cache->lines[i].is_present && !cache->lines[i].is_erase) {
-            free(cache->lines[i].data);
-        }
-    }
-    free(cache->lines);
-    free(cache);
-}
+#include <stdint.h>
 
 
 
 // Write device blocks.
-// The caller must ensure that `data` is aligned at least as much as needed for DMA.
+// The alignment for DMA is handled by this function.
 bool device_block_write_blocks(device_block_t *device, uint64_t start, uint64_t count, void const *data) {
-    __builtin_trap();
+    return device_block_write_bytes(device, start * device->block_size, count * device->block_size, data);
 }
 
 // Read device blocks.
-// The caller must ensure that `data` is aligned at least as much as needed for DMA.
+// The alignment for DMA is handled by this function.
 bool device_block_read_blocks(device_block_t *device, uint64_t start, uint64_t count, void *data) {
-    __builtin_trap();
+    return device_block_read_bytes(device, start * device->block_size, count * device->block_size, data);
 }
 
 // Erase blocks.
 bool device_block_erase_blocks(device_block_t *device, uint64_t start, uint64_t count, blkdev_erase_t mode) {
-    __builtin_trap();
+    return device_block_erase_bytes(device, start * device->block_size, count * device->block_size, mode);
 }
 
 // Write block device bytes.
 // The alignment for DMA is handled by this function.
-bool device_block_write_bytes(device_block_t *device, uint64_t offset, uint64_t size, void const *data) {
-    __builtin_trap();
+bool device_block_write_bytes(device_block_t *device, uint64_t offset, uint64_t size, void const *data0) {
+    uint8_t const *data = data0;
+    if (offset + size < offset || offset + size > device->block_size * device->block_count) {
+        logkf(
+            LOG_WARN,
+            "OOB block device access rejected; writing 0x%{u64;x} @ 0x%{u64;x} on a 0x%{u64;x}x0x%{u64;x} device",
+            offset,
+            size,
+            device->block_count,
+            device->block_size
+        );
+        return false;
+    }
+
+    driver_block_t const *driver = (void *)device->base.driver;
+    if (device->no_cache) {
+        return driver->write_bytes(device, offset, size, data);
+    }
+
+    // Get the offsets in blocks.
+    uint64_t start_block = offset / device->block_size;
+    uint64_t end_block   = (offset + size - 1) / device->block_size + 1;
+
+    uint64_t init_offset = offset;
+    for (uint64_t i = start_block; i < end_block; i++) {
+        // Get sub-block offsets.
+        uint64_t sub_offset = offset % device->block_size;
+        uint64_t sub_size   = size - sub_offset < device->block_size ? size - sub_offset : device->block_size;
+
+        // Try to read the data from the cache.
+        cache_data_t ent = cache_get(&device->cache, i);
+        if (ent.valid) {
+            // Data present in cache; copy into it.
+            mem_copy(ent.buffer->data + sub_offset, data + offset - init_offset, sub_size);
+            rc_delete(ent.buffer);
+
+        } else {
+            // Try to cache a read from the device, then write.
+            if (!cache_lock(&device->cache, i, TIMESTAMP_US_MAX)) {
+                return false;
+            }
+
+            cache_data_t existing = cache_get_unsafe(&device->cache, i);
+            if (existing.valid) {
+                // Some other thread read it first; copy into it as normal.
+                mem_copy(existing.buffer->data + sub_offset, data + offset - init_offset, sub_size);
+                rc_delete(existing.buffer);
+
+            } else {
+                // Cache is indeed still empty; make new entry.
+                void *raw_buf = malloc(device->block_size);
+                if (!raw_buf) {
+                    return false;
+                }
+                cache_data_t new_ent = {
+                    .valid    = true,
+                    .is_dirty = false,
+                    .buffer   = rc_new(raw_buf, free),
+                };
+                if (!new_ent.buffer) {
+                    free(raw_buf);
+                    return false;
+                }
+
+                // Read the data and copy into it.
+                driver->read_blocks(device, i, 1, new_ent.buffer->data);
+                mem_copy(new_ent.buffer->data + sub_offset, data + offset - init_offset, sub_size);
+
+                // Try to insert the data into the cache.
+                if (!cache_set_unsafe(&device->cache, i, new_ent)) {
+                    rc_delete(new_ent.buffer);
+                    return false;
+                }
+            }
+
+            cache_unlock(&device->cache, i);
+        }
+
+        // Increment offsets.
+        offset += sub_size;
+        size   -= sub_size;
+    }
+
+    return true;
 }
 
 // Read block device bytes.
 // The alignment for DMA is handled by this function.
-bool device_block_read_bytes(device_block_t *device, uint64_t offset, uint64_t size, void *data) {
-    __builtin_trap();
+bool device_block_read_bytes(device_block_t *device, uint64_t offset, uint64_t size, void *data0) {
+    uint8_t *data = data0;
+    if (offset + size < offset || offset + size > device->block_size * device->block_count) {
+        logkf(
+            LOG_WARN,
+            "OOB block device access rejected; reading 0x%{u64;x} @ 0x%{u64;x} on a 0x%{u64;x}x0x%{u64;x} device",
+            offset,
+            size,
+            device->block_count,
+            device->block_size
+        );
+        return false;
+    }
+
+    driver_block_t const *driver = (void *)device->base.driver;
+    if (device->no_cache) {
+        return driver->read_bytes(device, offset, size, data);
+    }
+
+    // Get the offsets in blocks.
+    uint64_t start_block = offset / device->block_size;
+    uint64_t end_block   = (offset + size - 1) / device->block_size + 1;
+
+    uint64_t init_offset = offset;
+    for (uint64_t i = start_block; i < end_block; i++) {
+        // Get sub-block offsets.
+        uint64_t sub_offset = offset % device->block_size;
+        uint64_t sub_size   = size - sub_offset < device->block_size ? size - sub_offset : device->block_size;
+
+        // Try to read the data from the cache.
+        cache_data_t ent = cache_get(&device->cache, i);
+        if (ent.valid) {
+            // Data present in cache; copy from it.
+            mem_copy(data + offset - init_offset, ent.buffer->data + sub_offset, sub_size);
+            rc_delete(ent.buffer);
+
+        } else if (device->no_read_cache) {
+            // Device wants no read caching; ask it to read directly.
+            driver->read_bytes(device, offset, sub_size, data + offset - init_offset);
+
+        } else {
+            // Try to cache a read from the device.
+            if (!cache_lock(&device->cache, i, TIMESTAMP_US_MAX)) {
+                return false;
+            }
+
+            cache_data_t existing = cache_get_unsafe(&device->cache, i);
+            if (existing.valid) {
+                // Some other thread read it first; copy out as normal.
+                mem_copy(data + offset - init_offset, existing.buffer->data + sub_offset, sub_size);
+                rc_delete(existing.buffer);
+
+            } else {
+                // Cache is indeed still empty; make new entry.
+                void *raw_buf = malloc(device->block_size);
+                if (!raw_buf) {
+                    return false;
+                }
+                cache_data_t new_ent = {
+                    .valid    = true,
+                    .is_dirty = false,
+                    .buffer   = rc_new(raw_buf, free),
+                };
+                if (!new_ent.buffer) {
+                    free(raw_buf);
+                    return false;
+                }
+
+                // Read the data and copy it out.
+                driver->read_blocks(device, i, 1, new_ent.buffer->data);
+                mem_copy(data + offset - init_offset, new_ent.buffer->data + sub_offset, sub_size);
+
+                // Try to insert the data into the cache.
+                if (!cache_set_unsafe(&device->cache, i, new_ent)) {
+                    rc_delete(new_ent.buffer);
+                }
+            }
+
+            cache_unlock(&device->cache, i);
+        }
+
+        // Increment offsets.
+        offset += sub_size;
+        size   -= sub_size;
+    }
+
+    return true;
 }
 
 // Erase block device bytes.
 bool device_block_erase_bytes(device_block_t *device, uint64_t offset, uint64_t size, blkdev_erase_t mode) {
-    __builtin_trap();
+    if (offset + size < offset || offset + size > device->block_size * device->block_count) {
+        logkf(
+            LOG_WARN,
+            "OOB block device access rejected; erasing 0x%{u64;x} @ 0x%{u64;x} on a 0x%{u64;x}x0x%{u64;x} device",
+            offset,
+            size,
+            device->block_count,
+            device->block_size
+        );
+        return false;
+    }
+
+    driver_block_t const *driver = (void *)device->base.driver;
+    if (device->no_cache) {
+        return driver->erase_bytes(device, offset, size, mode);
+    }
+
+    // Get the offsets in blocks.
+    uint64_t start_block = offset / device->block_size;
+    uint64_t end_block   = (offset + size - 1) / device->block_size + 1;
+
+    uint8_t erase_value = mode == BLKDEV_ERASE_NATIVE ? device->erase_value : 0;
+    for (uint64_t i = start_block; i < end_block; i++) {
+        // Get sub-block offsets.
+        uint64_t sub_offset = offset % device->block_size;
+        uint64_t sub_size   = size - sub_offset < device->block_size ? size - sub_offset : device->block_size;
+
+        // Try to read the data from the cache.
+        cache_data_t ent = cache_get(&device->cache, i);
+        if (ent.valid) {
+            // Data present in cache; copy into it.
+            mem_set(ent.buffer->data + sub_offset, erase_value, sub_size);
+            rc_delete(ent.buffer);
+
+        } else {
+            // Try to cache a read from the device, then write.
+            if (!cache_lock(&device->cache, i, TIMESTAMP_US_MAX)) {
+                return false;
+            }
+
+            // Make new entry.
+            void *raw_buf = malloc(device->block_size);
+            if (!raw_buf) {
+                return false;
+            }
+            cache_data_t new_ent = {
+                .valid    = true,
+                .is_dirty = false,
+                .buffer   = rc_new(raw_buf, free),
+            };
+            if (!new_ent.buffer) {
+                free(raw_buf);
+                return false;
+            }
+
+            // Fill the new buffer with the erase value.
+            mem_set(new_ent.buffer->data + sub_offset, erase_value, sub_size);
+
+            // Try to insert the data into the cache.
+            if (!cache_set_unsafe(&device->cache, i, new_ent)) {
+                rc_delete(new_ent.buffer);
+                return false;
+            }
+
+            cache_unlock(&device->cache, i);
+        }
+
+        // Increment offsets.
+        offset += sub_size;
+        size   -= sub_size;
+    }
+
+    return true;
 }
 
 
 
 // Apply all pending changes.
-bool device_block_sync_all(device_block_t *device) {
-    __builtin_trap();
+bool device_block_sync_all(device_block_t *device, bool flush) {
+    return device_block_sync_blocks(device, 0, device->block_count, flush);
+}
+
+static bool device_block_sync_block(device_block_t *device, uint64_t block, bool flush) {
+    if (block > device->block_count) {
+        logkf(LOG_WARN, "OOB block device sync ignored; syncing at 0x%{u64;x}", block * device->block_size);
+        return true;
+    }
+
+    if (!cache_lock(&device->cache, block, TIMESTAMP_US_MAX)) {
+        return false;
+    }
+
+    driver_block_t const *driver = (void *)device->base.driver;
+    cache_data_t          ent    = cache_get(&device->cache, block);
+    if (!ent.valid) {
+        // No data; no need to sync.
+        cache_unlock_remove(&device->cache, block);
+        return true;
+    }
+
+    bool success = true;
+    if (ent.is_dirty) {
+        success = driver->write_blocks(device, block, 1, ent.buffer->data);
+        if (!success) {
+            logkf(
+                LOG_WARN,
+                "Block device sync failed at 0x%{u64;x}; write data remains cached",
+                block * device->block_size
+            );
+        }
+    }
+    rc_delete(ent.buffer);
+
+    if (flush && success) {
+        cache_unlock_remove(&device->cache, block);
+    } else {
+        if (success) {
+            cache_mark_clean_unsafe(&device->cache, block);
+        }
+        cache_unlock(&device->cache, block);
+    }
+
+    return success;
 }
 
 // Apply pending changes in a range of blocks.
-bool device_block_sync_blocks(device_block_t *device, uint64_t start, uint64_t count) {
-    __builtin_trap();
+bool device_block_sync_blocks(device_block_t *device, uint64_t start, uint64_t count, bool flush) {
+    for (; count; start++, count--) {
+        if (!device_block_sync_block(device, start, flush)) {
+            return false;
+        }
+    }
+    return true;
 }
 
 // Apply pending changes in a range of bytes.
-bool device_block_sync_bytes(device_block_t *device, uint64_t offset, uint64_t size) {
-    __builtin_trap();
+bool device_block_sync_bytes(device_block_t *device, uint64_t offset, uint64_t size, bool flush) {
+    size   += offset & (device->block_size - 1);
+    offset -= offset & (device->block_size - 1);
+    if (size & (device->block_size - 1)) {
+        size += device->block_size - (size & (device->block_size - 1));
+    }
+    return device_block_sync_blocks(device, offset / device->block_size, size / device->block_size, flush);
 }
