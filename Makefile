@@ -72,6 +72,14 @@ burn:
 	$(MAKE) -C files build
 	$(MAKE) -C kernel burn
 
+.PHONY: atftp
+atftp:
+	mkdir -p /srv/atftp/boot/
+	cp kernel/port/generic/limine.conf /srv/atftp/boot/
+	cp kernel/lib/limine/BOOTRISCV64.EFI /srv/atftp/boot/
+	cp kernel/firmware/badger-os.elf /srv/atftp/boot/
+	rsync -r --del --mkpath files/root /srv/atftp/
+
 .PHONY: monitor
 monitor:
 	$(MAKE) -C kernel monitor
