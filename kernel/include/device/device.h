@@ -62,6 +62,8 @@ struct device {
     size_t          irq_count;
     // Outgoing interrupt connections; list of `irqconn_t`.
     dlist_t        *irq_parents;
+    // Additional driver-specific data, if any.
+    void           *cookie;
 };
 
 // A device interrupt pin connection.

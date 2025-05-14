@@ -4,6 +4,8 @@
 #pragma once
 
 #include "attributes.h"
+#include "device/pci/bar.h"
+#include "device/pci/class.h"
 
 #include <stdbool.h>
 #include <stddef.h>

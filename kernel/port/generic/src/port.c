@@ -190,7 +190,7 @@ void port_postheap_init() {
 void port_init() {
     if (dtb_req.response) {
         // Parse and process DTB.
-        // dtdump(dtb_req.response->dtb_ptr);
+        dtdump(dtb_req.response->dtb_ptr);
         dtparse(dtb_req.response->dtb_ptr);
     } else {
         // Initialize ACPI.

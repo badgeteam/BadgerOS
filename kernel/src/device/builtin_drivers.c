@@ -11,8 +11,8 @@
 
 static void add_builtin_drivers() {
     driver_add(&driver_generic_pcie.base);
-    driver_add(&driver_generic_ahci.base);
-    driver_add(&driver_generic_sata.base);
+    // driver_add(&driver_generic_ahci.base);
+    // driver_add(&driver_generic_sata.base);
 }
 
 static void dummy() {
