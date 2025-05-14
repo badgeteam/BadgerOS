@@ -4,9 +4,9 @@
 #pragma once
 
 #include "attributes.h"
-#include "driver/pcie/bar.h"
-#include "driver/pcie/class.h"
-#include "driver/pcie/confspace.h"
+#include "device/pci/bar.h"
+#include "device/pci/class.h"
+#include "device/pci/confspace.h"
 
 // TODO: Support for plain-old PCI.
 
