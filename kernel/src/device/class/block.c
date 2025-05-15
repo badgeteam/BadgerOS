@@ -10,6 +10,7 @@
 #include "cache.h"
 #include "log.h"
 #include "malloc.h"
+#include "mutex.h"
 #include "refcount.h"
 #include "time.h"
 
@@ -50,9 +51,12 @@ bool device_block_write_bytes(device_block_t *device, uint64_t offset, uint64_t 
         return false;
     }
 
+    mutex_acquire_shared(&device->base.driver_mtx, TIMESTAMP_US_MAX);
     driver_block_t const *driver = (void *)device->base.driver;
     if (device->no_cache) {
-        return driver->write_bytes(device, offset, size, data);
+        bool success = driver->write_bytes(device, offset, size, data);
+        mutex_release_shared(&device->base.driver_mtx);
+        return success;
     }
 
     // Get the offsets in blocks.
@@ -75,6 +79,7 @@ bool device_block_write_bytes(device_block_t *device, uint64_t offset, uint64_t 
         } else {
             // Try to cache a read from the device, then write.
             if (!cache_lock(&device->cache, i, TIMESTAMP_US_MAX)) {
+                mutex_release_shared(&device->base.driver_mtx);
                 return false;
             }
 
@@ -88,6 +93,7 @@ bool device_block_write_bytes(device_block_t *device, uint64_t offset, uint64_t 
                 // Cache is indeed still empty; make new entry.
                 void *raw_buf = malloc(device->block_size);
                 if (!raw_buf) {
+                    mutex_release_shared(&device->base.driver_mtx);
                     return false;
                 }
                 cache_data_t new_ent = {
@@ -97,6 +103,7 @@ bool device_block_write_bytes(device_block_t *device, uint64_t offset, uint64_t 
                 };
                 if (!new_ent.buffer) {
                     free(raw_buf);
+                    mutex_release_shared(&device->base.driver_mtx);
                     return false;
                 }
 
@@ -107,6 +114,7 @@ bool device_block_write_bytes(device_block_t *device, uint64_t offset, uint64_t 
                 // Try to insert the data into the cache.
                 if (!cache_set_unsafe(&device->cache, i, new_ent)) {
                     rc_delete(new_ent.buffer);
+                    mutex_release_shared(&device->base.driver_mtx);
                     return false;
                 }
             }
@@ -119,6 +127,7 @@ bool device_block_write_bytes(device_block_t *device, uint64_t offset, uint64_t 
         size   -= sub_size;
     }
 
+    mutex_release_shared(&device->base.driver_mtx);
     return true;
 }
 
@@ -138,9 +147,12 @@ bool device_block_read_bytes(device_block_t *device, uint64_t offset, uint64_t s
         return false;
     }
 
+    mutex_acquire_shared(&device->base.driver_mtx, TIMESTAMP_US_MAX);
     driver_block_t const *driver = (void *)device->base.driver;
     if (device->no_cache) {
-        return driver->read_bytes(device, offset, size, data);
+        bool success = driver->read_bytes(device, offset, size, data);
+        mutex_release_shared(&device->base.driver_mtx);
+        return success;
     }
 
     // Get the offsets in blocks.
@@ -167,6 +179,7 @@ bool device_block_read_bytes(device_block_t *device, uint64_t offset, uint64_t s
         } else {
             // Try to cache a read from the device.
             if (!cache_lock(&device->cache, i, TIMESTAMP_US_MAX)) {
+                mutex_release_shared(&device->base.driver_mtx);
                 return false;
             }
 
@@ -180,6 +193,7 @@ bool device_block_read_bytes(device_block_t *device, uint64_t offset, uint64_t s
                 // Cache is indeed still empty; make new entry.
                 void *raw_buf = malloc(device->block_size);
                 if (!raw_buf) {
+                    mutex_release_shared(&device->base.driver_mtx);
                     return false;
                 }
                 cache_data_t new_ent = {
@@ -189,6 +203,7 @@ bool device_block_read_bytes(device_block_t *device, uint64_t offset, uint64_t s
                 };
                 if (!new_ent.buffer) {
                     free(raw_buf);
+                    mutex_release_shared(&device->base.driver_mtx);
                     return false;
                 }
 
@@ -210,6 +225,7 @@ bool device_block_read_bytes(device_block_t *device, uint64_t offset, uint64_t s
         size   -= sub_size;
     }
 
+    mutex_release_shared(&device->base.driver_mtx);
     return true;
 }
 
@@ -227,9 +243,12 @@ bool device_block_erase_bytes(device_block_t *device, uint64_t offset, uint64_t 
         return false;
     }
 
+    mutex_acquire_shared(&device->base.driver_mtx, TIMESTAMP_US_MAX);
     driver_block_t const *driver = (void *)device->base.driver;
     if (device->no_cache) {
-        return driver->erase_bytes(device, offset, size, mode);
+        bool success = driver->erase_bytes(device, offset, size, mode);
+        mutex_release_shared(&device->base.driver_mtx);
+        return success;
     }
 
     // Get the offsets in blocks.
@@ -252,12 +271,14 @@ bool device_block_erase_bytes(device_block_t *device, uint64_t offset, uint64_t 
         } else {
             // Try to cache a read from the device, then write.
             if (!cache_lock(&device->cache, i, TIMESTAMP_US_MAX)) {
+                mutex_release_shared(&device->base.driver_mtx);
                 return false;
             }
 
             // Make new entry.
             void *raw_buf = malloc(device->block_size);
             if (!raw_buf) {
+                mutex_release_shared(&device->base.driver_mtx);
                 return false;
             }
             cache_data_t new_ent = {
@@ -267,6 +288,7 @@ bool device_block_erase_bytes(device_block_t *device, uint64_t offset, uint64_t 
             };
             if (!new_ent.buffer) {
                 free(raw_buf);
+                mutex_release_shared(&device->base.driver_mtx);
                 return false;
             }
 
@@ -276,6 +298,7 @@ bool device_block_erase_bytes(device_block_t *device, uint64_t offset, uint64_t 
             // Try to insert the data into the cache.
             if (!cache_set_unsafe(&device->cache, i, new_ent)) {
                 rc_delete(new_ent.buffer);
+                mutex_release_shared(&device->base.driver_mtx);
                 return false;
             }
 
@@ -287,6 +310,7 @@ bool device_block_erase_bytes(device_block_t *device, uint64_t offset, uint64_t 
         size   -= sub_size;
     }
 
+    mutex_release_shared(&device->base.driver_mtx);
     return true;
 }
 
@@ -342,11 +366,18 @@ static bool device_block_sync_block(device_block_t *device, uint64_t block, bool
 
 // Apply pending changes in a range of blocks.
 bool device_block_sync_blocks(device_block_t *device, uint64_t start, uint64_t count, bool flush) {
+    mutex_acquire_shared(&device->base.driver_mtx, TIMESTAMP_US_MAX);
+    if (!device->base.driver) {
+        mutex_release_shared(&device->base.driver_mtx);
+        return false;
+    }
     for (; count; start++, count--) {
         if (!device_block_sync_block(device, start, flush)) {
+            mutex_release_shared(&device->base.driver_mtx);
             return false;
         }
     }
+    mutex_release_shared(&device->base.driver_mtx);
     return true;
 }
 

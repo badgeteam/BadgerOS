@@ -57,6 +57,8 @@ struct device {
     atomic_int      refcount;
     // What class of device this is; must be equal to that of the driver.
     dev_class_t     dev_class;
+    // Mutex guarding the driver.
+    mutex_t         driver_mtx;
     // Assigned driver.
     driver_t const *driver;
     // Set of children.

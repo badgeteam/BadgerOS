@@ -35,6 +35,8 @@ static device_union_t **devs;
 static uint32_t         id_ctr;
 // Devices list mutex.
 static mutex_t          devs_mtx     = MUTEX_T_INIT_SHARED;
+// Drivers set mutex.
+static mutex_t          drivers_mtx  = MUTEX_T_INIT_SHARED;
 // Set of drivers.
 static set_t            drivers      = PTR_SET_EMPTY;
 // Spinlock guarding interrupt graph changes.
@@ -89,6 +91,7 @@ bool device_test_dtb_compat(device_info_t const *info, size_t compats_len, char 
 static bool device_init(device_union_t *device) {
     device->base.children  = malloc(sizeof(set_t));
     *device->base.children = PTR_SET_EMPTY;
+    mutex_init(&device->base.driver_mtx, true);
 
     for (size_t i = 0; i < device->base.info.addrs_len; i++) {
         if (device->base.info.addrs[i].type == DEV_ATYPE_MMIO) {
@@ -152,23 +155,56 @@ static void device_deinit(device_union_t *device) {
 
 // Register a device to a certain driver.
 // Initializes all data used by devices with drivers.
+// Returns `true` if the device has a driver by the end, which may or may not be `driver`.
 static bool device_add_to_driver(device_union_t *device, driver_t const *driver) {
+    mutex_acquire(&device->base.driver_mtx, TIMESTAMP_US_MAX);
+
+    if (device->base.driver) {
+        // Device had already received a driver.
+        mutex_release(&device->base.driver_mtx);
+        return true;
+    }
+
     dev_class_t dev_class   = device->base.dev_class;
     bool        match_class = (dev_class == DEV_CLASS_UNKNOWN || dev_class == driver->dev_class);
     if (match_class && driver->match(&device->base.info) && driver->add(&device->base)) {
         device->base.dev_class = driver->dev_class;
-        device->base.driver    = driver;
+
+        // Take the irq spinlock around the driver set to guard against partial write of the field during an interrupt.
+        assert_dev_keep(irq_disable());
+        spinlock_take(&irqconn_lock);
+        device->base.driver = driver;
+        spinlock_release(&irqconn_lock);
+        irq_enable();
+
+        mutex_release(&device->base.driver_mtx);
         return true;
     }
+
+    mutex_release(&device->base.driver_mtx);
     return false;
 }
 
-// Remove a device from a certain driver.
+// Remove a device from its driver.
 // Frees all memory used by devices with drivers.
 static void device_remove_from_driver(device_union_t *device) {
-    assert_dev_drop(device->base.driver);
-    device->base.driver->remove(&device->base);
-    device->base.driver = NULL;
+    mutex_acquire(&device->base.driver_mtx, TIMESTAMP_US_MAX);
+
+    if (device->base.driver) {
+        driver_t const *driver = device->base.driver;
+
+        // Take the irq spinlock around the driver set to guard against partial write of the field during an interrupt.
+        assert_dev_keep(irq_disable());
+        spinlock_take(&irqconn_lock);
+        device->base.driver = NULL;
+        spinlock_release(&irqconn_lock);
+        irq_enable();
+
+        // Only actually remove from driver afterward to prevent an interrupt from getting to this driver mid-removal.
+        driver->remove(&device->base);
+    }
+
+    mutex_release(&device->base.driver_mtx);
 }
 
 // Search for a driver for a device and if found, add it to that driver.
@@ -516,15 +552,18 @@ bool device_unlink_irq(device_t *child, irqpin_t child_pin, device_t *parent, ir
 
 // Enable an outgoing interrupt.
 bool device_enable_irq_out(device_t *device, irqpin_t irq_out_pin, bool enabled) {
-    if (!device->driver)
-        return false;
-    return device->driver->enable_irq_out(device, irq_out_pin, enabled);
+    mutex_acquire_shared(&device->driver_mtx, TIMESTAMP_US_MAX);
+    bool success = device->driver && device->driver->enable_irq_out(device, irq_out_pin, enabled);
+    mutex_release_shared(&device->driver_mtx);
+    return success;
 }
 
 // Cascade-enable an interrupt output.
 bool device_cascade_enable_irq_out(device_t *device, irqpin_t irq_out_pin) {
+    mutex_acquire_shared(&device->driver_mtx, TIMESTAMP_US_MAX);
     if (!device->driver || !device->irq_parents[irq_out_pin].len ||
         !device->driver->enable_irq_out(device, irq_out_pin, true)) {
+        mutex_release_shared(&device->driver_mtx);
         return false;
     }
     dlist_foreach(irqconn_t, conn, child.node, &device->irq_parents[irq_out_pin]) {
@@ -534,14 +573,17 @@ bool device_cascade_enable_irq_out(device_t *device, irqpin_t irq_out_pin) {
         }
         parent->driver->cascase_enable_irq(parent, conn->parent.pin);
     }
+    mutex_release_shared(&device->driver_mtx);
     return true;
 }
 
 // Enable an incoming interrupt.
 bool device_enable_irq_in(device_t *device, irqpin_t irq_in_pin, bool enabled) {
-    if (!device->driver || !device->driver->enable_irq_in)
-        return false;
-    return device->driver->enable_irq_in(device, irq_in_pin, enabled);
+    mutex_acquire_shared(&device->driver_mtx, TIMESTAMP_US_MAX);
+    bool success =
+        device->driver && device->driver->enable_irq_in && device->driver->enable_irq_in(device, irq_in_pin, enabled);
+    mutex_release_shared(&device->driver_mtx);
+    return success;
 }
 
 // Send an interrupt to all children on a certain pin.
@@ -570,9 +612,12 @@ void device_interrupt(device_t *device, irqpin_t irq_pin) {
 
 // Register a new driver.
 bool driver_add(driver_t const *driver) {
+    mutex_acquire(&drivers_mtx, TIMESTAMP_US_MAX);
     if (!set_add(&drivers, driver)) {
+        mutex_release(&drivers_mtx);
         return false;
     }
+    mutex_release(&drivers_mtx);
 
     // Try to match driverless devices against this driver.
     mutex_acquire(&devs_mtx, TIMESTAMP_US_MAX);
@@ -588,9 +633,12 @@ bool driver_add(driver_t const *driver) {
 
 // Remove a driver.
 bool driver_remove(driver_t const *driver) {
+    mutex_acquire(&drivers_mtx, TIMESTAMP_US_MAX);
     if (!set_remove(&drivers, driver)) {
+        mutex_release(&drivers_mtx);
         return false;
     }
+    mutex_release(&drivers_mtx);
 
     // Remove all devices from this driver.
     for (size_t i = 0; i < devs_len; i++) {

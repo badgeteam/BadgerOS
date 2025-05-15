@@ -78,7 +78,9 @@ static void device_pcictl_dev_detect(device_pcictl_t *device, uint8_t bus, uint8
 
 // Enumerate a PCI or PCIe bus, adding or removing devices accordingly.
 void device_pcictl_enumerate(device_pcictl_t *device) {
+    mutex_acquire_shared(&device->base.driver_mtx, TIMESTAMP_US_MAX);
     if (!device->base.driver) {
+        mutex_release_shared(&device->base.driver_mtx);
         return;
     }
     for (unsigned bus = device->bus_start; bus <= device->bus_end; bus++) {
@@ -86,4 +88,5 @@ void device_pcictl_enumerate(device_pcictl_t *device) {
             device_pcictl_dev_detect(device, bus, dev);
         }
     }
+    mutex_release_shared(&device->base.driver_mtx);
 }
