@@ -166,12 +166,12 @@ void pcie_generic_cam_write(device_pcictl_t *device, uint32_t addr, uint32_t len
 
 // Built-in generic ECAM PCIe driver.
 driver_pcictl_t const driver_generic_pcie = {
-    .base.dev_class  = DEV_CLASS_PCICTL,
-    .base.match      = pcie_generic_match,
-    .base.add        = pcie_generic_add,
-    .base.remove     = pcie_generic_remove,
-    .base.interrupt  = pcie_generic_interrupt,
-    .base.enable_irq = pcie_generic_enable_irq,
-    .cam_read        = pcie_generic_cam_read,
-    .cam_write       = pcie_generic_cam_write,
+    .base.dev_class      = DEV_CLASS_PCICTL,
+    .base.match          = pcie_generic_match,
+    .base.add            = pcie_generic_add,
+    .base.remove         = pcie_generic_remove,
+    .base.interrupt      = pcie_generic_interrupt,
+    .base.enable_irq_out = pcie_generic_enable_irq,
+    .cam_read            = pcie_generic_cam_read,
+    .cam_write           = pcie_generic_cam_write,
 };

@@ -10,8 +10,6 @@
 #include "badge_strings.h"
 #include "cache.h"
 #include "cpu/interrupt.h"
-#include "device/class/block.h"
-#include "device/class/irqctl.h"
 #include "device/class/union.h"
 #include "device/dev_addr.h"
 #include "device/dev_class.h"
@@ -21,6 +19,7 @@
 #include "mutex.h"
 #include "port/hardware_allocation.h"
 #include "set.h"
+#include "spinlock.h"
 #include "time.h"
 
 #include <stdbool.h>
@@ -35,9 +34,11 @@ static device_union_t **devs;
 // Device ID counter.
 static uint32_t         id_ctr;
 // Devices list mutex.
-static mutex_t          devs_mtx = MUTEX_T_INIT_SHARED;
+static mutex_t          devs_mtx     = MUTEX_T_INIT_SHARED;
 // Set of drivers.
-static set_t            drivers  = PTR_SET_EMPTY;
+static set_t            drivers      = PTR_SET_EMPTY;
+// Spinlock guarding interrupt graph changes.
+static spinlock_t       irqconn_lock = SPINLOCK_T_INIT_SHARED;
 
 
 
@@ -182,17 +183,11 @@ static void device_try_find_driver(device_union_t *device) {
 // Add a device interrupt link; child is the device that generates the interrupt, parent the one that receives it.
 // Any device interrupt pin can be connected to any number of opposite pins, but the resulting graph must be acyclic.
 // If a device has incoming interrupts then it must be an interrupt controller and only such drivers can match.
-bool device_link_irq_impl(device_union_t *child, irqpin_t child_pin, device_irqctl_t *parent, irqpin_t parent_pin) {
+bool device_link_irq_impl(device_union_t *child, irqpin_t child_pin, device_union_t *parent, irqpin_t parent_pin) {
     // Enfore both devices are in the tree.
     if (!child->base.info.id || !parent->base.info.id) {
         return false;
     }
-
-    // Enforce that the parent is classified as an interrupt controller.
-    if (parent->base.dev_class != DEV_CLASS_IRQCTL && parent->base.dev_class != DEV_CLASS_UNKNOWN) {
-        return false;
-    }
-    parent->base.dev_class = DEV_CLASS_IRQCTL;
 
     // Create a struct to represent the connection.
     irqconn_t *conn = calloc(1, sizeof(irqconn_t));
@@ -206,20 +201,15 @@ bool device_link_irq_impl(device_union_t *child, irqpin_t child_pin, device_irqc
 
     // Register the connection to both.
     dlist_append(&child->base.irq_parents[child_pin], &conn->child.node);
-    dlist_append(&parent->irq_children[parent_pin], &conn->parent.node);
+    dlist_append(&parent->base.irq_children[parent_pin], &conn->parent.node);
 
     return true;
 }
 
 // Remove a device interrupt link; see `device_link_irq`.
-bool device_unlink_irq_impl(device_union_t *child, irqpin_t child_pin, device_irqctl_t *parent, irqpin_t parent_pin) {
+bool device_unlink_irq_impl(device_union_t *child, irqpin_t child_pin, device_union_t *parent, irqpin_t parent_pin) {
     // Enfore both devices are in the tree.
     if (!child->base.info.id || !parent->base.info.id) {
-        return false;
-    }
-
-    // Enforce that the parent is classified as an interrupt controller.
-    if (parent->base.dev_class != DEV_CLASS_IRQCTL) {
         return false;
     }
 
@@ -228,15 +218,15 @@ bool device_unlink_irq_impl(device_union_t *child, irqpin_t child_pin, device_ir
         if (conn->parent.device == &parent->base && conn->parent.pin == parent_pin) {
             // Disable interrupt, if possible, on both sides.
             if (child->base.driver) {
-                child->base.driver->enable_irq(&child->base, child_pin, false);
+                child->base.driver->enable_irq_out(&child->base, child_pin, false);
             }
             if (parent->base.driver) {
-                ((driver_irqctl_t const *)parent->base.driver)->enable_in(parent, parent_pin, false);
+                parent->base.driver->enable_irq_in(&parent->base, parent_pin, false);
             }
 
             // Remove the connection from both.
             dlist_remove(&child->base.irq_parents[child_pin], &conn->child.node);
-            dlist_remove(&parent->irq_children[parent_pin], &conn->parent.node);
+            dlist_remove(&parent->base.irq_children[parent_pin], &conn->parent.node);
 
             // Free memory.
             free(conn);
@@ -301,10 +291,10 @@ static uint32_t device_remove_impl(uint32_t id) {
         device_union_t *device = devs[res.index];
 
         // Disconnect from interrupt parents, if any.
-        for (size_t i = 0; i < device->base.irq_count; i++) {
+        for (size_t i = 0; i < device->base.irq_parents_count; i++) {
             while (device->base.irq_parents[i].len) {
                 irqconn_t conn = *(irqconn_t *)device->base.irq_parents[i].head;
-                device_unlink_irq_impl(device, i, (device_irqctl_t *)conn.parent.device, conn.parent.pin);
+                device_unlink_irq_impl(device, i, (device_union_t *)conn.parent.device, conn.parent.pin);
             }
         }
 
@@ -506,20 +496,74 @@ set_t device_get_filtered(dev_filter_t const *filter) {
 // Any device interrupt pin can be connected to any number of opposite pins, but the resulting graph must be acyclic.
 // If a device has incoming interrupts then it must be an interrupt controller and only such drivers can match.
 bool device_link_irq(device_t *child, irqpin_t child_pin, device_t *parent, irqpin_t parent_pin) {
-    return device_link_irq_impl((device_union_t *)child, child_pin, (device_irqctl_t *)parent, parent_pin);
+    assert_dev_keep(irq_disable());
+    spinlock_take(&irqconn_lock);
+    bool success = device_link_irq_impl((device_union_t *)child, child_pin, (device_union_t *)parent, parent_pin);
+    spinlock_release(&irqconn_lock);
+    irq_enable();
+    return success;
 }
 
 // Remove a device interrupt link; see `device_link_irq`.
 bool device_unlink_irq(device_t *child, irqpin_t child_pin, device_t *parent, irqpin_t parent_pin) {
-    return device_unlink_irq_impl((device_union_t *)child, child_pin, (device_irqctl_t *)parent, parent_pin);
+    assert_dev_keep(irq_disable());
+    spinlock_take(&irqconn_lock);
+    bool success = device_unlink_irq_impl((device_union_t *)child, child_pin, (device_union_t *)parent, parent_pin);
+    spinlock_release(&irqconn_lock);
+    irq_enable();
+    return success;
 }
+
+// Enable an outgoing interrupt.
+bool device_enable_irq_out(device_t *device, irqpin_t irq_out_pin, bool enabled) {
+    if (!device->driver)
+        return false;
+    return device->driver->enable_irq_out(device, irq_out_pin, enabled);
+}
+
+// Cascade-enable an interrupt output.
+bool device_cascade_enable_irq_out(device_t *device, irqpin_t irq_out_pin) {
+    if (!device->driver || !device->irq_parents[irq_out_pin].len ||
+        !device->driver->enable_irq_out(device, irq_out_pin, true)) {
+        return false;
+    }
+    dlist_foreach(irqconn_t, conn, child.node, &device->irq_parents[irq_out_pin]) {
+        device_t *parent = conn->parent.device;
+        if (!parent->driver || !parent->driver->cascase_enable_irq) {
+            continue;
+        }
+        parent->driver->cascase_enable_irq(parent, conn->parent.pin);
+    }
+    return true;
+}
+
+// Enable an incoming interrupt.
+bool device_enable_irq_in(device_t *device, irqpin_t irq_in_pin, bool enabled) {
+    if (!device->driver || !device->driver->enable_irq_in)
+        return false;
+    return device->driver->enable_irq_in(device, irq_in_pin, enabled);
+}
+
+// Send an interrupt to all children on a certain pin.
+void device_forward_interrupt(device_t *device, irqpin_t irq_in_pin) {
+    assert_dev_drop(!irq_is_enabled());
+    dlist_foreach(irqconn_t, conn, parent.node, &device->irq_children[irq_in_pin]) {
+        if (conn->child.device->driver) {
+            conn->child.device->driver->interrupt(conn->child.device, conn->child.pin);
+        }
+    }
+}
+
+
 
 // Notify of a device interrupt.
 void device_interrupt(device_t *device, irqpin_t irq_pin) {
     assert_dev_drop(!irq_is_enabled());
+    spinlock_take_shared(&irqconn_lock);
     if (device->driver) {
         device->driver->interrupt(device, irq_pin);
     }
+    spinlock_release_shared(&irqconn_lock);
 }
 
 

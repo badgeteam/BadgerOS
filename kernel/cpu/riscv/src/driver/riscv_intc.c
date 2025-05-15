@@ -5,11 +5,7 @@
 
 #include "cpu/driver/riscv_intc.h"
 
-#include "badge_strings.h"
-#include "cpu/isr_ctx.h"
-#include "cpu/regs.h"
 #include "cpu/riscv.h"
-#include "cpulocal.h"
 #include "device/class/irqctl.h"
 #include "device/device.h"
 #include "log.h"
@@ -34,13 +30,14 @@ void riscv_intc_remove(device_t *device) {
 
 void riscv_intc_interrupt(device_t *device, irqpin_t pin) {
     device_irqctl_t *irqctl = (void *)device;
-    if (pin == RISCV_INT_SUPERVISOR_EXT && irqctl->irq_children[pin].len) {
-        device_irqctl_forward_interrupt((device_irqctl_t *)device, pin);
 #ifdef CPU_RISCV_ENABLE_SBI_TIME
-    } else if (pin == RISCV_INT_SUPERVISOR_TIMER) {
-        asm("csrc sie, %0" ::"r"(1 << RISCV_INT_SUPERVISOR_TIMER));
+    if (pin == RISCV_INT_TIMER) {
+        asm("csrc sie, %0" ::"r"(1 << RISCV_INT_TIMER));
         riscv_sbi_timer_interrupt();
+    } else
 #endif
+        if (device->irq_children[pin].len) {
+        device_forward_interrupt(device, pin);
     } else {
         logkf_from_isr(LOG_FATAL, "Unhandled interrupt 0x%{size;x}", pin);
         panic_abort();
@@ -51,7 +48,7 @@ bool riscv_intc_enable_irq(device_t *device, irqpin_t pin, bool enable) {
     return false;
 }
 
-bool riscv_intc_enable_in(device_irqctl_t *device, irqpin_t pin, bool enable) {
+bool riscv_intc_enable_in(device_t *device, irqpin_t pin, bool enable) {
     if (pin == 0 || pin > 32) {
         return false;
     }
@@ -63,13 +60,19 @@ bool riscv_intc_enable_in(device_irqctl_t *device, irqpin_t pin, bool enable) {
     return true;
 }
 
+static void riscv_intc_cascade_enable(device_t *device, irqpin_t irq_in_pin) {
+    riscv_intc_enable_in(device, irq_in_pin, true);
+}
+
+
 
 driver_irqctl_t const riscv_intc_driver = {
-    .base.dev_class  = DEV_CLASS_IRQCTL,
-    .base.match      = riscv_intc_match,
-    .base.add        = riscv_intc_add,
-    .base.remove     = riscv_intc_remove,
-    .base.interrupt  = riscv_intc_interrupt,
-    .base.enable_irq = riscv_intc_enable_irq,
-    .enable_in       = riscv_intc_enable_in,
+    .base.dev_class          = DEV_CLASS_IRQCTL,
+    .base.match              = riscv_intc_match,
+    .base.add                = riscv_intc_add,
+    .base.remove             = riscv_intc_remove,
+    .base.interrupt          = riscv_intc_interrupt,
+    .base.enable_irq_out     = riscv_intc_enable_irq,
+    .base.enable_irq_in      = riscv_intc_enable_in,
+    .base.cascase_enable_irq = riscv_intc_cascade_enable,
 };

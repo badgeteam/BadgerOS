@@ -8,6 +8,7 @@
 #include "device/dev_addr.h"
 #include "device/dev_class.h"
 #include "device/dtb/dtb.h"
+#include "mutex.h"
 #include "set.h"
 
 #include <stdatomic.h>
@@ -61,9 +62,13 @@ struct device {
     // Set of children.
     set_t          *children;
     // Number of outgoing interrupts.
-    size_t          irq_count;
-    // Outgoing interrupt connections; list of `irqconn_t`.
+    size_t          irq_parents_count;
+    // Interrupt parents; lists of `irqconn_t`.
     dlist_t        *irq_parents;
+    // Number of incoming interrupts.
+    size_t          irq_children_len;
+    // Interrupt children; lists of `irqconn_t`.
+    dlist_t        *irq_children;
     // Additional driver-specific data, if any.
     void           *cookie;
 };
@@ -73,7 +78,7 @@ struct irqconn {
     struct {
         // Linked list node in parent device.
         dlist_node_t node;
-        // Connected device; must be a `device_irqctl_t` for interrupt parents.
+        // Connected device.
         device_t    *device;
         // Connected device's interrupt pin.
         irqpin_t     pin;
@@ -90,10 +95,18 @@ struct driver {
     bool (*add)(device_t *device);
     // Remove a device from this driver.
     void (*remove)(device_t *device);
-    // Device interrupt handler.
+    // Device interrupt handler; also responsible for any potential forwarding of interrupts.
+    // Only called from an interrupt context.
     void (*interrupt)(device_t *device, irqpin_t irq_pin);
-    // Enable a certain interrupt.
-    bool (*enable_irq)(device_t *device, irqpin_t irq_pin, bool enable);
+    // Enable a certain interrupt output.
+    // Can be called with interrupts disabled.
+    bool (*enable_irq_out)(device_t *device, irqpin_t irq_pin, bool enable);
+    // [optional] Enable an incoming interrupt.
+    // Can be called with interrupts disabled.
+    bool (*enable_irq_in)(device_t *device, irqpin_t irq_in_pin, bool enabled);
+    // [optional] Cascade-enable interrupts from some input pin.
+    // Can be called with interrupts disabled.
+    void (*cascase_enable_irq)(device_t *device, irqpin_t irq_in_pin);
 };
 
 // Device filter.
@@ -150,6 +163,14 @@ set_t device_get_filtered(dev_filter_t const *filter);
 bool device_link_irq(device_t *child, irqpin_t child_pin, device_t *parent, irqpin_t parent_pin);
 // Remove a device interrupt link; see `device_link_irq`.
 bool device_unlink_irq(device_t *child, irqpin_t child_pin, device_t *parent, irqpin_t parent_pin);
+// Enable an outgoing interrupt.
+bool device_enable_irq_out(device_t *device, irqpin_t irq_out_pin, bool enabled);
+// Cascade-enable an interrupt output.
+bool device_cascade_enable_irq_out(device_t *device, irqpin_t irq_out_pin);
+// Enable an incoming interrupt.
+bool device_enable_irq_in(device_t *device, irqpin_t irq_in_pin, bool enabled);
+// Helper to send an interrupt to all children on a certain pin.
+void device_forward_interrupt(device_t *device, irqpin_t irq_in_pin);
 
 // Notify of a device interrupt.
 void device_interrupt(device_t *device, irqpin_t irq_pin);

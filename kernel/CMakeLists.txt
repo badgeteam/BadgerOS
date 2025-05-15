@@ -85,7 +85,6 @@ add_executable(${target}
     
     ${CMAKE_CURRENT_LIST_DIR}/src/device/builtin_driver/pcie.c
     ${CMAKE_CURRENT_LIST_DIR}/src/device/class/block.c
-    ${CMAKE_CURRENT_LIST_DIR}/src/device/class/irqctl.c
     ${CMAKE_CURRENT_LIST_DIR}/src/device/class/pcictl.c
     ${CMAKE_CURRENT_LIST_DIR}/src/device/dtb/dtb.c
     ${CMAKE_CURRENT_LIST_DIR}/src/device/dtb/dtparse.c
