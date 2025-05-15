@@ -23,6 +23,7 @@
 #include "set.h"
 #include "time.h"
 
+#include <stdbool.h>
 #include <stddef.h>
 
 
@@ -92,7 +93,7 @@ static bool device_init(device_union_t *device) {
         if (device->base.info.addrs[i].type == DEV_ATYPE_MMIO) {
             dev_mmio_addr_t *addr  = &device->base.info.addrs[i].mmio;
             size_t           vaddr = memprotect_alloc_vaddr(addr->size);
-            if (!addr->vaddr) {
+            if (!vaddr) {
                 for (i--; i != SIZE_MAX; i--) {
                     if (device->base.info.addrs[i].type == DEV_ATYPE_MMIO) {
                         memprotect_free_vaddr(addr->vaddr);
@@ -351,7 +352,6 @@ device_t *device_get(uint32_t id) {
     }
 
     mutex_release_shared(&devs_mtx);
-
     return dev;
 }
 
@@ -378,6 +378,126 @@ void device_pop_ref(device_t *device_base) {
 // Increase device reference count.
 void device_push_ref(device_t *device) {
     device->refcount++;
+}
+
+
+
+// List all devices; returns a `set_t` of `device_t *` shares.
+// This reference must be cleaned up by `device_pop_ref` and can be cloned by `device_push_ref`.
+set_t device_get_all() {
+    set_t set = PTR_SET_EMPTY;
+    mutex_acquire_shared(&devs_mtx, TIMESTAMP_US_MAX);
+
+    for (size_t i = 0; i < devs_len; i++) {
+        if (set_add(&set, devs[i])) {
+            device_push_ref(&devs[i]->base);
+        }
+    }
+
+    mutex_release_shared(&devs_mtx);
+    return set;
+}
+
+static dev_addr_t mask_addr(dev_addr_t addr, dev_addr_t mask) {
+    switch (addr.type) {
+        case DEV_ATYPE_MMIO:
+            addr.mmio.paddr &= mask.mmio.paddr;
+            addr.mmio.vaddr &= mask.mmio.vaddr;
+            addr.mmio.size  &= mask.mmio.size;
+            break;
+        case DEV_ATYPE_PCI:
+            addr.pci.bus  &= mask.pci.bus;
+            addr.pci.dev  &= mask.pci.dev;
+            addr.pci.func &= mask.pci.func;
+            break;
+        case DEV_ATYPE_I2C: addr.i2c &= mask.i2c; break;
+        case DEV_ATYPE_AHCI:
+            addr.ahci.pmul_port &= mask.ahci.pmul_port;
+            addr.ahci.port      &= mask.ahci.port;
+            addr.ahci.pmul      &= mask.ahci.pmul;
+            break;
+    }
+    return addr;
+}
+
+static bool match_addr(dev_addr_t a, dev_addr_t b) {
+    switch (a.type) {
+        case DEV_ATYPE_MMIO:
+            return a.mmio.paddr == b.mmio.paddr && a.mmio.vaddr == b.mmio.vaddr && a.mmio.size == b.mmio.size;
+        case DEV_ATYPE_PCI: return a.pci.bus == b.pci.bus && a.pci.dev == b.pci.dev && a.pci.func == b.pci.func;
+        case DEV_ATYPE_I2C: return a.i2c == b.i2c;
+        case DEV_ATYPE_AHCI:
+            return a.ahci.pmul_port == b.ahci.pmul_port && a.ahci.port == b.ahci.port && a.ahci.pmul == b.ahci.pmul;
+    }
+    return false;
+}
+
+static bool match_filter(device_union_t const *device, dev_filter_t const *filter) {
+    if (filter->match_class && device->base.dev_class != filter->class) {
+        return false;
+    }
+
+    if (filter->match_addr) {
+        bool has_addr = false;
+        for (size_t i = 0; i < device->base.info.addrs_len; i++) {
+            dev_addr_t addr = device->base.info.addrs[i];
+            if (addr.type != filter->addr.type) {
+                continue;
+            }
+            if (filter->use_addr_mask) {
+                addr = mask_addr(addr, filter->addr_mask);
+            }
+            if (match_addr(addr, filter->addr)) {
+                has_addr = true;
+                break;
+            }
+        }
+        if (!has_addr) {
+            return false;
+        }
+    }
+
+    if (filter->match_driver && device->base.driver != filter->driver) {
+        return false;
+    }
+
+    if (filter->match_parent && !filter->parent_id && device->base.info.parent) {
+        return false;
+    }
+
+    return true;
+}
+
+// List all devices by class that match the filter; returns a `set_t` of `device_t *` shares.
+// This reference must be cleaned up by `device_pop_ref` and can be cloned by `device_push_ref`.
+set_t device_get_filtered(dev_filter_t const *filter) {
+    set_t set = PTR_SET_EMPTY;
+    mutex_acquire_shared(&devs_mtx, TIMESTAMP_US_MAX);
+
+    if (filter->match_parent && filter->parent_id) {
+        device_t *parent = device_get(filter->parent_id);
+        if (parent) {
+            set_foreach(device_union_t, child, parent->children) {
+                if (match_filter(child, filter)) {
+                    if (set_add(&set, child)) {
+                        device_push_ref(&child->base);
+                    }
+                }
+            }
+            device_pop_ref(parent);
+        }
+    } else {
+        for (size_t i = 0; i < devs_len; i++) {
+            if (match_filter(devs[i], filter)) {
+                if (set_add(&set, devs[i])) {
+                    device_push_ref(&devs[i]->base);
+                }
+            }
+        }
+    }
+
+    mutex_release_shared(&devs_mtx);
+    return set;
 }
 
 

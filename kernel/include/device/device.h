@@ -29,6 +29,8 @@ typedef struct irqconn     irqconn_t;
 typedef struct irqconns    irqconns_t;
 // A device driver.
 typedef struct driver      driver_t;
+// Device filter.
+typedef struct dev_filter  dev_filter_t;
 
 // All information required to match drivers with devices and install said drivers.
 struct device_info {
@@ -94,6 +96,30 @@ struct driver {
     bool (*enable_irq)(device_t *device, irqpin_t irq_pin, bool enable);
 };
 
+// Device filter.
+struct dev_filter {
+    // Whether to match class.
+    bool match_class;
+    // Whether to match addr.
+    bool match_addr;
+    // Whether to match driver.
+    bool match_driver;
+    // Whether to match parent.
+    bool match_parent;
+    // Whether to use address mask.
+    bool use_addr_mask;
+    // Class to match.
+    dev_class_t class;
+    // Addr to match.
+    dev_addr_t      addr;
+    // Mask for addr to match.
+    dev_addr_t      addr_mask;
+    // Driver to match.
+    driver_t const *driver;
+    // ID of parent device to match.
+    uint32_t        parent_id;
+};
+
 
 
 // Test a device info against a set of DTB compatible strings.
@@ -110,6 +136,13 @@ device_t *device_get(uint32_t id);
 void      device_pop_ref(device_t *device);
 // Increase device reference count.
 void      device_push_ref(device_t *device);
+
+// List all devices; returns a `set_t` of `device_t *` shares.
+// This reference must be cleaned up by `device_pop_ref` and can be cloned by `device_push_ref`.
+set_t device_get_all();
+// List all devices by class that match the filter; returns a `set_t` of `device_t *` shares.
+// This reference must be cleaned up by `device_pop_ref` and can be cloned by `device_push_ref`.
+set_t device_get_filtered(dev_filter_t const *filter);
 
 // Add a device interrupt link; child is the device that generates the interrupt, parent the one that receives it.
 // Any device interrupt pin can be connected to any number of opposite pins, but the resulting graph must be acyclic.

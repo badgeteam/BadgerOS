@@ -5,13 +5,15 @@
 
 #include "assertions.h"
 #include "cpu/mmu.h"
+#include "device/class/pcictl.h"
+#include "device/dev_class.h"
+#include "device/device.h"
 #include "device/dtb/dtparse.h"
-#include "driver/pcie.h"
 #include "interrupt.h"
-#include "memprotect.h"
 #include "panic.h"
 #include "port/hardware_allocation.h"
 #include "rawprint.h"
+#include "set.h"
 #include "uacpi/uacpi.h"
 #ifdef __x86_64__
 #include "cpu/x86_ioport.h"
@@ -190,7 +192,7 @@ void port_postheap_init() {
 void port_init() {
     if (dtb_req.response) {
         // Parse and process DTB.
-        dtdump(dtb_req.response->dtb_ptr);
+        // dtdump(dtb_req.response->dtb_ptr);
         dtparse(dtb_req.response->dtb_ptr);
     } else {
         // Initialize ACPI.
@@ -204,7 +206,16 @@ void port_init() {
     }
 
     // Enumerate PCIe devices.
-    // pcie_ecam_detect();
+    dev_filter_t filter = {
+        .match_class = true,
+        .class       = DEV_CLASS_PCICTL,
+    };
+    set_t set = device_get_filtered(&filter);
+    set_foreach(device_pcictl_t, device, &set) {
+        device_pcictl_enumerate(device);
+        device_pop_ref(&device->base);
+    }
+    set_clear(&set);
 }
 
 // Reclaim bootloader memory.

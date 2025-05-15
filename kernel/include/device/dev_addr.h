@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include <stdbool.h>
 #include <stdint.h>
 
 
@@ -48,6 +49,8 @@ typedef struct {
     uint8_t port;
     // Port multiplier index.
     uint8_t pmul_port;
+    // Is behind a port multiplier.
+    bool    pmul;
 } dev_ahci_addr_t;
 
 

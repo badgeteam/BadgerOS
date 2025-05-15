@@ -155,11 +155,11 @@ bool pcie_generic_enable_irq(device_t *device, irqpin_t pin, bool enable) {
 }
 
 void pcie_generic_cam_read(device_pcictl_t *device, uint32_t addr, uint32_t len, void *data) {
-    mem_copy(data, (void const *)device->base.info.addrs[0].mmio.vaddr, len);
+    mem_copy(data, (void const *)device->base.info.addrs[0].mmio.vaddr + addr, len);
 }
 
 void pcie_generic_cam_write(device_pcictl_t *device, uint32_t addr, uint32_t len, void const *data) {
-    mem_copy((void *)device->base.info.addrs[0].mmio.vaddr, data, len);
+    mem_copy((void *)device->base.info.addrs[0].mmio.vaddr + addr, data, len);
 }
 
 
