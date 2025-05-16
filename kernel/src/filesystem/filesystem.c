@@ -1,6 +1,8 @@
 
 // SPDX-License-Identifier: MIT
 
+#include "filesystem.h"
+
 #include "arrays.h"
 #include "assertions.h"
 #include "badge_strings.h"
@@ -61,12 +63,15 @@ static int vfs_file_desc_id_search(void const *a_ptr, void const *b_ptr) {
 // Walk the filesystem over a certain path.
 // Opens the target file or directory if it exists.
 static walk_t walk(badge_err_t *ec, vfs_file_obj_t *dirfd, char const *path, size_t path_len, bool no_follow_symlink) {
+    walk_t out = {0};
     if (path[0] == '/') {
         // TODO: chroot support?
-        dirfd = root_fs.root_dir_obj;
+        dirfd            = root_fs.root_dir_obj;
+        out.file         = vfs_file_dup(dirfd);
+        out.filename     = "/";
+        out.filename_len = 1;
     }
-    dirfd      = vfs_file_dup(dirfd);
-    walk_t out = {0};
+    dirfd = vfs_file_dup(dirfd);
 
     while (path_len) {
         if (path[0] == '/' && (!dirfd || dirfd->type != FILETYPE_DIR)) {
@@ -458,7 +463,7 @@ void fs_mkdir(badge_err_t *ec, file_t at, char const *path, size_t path_len) {
 // Open a directory for reading relative to a dir handle.
 // If `at` is `FILE_NONE`, it is relative to the root dir.
 file_t fs_dir_open(badge_err_t *ec, file_t at, char const *path, size_t path_len, oflags_t oflags) {
-    return fs_open(ec, at, path, path_len, oflags | OFLAGS_DIRECTORY);
+    return fs_open(ec, at, path, path_len, oflags | OFLAGS_DIRECTORY | OFLAGS_READONLY);
 }
 
 // Remove a directory, which must be empty, relative to a dir handle.
