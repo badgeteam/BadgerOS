@@ -5,10 +5,11 @@
 
 #include "assertions.h"
 #include "badge_strings.h"
+#include "filesystem/fs_ramfs_types.h"
 #include "malloc.h"
 
 #define RAMFS(vfs)    (*(fs_ramfs_t *)(vfs)->cookie)
-#define RAMFILE(file) (*(fs_ramfs_file_t *)(file)->cookie)
+#define RAMFILE(file) ((fs_ramfs_inode_t *)(file)->cookie)
 
 
 
@@ -195,18 +196,26 @@ bool fs_ramfs_mount(badge_err_t *ec, vfs_t *vfs) {
         return false;
     }
 
+    vfs->cookie = calloc(1, sizeof(fs_ramfs_t));
+    if (!vfs->cookie) {
+        badge_err_set(ec, ELOC_FILESYSTEM, ECAUSE_NOMEM);
+        return false;
+    }
+
     // TODO: Parameters.
     atomic_store_explicit(&RAMFS(vfs).ram_usage, 0, memory_order_relaxed);
     RAMFS(vfs).ram_limit      = 65536;
     RAMFS(vfs).inode_list_len = 32;
     RAMFS(vfs).inode_list     = malloc(sizeof(*RAMFS(vfs).inode_list) * RAMFS(vfs).inode_list_len);
     if (!RAMFS(vfs).inode_list) {
+        free(vfs->cookie);
         badge_err_set(ec, ELOC_FILESYSTEM, ECAUSE_NOMEM);
         return false;
     }
     RAMFS(vfs).inode_usage = malloc(sizeof(*RAMFS(vfs).inode_usage) * RAMFS(vfs).inode_list_len);
     if (!RAMFS(vfs).inode_usage) {
         free(RAMFS(vfs).inode_list);
+        free(vfs->cookie);
         badge_err_set(ec, ELOC_FILESYSTEM, ECAUSE_NOMEM);
         return false;
     }
@@ -243,6 +252,7 @@ bool fs_ramfs_mount(badge_err_t *ec, vfs_t *vfs) {
         free(RAMFS(vfs).inode_list);
         free(RAMFS(vfs).inode_usage);
         mutex_destroy(&RAMFS(vfs).mtx);
+        free(vfs->cookie);
         return false;
     }
 
@@ -255,6 +265,7 @@ bool fs_ramfs_mount(badge_err_t *ec, vfs_t *vfs) {
         free(RAMFS(vfs).inode_list);
         free(RAMFS(vfs).inode_usage);
         mutex_destroy(&RAMFS(vfs).mtx);
+        free(vfs->cookie);
         return false;
     }
 
@@ -266,6 +277,7 @@ void fs_ramfs_umount(vfs_t *vfs) {
     mutex_destroy(&RAMFS(vfs).mtx);
     free(RAMFS(vfs).inode_list);
     free(RAMFS(vfs).inode_usage);
+    free(vfs->cookie);
 }
 
 
@@ -539,7 +551,7 @@ void fs_ramfs_root_open(badge_err_t *ec, vfs_t *vfs, vfs_file_obj_t *file) {
 
     // Install in shared file handle.
     fs_ramfs_inode_t *iptr = &RAMFS(vfs).inode_list[VFS_RAMFS_INODE_ROOT];
-    RAMFILE(file)          = iptr;
+    file->cookie           = iptr;
     file->inode            = VFS_RAMFS_INODE_ROOT;
     file->refcount         = 1;
     file->type             = FILETYPE_DIR;
@@ -575,7 +587,7 @@ void fs_ramfs_file_open(
     iptr->open             = true;
 
     // Install in shared file handle.
-    RAMFILE(file)  = iptr;
+    file->cookie   = iptr;
     file->inode    = iptr->inode;
     file->vfs      = vfs;
     file->refcount = 1;
@@ -596,7 +608,6 @@ void fs_ramfs_file_close(badge_err_t *ec, vfs_t *vfs, vfs_file_obj_t *file) {
         RAMFS(vfs).inode_usage[inode->inode] = false;
     }
     mutex_release(&RAMFS(vfs).mtx);
-    RAMFILE(file) = NULL;
     badge_err_set_ok(ec);
 }
 
@@ -706,8 +717,6 @@ static vfs_vtable_t ramfs_vtable = {
 
 // RAMFS declaration.
 FS_DRIVER_DECL(ramfs_driver) = {
-    .vtable           = &ramfs_vtable,
-    .id               = "ramfs",
-    .file_cookie_size = sizeof(fs_ramfs_file_t),
-    .vfs_cookie_size  = sizeof(fs_ramfs_t),
+    .vtable = &ramfs_vtable,
+    .id     = "ramfs",
 };

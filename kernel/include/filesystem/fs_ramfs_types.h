@@ -60,10 +60,6 @@ typedef struct {
     char    name[VFS_RAMFS_NAME_MAX + 1];
 } fs_ramfs_dirent_t;
 
-// RAM filesystem file / directory handle.
-// This handle is shared between multiple holders of the same file.
-typedef fs_ramfs_inode_t *fs_ramfs_file_t;
-
 // Mounted RAM filesystem.
 typedef struct {
     // RAM limit for the entire filesystem.

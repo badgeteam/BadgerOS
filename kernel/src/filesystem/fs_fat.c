@@ -4,6 +4,7 @@
 #include "filesystem/fs_fat.h"
 
 #include "arrays.h"
+#include "badge_err.h"
 #include "filesystem/fs_fat_types.h"
 #include "todo.h"
 
@@ -454,6 +455,12 @@ bool fs_fat_mount(badge_err_t *ec, vfs_t *vfs) {
         return false;
     }
 
+    vfs->cookie = calloc(1, sizeof(fs_fat_t));
+    if (!vfs->cookie) {
+        badge_err_set(ec, ELOC_FILESYSTEM, ECAUSE_NOMEM);
+        return false;
+    }
+
     fat_bpb_t bpb;
     blkdev_read_partial(ec, vfs->media, 0, 0, (void *)&bpb, sizeof(fat_bpb_t));
     fat32_header_t hdr32;
@@ -521,7 +528,8 @@ bool fs_fat_mount(badge_err_t *ec, vfs_t *vfs) {
 
 // Unmount a FAT filesystem.
 void fs_fat_umount(vfs_t *vfs) {
-    (void)vfs;
+    // TODO.
+    free(vfs->cookie);
 }
 
 // Identify whether a block device contains a FAT filesystem.
@@ -996,6 +1004,11 @@ void fs_fat_root_open(badge_err_t *ec, vfs_t *vfs, vfs_file_obj_t *file) {
     file->type        = FILETYPE_DIR;
     file->inode       = 1;
     file->is_vfs_root = true;
+    file->cookie      = calloc(1, sizeof(fs_fat_file_t));
+    if (!file->cookie) {
+        badge_err_set(ec, ELOC_FILESYSTEM, ECAUSE_NOMEM);
+        return;
+    }
 
     if (FATFS(vfs).type == FAT32) {
         // FAT32 root dir length is determined by the length of the chain in the FAT.
@@ -1021,6 +1034,12 @@ void fs_fat_file_open(
         if (badge_err_is_ok(ec)) {
             badge_err_set(ec, ELOC_FILESYSTEM, ECAUSE_NOTFOUND);
         }
+        return;
+    }
+
+    file->cookie = calloc(1, sizeof(fs_fat_file_t));
+    if (!file->cookie) {
+        badge_err_set(ec, ELOC_FILESYSTEM, ECAUSE_NOMEM);
         return;
     }
 
@@ -1068,6 +1087,7 @@ void fs_fat_file_close(badge_err_t *ec, vfs_t *vfs, vfs_file_obj_t *file) {
         badge_err_set_ok(ec);
     }
     free(FATFILE(file).clusters);
+    free(file->cookie);
 }
 
 // Read bytes from a file.
@@ -1369,9 +1389,7 @@ static vfs_vtable_t fs_fat_vtable = {
 };
 
 FS_DRIVER_DECL(fs_fat_driver) = {
-    .detect           = fs_fat_detect,
-    .id               = "vfat",
-    .file_cookie_size = sizeof(fs_fat_file_t),
-    .vfs_cookie_size  = sizeof(fs_fat_t),
-    .vtable           = &fs_fat_vtable,
+    .detect = fs_fat_detect,
+    .id     = "vfat",
+    .vtable = &fs_fat_vtable,
 };

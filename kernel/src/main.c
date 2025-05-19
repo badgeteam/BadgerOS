@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 #include "assertions.h"
+#include "badge_strings.h"
 #include "blockdevice/blkdev_ram.h"
 #include "cpulocal.h"
 #include "filesystem.h"
@@ -152,6 +153,25 @@ void dummy_print(int indent, void *ptr) {
     rawputc('\n');
 }
 
+static void dumpdir(file_t at, char const *path, int indent) {
+    if (cstr_equals(path, ".") || cstr_equals(path, ".."))
+        return;
+    file_t fd = fs_dir_open(NULL, at, path, cstr_length(path), 0);
+    for (int i = 0; i < indent; i++) rawprint("  ");
+    rawprint(path);
+    rawputc('\n');
+    if (!fd)
+        return;
+    dirent_list_t list = fs_dir_read(NULL, fd);
+    dirent_t     *ent  = list.mem;
+    for (size_t i = 0; i < list.ent_count; i++) {
+        dumpdir(at, ent->name, indent + 1);
+        ent = (dirent_t *)((size_t)ent + ent->record_len);
+    }
+    free(list.mem);
+    fs_dir_close(NULL, fd);
+}
+
 // After basic runtime initialization, the booting CPU core continues here.
 // This finishes the initialization of all kernel systems, resources and services.
 // When finished, the non-booting CPUs will be started (method and entrypoints to be determined).
@@ -167,6 +187,8 @@ static void kernel_init() {
     fs_mount(&ec, "ramfs", NULL, FILE_NONE, "/", 1, 0);
     badge_err_assert_always(&ec);
     init_ramfs();
+
+    dumpdir(-1, "/", 0);
 }
 
 

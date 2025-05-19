@@ -212,12 +212,6 @@ static bool mount_at(badge_err_t *ec, vfs_t *vfs, blkdev_t *media, char const *t
         return false;
     }
 
-    vfs->cookie = calloc(1, driver->vfs_cookie_size);
-    if (!vfs->cookie) {
-        badge_err_set(ec, ELOC_FILESYSTEM, ECAUSE_NOMEM);
-        return false;
-    }
-
     vfs->driver    = driver;
     vfs->media     = media;
     vfs->readonly  = flags & MOUNTFLAGS_READONLY;
@@ -225,14 +219,12 @@ static bool mount_at(badge_err_t *ec, vfs_t *vfs, blkdev_t *media, char const *t
     vfs->n_open_fd = 0;
 
     if (!driver->vtable->mount(ec, vfs)) {
-        free(vfs->cookie);
         return false;
     }
 
     vfs->root_dir_obj = vfs_root_open(ec, vfs);
     if (!vfs->root_dir_obj) {
         driver->vtable->umount(vfs);
-        free(vfs->cookie);
         return false;
     }
 

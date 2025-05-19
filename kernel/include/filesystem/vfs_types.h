@@ -111,10 +111,6 @@ struct fs_driver {
     vfs_vtable_t const *vtable;
     // Filesystem detection function.
     vfs_detect_t        detect;
-    // Size to allocate for the VFS cookie.
-    size_t              vfs_cookie_size;
-    // Size to allocate for the file handle cookie.
-    size_t              file_cookie_size;
 };
 
 // Declare a filesystem driver.

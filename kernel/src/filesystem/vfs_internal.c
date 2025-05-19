@@ -30,12 +30,6 @@ static vfs_file_obj_t *create_root_fobj(badge_err_t *ec, vfs_t *vfs) {
         badge_err_set(ec, ELOC_FILESYSTEM, ECAUSE_NOMEM);
         return NULL;
     }
-    obj->cookie = calloc(1, vfs->driver->file_cookie_size);
-    if (!obj->cookie) {
-        free(obj);
-        badge_err_set(ec, ELOC_FILESYSTEM, ECAUSE_NOMEM);
-        return NULL;
-    }
 
     // Fill out common fields.
     mutex_init(&obj->mutex, true);
@@ -45,7 +39,6 @@ static vfs_file_obj_t *create_root_fobj(badge_err_t *ec, vfs_t *vfs) {
     // Call FS-specific open root.
     vfs->vtable.root_open(ec, vfs, obj);
     if (!badge_err_is_ok(ec)) {
-        free(obj->cookie);
         free(obj);
         return NULL;
     }
@@ -109,7 +102,6 @@ vfs_file_obj_t *vfs_root_open(badge_err_t *ec, vfs_t *vfs) {
     // Insert into file objects list.
     if (!array_lencap_sorted_insert(&objs, sizeof(void *), &objs_len, &objs_cap, &fobj, vfs_file_obj_cmp)) {
         vfs->vtable.file_close(NULL, vfs, fobj);
-        free(fobj->cookie);
         free(fobj);
         fobj = NULL;
         badge_err_set(ec, ELOC_FILESYSTEM, ECAUSE_NOMEM);
@@ -345,18 +337,14 @@ vfs_file_obj_t *vfs_file_open(badge_err_t *ec, vfs_file_obj_t *dir, char const *
     if (!fobj) {
         goto err0;
     }
-    fobj->cookie   = calloc(1, dir->vfs->driver->file_cookie_size);
     fobj->vfs      = dir->vfs;
     fobj->refcount = 1;
-    if (!fobj->cookie) {
-        goto err1;
-    }
     mutex_init(&fobj->mutex, true);
 
     // Open new file object.
     dir->vfs->vtable.file_open(ec, dir->vfs, dir, fobj, name, name_len);
     if (!badge_err_is_ok(ec)) {
-        goto err2;
+        goto err1;
     }
 
     if (fobj->type == FILETYPE_FIFO) {
@@ -367,7 +355,6 @@ vfs_file_obj_t *vfs_file_open(badge_err_t *ec, vfs_file_obj_t *dir, char const *
     // Insert into file objects list.
     if (!array_lencap_sorted_insert(&objs, sizeof(void *), &objs_len, &objs_cap, &fobj, vfs_file_obj_cmp)) {
         dir->vfs->vtable.file_close(NULL, dir->vfs, fobj);
-        free(fobj->cookie);
         free(fobj);
         fobj = NULL;
         badge_err_set(ec, ELOC_FILESYSTEM, ECAUSE_NOMEM);
@@ -379,8 +366,6 @@ vfs_file_obj_t *vfs_file_open(badge_err_t *ec, vfs_file_obj_t *dir, char const *
 
     return fobj;
 
-err2:
-    free(fobj->cookie);
 err1:
     free(fobj);
 err0:
@@ -417,7 +402,6 @@ void vfs_file_drop_ref(badge_err_t *ec, vfs_file_obj_t *file) {
             return;
         }
         file->vfs->vtable.file_close(ec, file->vfs, file);
-        free(file->cookie);
     } else {
         badge_err_set_ok(ec);
     }
