@@ -6,6 +6,7 @@
 #include "assertions.h"
 #include "attributes.h"
 #include "filesystem.h"
+#include "filesystem/devfile.h"
 #include "mutex.h"
 
 #include <stdatomic.h>
@@ -29,23 +30,25 @@
 // File data storage.
 typedef struct {
     // Data buffer length.
-    size_t   len;
+    size_t    len;
     // Data buffer capacity.
-    size_t   cap;
+    size_t    cap;
     // Data buffer.
-    char    *buf;
+    char     *buf;
     // Inode number.
-    inode_t  inode;
+    inode_t   inode;
     // File type and protection.
-    uint16_t mode;
+    uint16_t  mode;
     // Number of hard links.
-    size_t   links;
+    size_t    links;
     // Whether the file handle is open.
-    bool     open;
+    bool      open;
     // Owner user ID.
-    int      uid;
+    int       uid;
     // Owner group ID.
-    int      gid;
+    int       gid;
+    // Device node information.
+    devfile_t devfile;
 } fs_ramfs_inode_t;
 
 // RAMFS directory entry.

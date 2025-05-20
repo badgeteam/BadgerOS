@@ -58,6 +58,8 @@ void vfs_symlink(
 );
 // Create a new named FIFO at a path relative to a dir handle.
 void vfs_mkfifo(badge_err_t *ec, vfs_file_obj_t *dir, char const *name, size_t name_len);
+// Make a device special file; only works on certain filesystem types.
+void vfs_mkdevfile(badge_err_t *ec, vfs_file_obj_t *dir, char const *name, size_t name_len, devfile_t devfile);
 
 // Create a new pipe with one read and one write end.
 vfs_pipe_t      vfs_pipe(badge_err_t *ec, int flags);

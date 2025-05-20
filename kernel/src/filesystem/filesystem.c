@@ -306,9 +306,9 @@ void fs_mount(
                 res.file->mounted_fs = NULL;
             }
         } else {
+            vfs_file_drop_ref(ec, res.file);
             badge_err_set(ec, ELOC_FILESYSTEM, ECAUSE_NOMEM);
         }
-        vfs_file_drop_ref(ec, res.file);
     }
     if (res.parent) {
         vfs_file_drop_ref(badge_err_is_ok(ec) ? ec : NULL, res.parent);
@@ -761,6 +761,60 @@ void fs_mkfifo(badge_err_t *ec, file_t at, char const *path, size_t path_len) {
     mutex_release(&dirs_mtx);
 }
 
+// Make a device special file; only works on certain filesystem types.
+void fs_mkdevfile(badge_err_t *ec, file_t at, char const *path, size_t path_len, devfile_t devfile) {
+    badge_err_t ec0 = {0};
+    ec              = ec ?: &ec0;
+
+    if (!root_mounted) {
+        badge_err_set(ec, ELOC_FILESYSTEM, ECAUSE_UNAVAIL);
+        logk(LOG_ERROR, "Filesystem op run without a filesystem mounted");
+        return;
+    }
+
+    // Get handle for relative directory.
+    vfs_file_obj_t *at_obj;
+    if (at == FILE_NONE) {
+        at_obj = vfs_file_dup(root_fs.root_dir_obj);
+    } else {
+        vfs_file_desc_t *at_fd = get_dir_fd_ptr(ec, at);
+        if (!at_fd) {
+            return;
+        }
+        at_obj = vfs_file_dup(at_fd->obj);
+        fd_drop_ref(ec, at_fd);
+        if (!badge_err_is_ok(ec)) {
+            return;
+        }
+    }
+
+    mutex_acquire(&dirs_mtx, TIMESTAMP_US_MAX);
+    walk_t res = walk(ec, at_obj, path, path_len, true);
+    vfs_file_drop_ref(ec, at_obj);
+    if (!badge_err_is_ok(ec)) {
+        if (res.file) {
+            vfs_file_drop_ref(NULL, res.file);
+        }
+        if (res.parent) {
+            vfs_file_drop_ref(NULL, res.parent);
+        }
+        mutex_release(&dirs_mtx);
+        return;
+    }
+    if (res.file) {
+        badge_err_set(ec, ELOC_FILESYSTEM, ECAUSE_EXISTS);
+        vfs_file_drop_ref(ec, res.file);
+    } else if (res.parent) {
+        vfs_mkdevfile(ec, res.parent, res.filename, res.filename_len, devfile);
+    }
+    if (res.parent) {
+        vfs_file_drop_ref(badge_err_is_ok(ec) ? ec : NULL, res.parent);
+    } else {
+        badge_err_set(ec, ELOC_FILESYSTEM, ECAUSE_NOENT);
+    }
+    mutex_release(&dirs_mtx);
+}
+
 
 
 // Create a new pipe with one read and one write end.
@@ -921,7 +975,7 @@ file_t fs_open(badge_err_t *ec, file_t at, char const *path, size_t path_len, of
         return FILE_NONE;
     }
 
-    if (res.file->type == FILETYPE_FIFO) {
+    if (!res.file->devfile && res.file->type == FILETYPE_FIFO) {
         // Open the FIFO before finishing the handle creation.
         vfs_fifo_open(
             ec,
@@ -944,6 +998,16 @@ file_t fs_open(badge_err_t *ec, file_t at, char const *path, size_t path_len, of
     fd->append          = oflags & OFLAGS_APPEND;
     fd->nonblock        = oflags & OFLAGS_NONBLOCK;
     fd->refcount        = 1;
+
+    if (res.file->devfile && res.file->devfile->vtable->open_fd) {
+        // Notify of device file opening after handle creation.
+        res.file->devfile->vtable->open_fd(ec, res.file->devfile->cookie, fd);
+        if (!badge_err_is_ok(ec)) {
+            free(fd);
+            vfs_file_drop_ref(NULL, res.file);
+            return FILE_NONE;
+        }
+    }
 
     mutex_acquire(&files_mtx, TIMESTAMP_US_MAX);
 
@@ -969,8 +1033,11 @@ void fs_close(badge_err_t *ec, file_t file) {
         array_binsearch(files, sizeof(void *), files_len, (void *)(ptrdiff_t)file, vfs_file_desc_id_search);
     if (res.found) {
         vfs_file_desc_t *fd = files[res.index];
+        if (fd->obj->devfile && fd->obj->devfile->vtable->close_fd) {
+            fd->obj->devfile->vtable->close_fd(fd->obj->devfile->cookie, fd);
+        }
         array_lencap_remove(&files, sizeof(void *), &files_len, &files_cap, NULL, res.index);
-        if (fd->obj->type == FILETYPE_FIFO) {
+        if (!fd->obj->devfile && fd->obj->type == FILETYPE_FIFO) {
             vfs_fifo_close(fd->obj->fifo, fd->read, fd->write);
         }
         mutex_release(&files_mtx);
@@ -985,7 +1052,8 @@ void fs_close(badge_err_t *ec, file_t file) {
 // Read bytes from a file.
 // Returns the amount of data successfully read.
 fileoff_t fs_read(badge_err_t *ec, file_t file, void *readbuf, fileoff_t readlen) {
-    vfs_file_desc_t *fd = get_file_fd_ptr(ec, file);
+    fileoff_t        read = 0;
+    vfs_file_desc_t *fd   = get_file_fd_ptr(ec, file);
     if (!fd) {
         return -1;
     }
@@ -996,17 +1064,22 @@ fileoff_t fs_read(badge_err_t *ec, file_t file, void *readbuf, fileoff_t readlen
         return -1;
     }
 
-    if (fd->obj->type == FILETYPE_FIFO && fd->nonblock) {
+    if (fd->obj->devfile) {
+        // Device file read.
+        read = fd->obj->devfile->vtable->read(ec, fd->obj->devfile->cookie, fd->obj, fd->offset, readlen, readbuf);
+        if (fd->obj->devfile->vtable->seekable) {
+            fd->offset += read;
+        }
+
+    } else if (fd->obj->type == FILETYPE_FIFO && fd->nonblock) {
         // Non-blocking FIFO reads will get as much data as is available.
-        return vfs_fifo_read(ec, fd->obj->fifo, true, readbuf, readlen);
+        read = vfs_fifo_read(ec, fd->obj->fifo, true, readbuf, readlen);
 
     } else if (fd->obj->type == FILETYPE_FIFO) {
         // Blocking FIFO reads will wait until at least one byte is read.
-        fileoff_t read;
         do {
             read = vfs_fifo_read(ec, fd->obj->fifo, false, readbuf, readlen);
         } while (read == 0);
-        return read;
 
     } else {
         // Regular file reads.
@@ -1023,10 +1096,11 @@ fileoff_t fs_read(badge_err_t *ec, file_t file, void *readbuf, fileoff_t readlen
             fd->offset = offset + readlen;
         }
         mutex_release_shared(&fd->obj->mutex);
+        read = readlen;
     }
 
     fd_drop_ref(ec, fd);
-    return readlen;
+    return read;
 }
 
 // Write bytes to a file.
@@ -1163,7 +1237,7 @@ fileoff_t fs_seek(badge_err_t *ec, file_t file, fileoff_t off, fs_seek_t seekmod
     if (!fd) {
         return -1;
     }
-    if (fd->obj->type == FILETYPE_FIFO) {
+    if ((fd->obj->devfile && !fd->obj->devfile->vtable->seekable) || fd->obj->type == FILETYPE_FIFO) {
         badge_err_set(ec, ELOC_FILESYSTEM, ECAUSE_UNSEEKABLE);
         return -1;
     }

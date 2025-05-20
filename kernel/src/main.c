@@ -186,6 +186,10 @@ static void kernel_init() {
     // Temporary filesystem image.
     fs_mount(&ec, "ramfs", NULL, FILE_NONE, "/", 1, 0);
     badge_err_assert_always(&ec);
+    fs_mkdir(&ec, FILE_NONE, "/dev", 4);
+    badge_err_assert_always(&ec);
+    fs_mount(&ec, "devtmpfs", NULL, FILE_NONE, "/dev", 4, 0);
+    badge_err_assert_always(&ec);
     init_ramfs();
 
     dumpdir(-1, "/", 0);

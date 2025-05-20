@@ -7,6 +7,8 @@
 #include "badge_err.h"
 #include "blockdevice.h"
 
+
+
 // Maximum number of mountable filesystems.
 #define FILESYSTEM_MOUNT_MAX   8
 // Maximum supported filename length.
@@ -75,6 +77,8 @@ typedef int64_t fileoff_t;
 // Type used for file modes.
 typedef int     mode_t;
 
+
+
 // Modes for VFS seek.
 typedef enum {
     // Seek from start of file.
@@ -102,6 +106,8 @@ typedef enum {
     // FIFO
     FILETYPE_FIFO = 1,
 } filetype_t;
+
+
 
 // Directory entry as read from a directory handle.
 // The `record_len` field indicates the total size of the `dirent_t` and is therefor the offset to the next `dirent_t`.
@@ -159,6 +165,8 @@ typedef struct {
     file_t reader;
     file_t writer;
 } fs_pipe_t;
+
+
 
 // Try to mount a filesystem.
 // Some filesystems (like RAMFS) do not use a block device, for which `media` must be NULL.

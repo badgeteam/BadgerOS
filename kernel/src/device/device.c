@@ -669,3 +669,10 @@ bool driver_remove(driver_t const *driver) {
 
     return true;
 }
+
+
+
+// Add device nodes to a new devtmpfs.
+// Called by the devtmpfs mount function.
+void device_devtmpfs_mounted(file_t devtmpfs_root) {
+}

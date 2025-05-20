@@ -5,7 +5,10 @@
 
 #include "arrays.h"
 #include "assertions.h"
+#include "badge_err.h"
+#include "filesystem.h"
 #include "filesystem/vfs_fifo.h"
+#include "log.h"
 #include "malloc.h"
 
 
@@ -208,6 +211,20 @@ void vfs_mkfifo(badge_err_t *ec, vfs_file_obj_t *dir, char const *name, size_t n
     dir->vfs->vtable.mkfifo(ec, dir->vfs, dir, name, name_len);
 }
 
+// Make a device special file; only works on certain filesystem types.
+void vfs_mkdevfile(badge_err_t *ec, vfs_file_obj_t *dir, char const *name, size_t name_len, devfile_t devfile) {
+    if (dir->type != FILETYPE_DIR) {
+        badge_err_set(ec, ELOC_FILESYSTEM, ECAUSE_IS_FILE);
+        return;
+    }
+    if (!dir->vfs->driver->supports_devfiles) {
+        logkf(LOG_ERROR, "%{cs} does not support device special files", dir->vfs->driver->id);
+        badge_err_set(ec, ELOC_FILESYSTEM, ECAUSE_UNSUPPORTED);
+        return;
+    }
+    dir->vfs->vtable.mkdevfile(ec, dir, name, name_len, devfile);
+}
+
 // Remove a directory if it is empty.
 void vfs_rmdir(badge_err_t *ec, vfs_file_obj_t *dir, char const *name, size_t name_len) {
     if (dir->type != FILETYPE_DIR) {
@@ -244,6 +261,9 @@ dirent_list_t vfs_dir_read(badge_err_t *ec, vfs_file_obj_t *dir) {
         badge_err_set(ec, ELOC_FILESYSTEM, ECAUSE_IS_FILE);
         return (dirent_list_t){0};
     }
+    if (dir->mounted_fs) {
+        dir = dir->mounted_fs->root_dir_obj;
+    }
     return dir->vfs->vtable.dir_read(ec, dir->vfs, dir);
 }
 
@@ -253,6 +273,9 @@ bool vfs_dir_find_ent(badge_err_t *ec, vfs_file_obj_t *dir, dirent_t *ent, char 
     if (dir->type != FILETYPE_DIR) {
         badge_err_set(ec, ELOC_FILESYSTEM, ECAUSE_IS_FILE);
         return false;
+    }
+    if (dir->mounted_fs) {
+        dir = dir->mounted_fs->root_dir_obj;
     }
     return dir->vfs->vtable.dir_find_ent(ec, dir->vfs, dir, ent, name, name_len);
 }
@@ -347,13 +370,34 @@ vfs_file_obj_t *vfs_file_open(badge_err_t *ec, vfs_file_obj_t *dir, char const *
         goto err1;
     }
 
-    if (fobj->type == FILETYPE_FIFO) {
+    if (fobj->devfile) {
+        // Device special file opened.
+        if (fobj->devfile->vtable->open_obj) {
+            fobj->devfile->vtable->open_obj(ec, fobj->devfile->cookie, fobj);
+            if (!badge_err_is_ok(ec)) {
+                free(fobj);
+                return NULL;
+            }
+        }
+    } else if (fobj->type == FILETYPE_FIFO) {
         // FIFO object created here, open will be called by the file desc code.
         fobj->fifo = vfs_fifo_create();
+        if (!fobj->fifo) {
+            free(fobj);
+            badge_err_set(ec, ELOC_FILESYSTEM, ECAUSE_NOMEM);
+            return NULL;
+        }
     }
 
     // Insert into file objects list.
     if (!array_lencap_sorted_insert(&objs, sizeof(void *), &objs_len, &objs_cap, &fobj, vfs_file_obj_cmp)) {
+        if (fobj->devfile) {
+            if (fobj->devfile->vtable->close_obj) {
+                fobj->devfile->vtable->close_obj(fobj->devfile->cookie, fobj);
+            }
+        } else if (fobj->type == FILETYPE_FIFO) {
+            vfs_fifo_destroy(fobj->fifo);
+        }
         dir->vfs->vtable.file_close(NULL, dir->vfs, fobj);
         free(fobj);
         fobj = NULL;
@@ -382,26 +426,31 @@ vfs_file_obj_t *vfs_file_dup(vfs_file_obj_t *orig) {
 
 // Close a file opened by `vfs_file_open`.
 // Only raises an error if `file` is an invalid file descriptor.
-void vfs_file_drop_ref(badge_err_t *ec, vfs_file_obj_t *file) {
-    if (atomic_fetch_sub(&file->refcount, 1) == 1) {
+void vfs_file_drop_ref(badge_err_t *ec, vfs_file_obj_t *fobj) {
+    if (atomic_fetch_sub(&fobj->refcount, 1) == 1) {
         // Remove from file objects list.
-        array_binsearch_t res = array_binsearch(objs, sizeof(void *), objs_len, &file, vfs_file_obj_cmp);
+        array_binsearch_t res = array_binsearch(objs, sizeof(void *), objs_len, &fobj, vfs_file_obj_cmp);
         if (res.found) {
             array_lencap_remove(&objs, sizeof(void *), &objs_len, &objs_cap, NULL, res.index);
         } else {
-            assert_dev_drop(file->vfs == NULL);
+            assert_dev_drop(fobj->vfs == NULL);
         }
 
-        if (file->type == FILETYPE_FIFO) {
+        if (fobj->devfile) {
+            // Closing a device special file.
+            if (fobj->devfile->vtable->close_obj) {
+                fobj->devfile->vtable->close_obj(fobj->devfile->cookie, fobj);
+            }
+        } else if (fobj->type == FILETYPE_FIFO) {
             // Closing a FIFO or pipe.
-            vfs_fifo_destroy(file->fifo);
+            vfs_fifo_destroy(fobj->fifo);
         }
-        if (!file->vfs) {
+        if (!fobj->vfs) {
             // Special case: An unnamed pipe does not have a filesystem; skip closing there.
             badge_err_set_ok(ec);
             return;
         }
-        file->vfs->vtable.file_close(ec, file->vfs, file);
+        fobj->vfs->vtable.file_close(ec, fobj->vfs, fobj);
     } else {
         badge_err_set_ok(ec);
     }

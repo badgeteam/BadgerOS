@@ -5,11 +5,89 @@
 
 #include "assertions.h"
 #include "badge_strings.h"
+#include "filesystem/devfile.h"
 #include "filesystem/fs_ramfs_types.h"
 #include "malloc.h"
+#include "port/hardware_allocation.h"
 
 #define RAMFS(vfs)    (*(fs_ramfs_t *)(vfs)->cookie)
 #define RAMFILE(file) ((fs_ramfs_inode_t *)(file)->cookie)
+
+
+
+// File read.
+fileoff_t dev_null_read(badge_err_t *ec, void *cookie, vfs_file_obj_t *fobj, fileoff_t pos, fileoff_t len, void *data) {
+    (void)fobj;
+    (void)pos;
+
+    if (cookie) {
+        // DEVTMPFS zero.
+        mem_set(data, 0, len);
+        badge_err_set_ok(ec);
+        return len;
+
+    } else {
+        // DEVTMPFS null.
+        badge_err_set_ok(ec);
+        return 0;
+    }
+}
+
+// File write.
+fileoff_t dev_null_write(
+    badge_err_t *ec, void *cookie, vfs_file_obj_t *fobj, fileoff_t pos, fileoff_t len, void const *data
+) {
+    (void)cookie;
+    (void)fobj;
+    (void)pos;
+    (void)len;
+    (void)data;
+    badge_err_set_ok(ec);
+    return len;
+}
+
+
+
+// DEVTMPFS null/zero vtable.
+static devfile_vtable_t dev_null_vtable = {
+    .read  = dev_null_read,
+    .write = dev_null_write,
+};
+
+
+
+// RAMFS vtable.
+static vfs_vtable_t ramfs_vtable = {
+    .mount        = fs_ramfs_mount,
+    .umount       = fs_ramfs_umount,
+    .create_file  = fs_ramfs_create_file,
+    .create_dir   = fs_ramfs_create_dir,
+    .unlink       = fs_ramfs_unlink,
+    .link         = fs_ramfs_link,
+    .symlink      = fs_ramfs_symlink,
+    .mkfifo       = fs_ramfs_mkfifo,
+    .dir_read     = fs_ramfs_dir_read,
+    .dir_find_ent = fs_ramfs_dir_find_ent,
+    .root_open    = fs_ramfs_root_open,
+    .file_open    = fs_ramfs_file_open,
+    .file_close   = fs_ramfs_file_close,
+    .file_read    = fs_ramfs_file_read,
+    .file_write   = fs_ramfs_file_write,
+    .file_resize  = fs_ramfs_file_resize,
+    .flush        = fs_ramfs_flush,
+};
+
+// RAMFS declaration.
+FS_DRIVER_DECL(ramfs_driver) = {
+    .vtable = &ramfs_vtable,
+    .id     = "ramfs",
+};
+
+// DEVTMPFS declaration.
+FS_DRIVER_DECL(devtmpfs_driver) = {
+    .vtable = &ramfs_vtable,
+    .id     = "devtmpfs",
+};
 
 
 
@@ -117,15 +195,15 @@ static fs_ramfs_dirent_t *
 
 // Insert a new file or directory into the given directory.
 // If the file already exists, does nothing.
-static fs_ramfs_inode_t *
-    create_file(badge_err_t *ec, vfs_t *vfs, vfs_file_obj_t *dir, char const *name, size_t name_len, filetype_t type) {
+static fs_ramfs_inode_t *create_file(
+    badge_err_t *ec, vfs_t *vfs, fs_ramfs_inode_t *dirptr, char const *name, size_t name_len, filetype_t type
+) {
     if (name_len > VFS_RAMFS_NAME_MAX) {
         badge_err_set(ec, ELOC_FILESYSTEM, ECAUSE_TOOLONG);
     }
     assert_always(mutex_acquire(&RAMFS(vfs).mtx, TIMESTAMP_US_MAX));
 
     // Test whether the file already exists.
-    fs_ramfs_inode_t  *dirptr   = RAMFILE(dir);
     fs_ramfs_dirent_t *existing = find_dirent(ec, vfs, dirptr, name, name_len);
     if (existing) {
         mutex_release(&RAMFS(vfs).mtx);
@@ -205,7 +283,7 @@ bool fs_ramfs_mount(badge_err_t *ec, vfs_t *vfs) {
     // TODO: Parameters.
     atomic_store_explicit(&RAMFS(vfs).ram_usage, 0, memory_order_relaxed);
     RAMFS(vfs).ram_limit      = 65536;
-    RAMFS(vfs).inode_list_len = 32;
+    RAMFS(vfs).inode_list_len = MEMMAP_VMEM ? 1024 : 64;
     RAMFS(vfs).inode_list     = malloc(sizeof(*RAMFS(vfs).inode_list) * RAMFS(vfs).inode_list_len);
     if (!RAMFS(vfs).inode_list) {
         free(vfs->cookie);
@@ -240,6 +318,7 @@ bool fs_ramfs_mount(badge_err_t *ec, vfs_t *vfs) {
     iptr->uid   = 0; /* TODO. */
     iptr->gid   = 0; /* TODO. */
 
+    // Create root `.` and `..` entries.
     fs_ramfs_dirent_t ent = {
         .size     = sizeof(ent) - VFS_RAMFS_NAME_MAX - 1 + sizeof(size_t),
         .inode    = VFS_RAMFS_INODE_ROOT,
@@ -248,12 +327,7 @@ bool fs_ramfs_mount(badge_err_t *ec, vfs_t *vfs) {
     };
     insert_dirent(ec, vfs, iptr, &ent);
     if (!badge_err_is_ok(ec)) {
-        free(iptr->buf);
-        free(RAMFS(vfs).inode_list);
-        free(RAMFS(vfs).inode_usage);
-        mutex_destroy(&RAMFS(vfs).mtx);
-        free(vfs->cookie);
-        return false;
+        goto populate_failed;
     }
 
     ent.name_len = 2;
@@ -261,15 +335,37 @@ bool fs_ramfs_mount(badge_err_t *ec, vfs_t *vfs) {
     ent.name[2]  = 0;
     insert_dirent(ec, vfs, iptr, &ent);
     if (!badge_err_is_ok(ec)) {
-        free(iptr->buf);
-        free(RAMFS(vfs).inode_list);
-        free(RAMFS(vfs).inode_usage);
-        mutex_destroy(&RAMFS(vfs).mtx);
-        free(vfs->cookie);
-        return false;
+        goto populate_failed;
+    }
+
+    if (vfs->driver == &devtmpfs_driver) {
+        // Create `null` and `zero` entries.
+        fs_ramfs_inode_t *devnode;
+
+        devnode = create_file(ec, vfs, &RAMFS(vfs).inode_list[VFS_RAMFS_INODE_ROOT], "null", 4, FILETYPE_CHR);
+        devnode->devfile.vtable = &dev_null_vtable;
+        devnode->devfile.cookie = (void *)0;
+        if (!devnode) {
+            goto populate_failed;
+        }
+
+        devnode = create_file(ec, vfs, &RAMFS(vfs).inode_list[VFS_RAMFS_INODE_ROOT], "zero", 4, FILETYPE_CHR);
+        devnode->devfile.vtable = &dev_null_vtable;
+        devnode->devfile.cookie = (void *)1;
+        if (!devnode) {
+            goto populate_failed;
+        }
     }
 
     return true;
+
+populate_failed:
+    free(iptr->buf);
+    free(RAMFS(vfs).inode_list);
+    free(RAMFS(vfs).inode_usage);
+    mutex_destroy(&RAMFS(vfs).mtx);
+    free(vfs->cookie);
+    return false;
 }
 
 // Unmount a ramfs filesystem.
@@ -285,7 +381,7 @@ void fs_ramfs_umount(vfs_t *vfs) {
 // Insert a new file into the given directory.
 // If the file already exists, does nothing.
 void fs_ramfs_create_file(badge_err_t *ec, vfs_t *vfs, vfs_file_obj_t *dir, char const *name, size_t name_len) {
-    create_file(ec, vfs, dir, name, name_len, FILETYPE_FILE);
+    create_file(ec, vfs, RAMFILE(dir), name, name_len, FILETYPE_FILE);
 }
 
 // Insert a new directory into the given directory.
@@ -296,7 +392,7 @@ void fs_ramfs_create_dir(badge_err_t *ec, vfs_t *vfs, vfs_file_obj_t *dir, char 
         ec = &ec0;
 
     // Create new directory.
-    fs_ramfs_inode_t *iptr = create_file(ec, vfs, dir, name, name_len, FILETYPE_DIR);
+    fs_ramfs_inode_t *iptr = create_file(ec, vfs, RAMFILE(dir), name, name_len, FILETYPE_DIR);
     if (!badge_err_is_ok(ec))
         return;
 
@@ -430,7 +526,7 @@ void fs_ramfs_symlink(
     char const     *link_name,
     size_t          link_name_len
 ) {
-    fs_ramfs_inode_t *inode = create_file(ec, vfs, link_dir, link_name, link_name_len, FILETYPE_LINK);
+    fs_ramfs_inode_t *inode = create_file(ec, vfs, RAMFILE(link_dir), link_name, link_name_len, FILETYPE_LINK);
     if (!inode) {
         return;
     }
@@ -443,7 +539,7 @@ void fs_ramfs_symlink(
 
 // Create a new named FIFO at a path relative to a dir handle.
 void fs_ramfs_mkfifo(badge_err_t *ec, vfs_t *vfs, vfs_file_obj_t *dir, char const *name, size_t name_len) {
-    create_file(ec, vfs, dir, name, name_len, FILETYPE_FIFO);
+    create_file(ec, vfs, RAMFILE(dir), name, name_len, FILETYPE_FIFO);
 }
 
 
@@ -593,6 +689,9 @@ void fs_ramfs_file_open(
     file->refcount = 1;
     file->size     = (fileoff_t)iptr->len;
     file->type     = (iptr->mode & VFS_RAMFS_MODE_MASK) >> VFS_RAMFS_MODE_BIT;
+    if (iptr->devfile.vtable) {
+        file->devfile = &iptr->devfile;
+    }
 
     mutex_release(&RAMFS(vfs).mtx);
     badge_err_set_ok(ec);
@@ -691,32 +790,3 @@ void fs_ramfs_flush(badge_err_t *ec, vfs_t *vfs) {
     (void)vfs;
     badge_err_set_ok(ec);
 }
-
-
-
-// RAMFS vtable.
-static vfs_vtable_t ramfs_vtable = {
-    .mount        = fs_ramfs_mount,
-    .umount       = fs_ramfs_umount,
-    .create_file  = fs_ramfs_create_file,
-    .create_dir   = fs_ramfs_create_dir,
-    .unlink       = fs_ramfs_unlink,
-    .link         = fs_ramfs_link,
-    .symlink      = fs_ramfs_symlink,
-    .mkfifo       = fs_ramfs_mkfifo,
-    .dir_read     = fs_ramfs_dir_read,
-    .dir_find_ent = fs_ramfs_dir_find_ent,
-    .root_open    = fs_ramfs_root_open,
-    .file_open    = fs_ramfs_file_open,
-    .file_close   = fs_ramfs_file_close,
-    .file_read    = fs_ramfs_file_read,
-    .file_write   = fs_ramfs_file_write,
-    .file_resize  = fs_ramfs_file_resize,
-    .flush        = fs_ramfs_flush,
-};
-
-// RAMFS declaration.
-FS_DRIVER_DECL(ramfs_driver) = {
-    .vtable = &ramfs_vtable,
-    .id     = "ramfs",
-};

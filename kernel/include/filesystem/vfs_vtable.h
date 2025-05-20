@@ -52,6 +52,10 @@ typedef void (*vfs_symlink_t)(
 );
 // Create a new named FIFO at a path relative to a dir handle.
 typedef void (*vfs_mkfifo_t)(badge_err_t *ec, vfs_t *vfs, vfs_file_obj_t *dir, char const *name, size_t name_len);
+// Make a device special file; only works on certain filesystem types.
+typedef void (*vfs_mkdevfile_t)(
+    badge_err_t *ec, vfs_file_obj_t *dir, char const *name, size_t name_len, devfile_t devfile
+);
 
 // Atomically read all directory entries and cache them into the directory handle.
 // Refer to `dirent_t` for the structure of the cache.
@@ -104,6 +108,7 @@ typedef struct {
     vfs_link_t         link;
     vfs_symlink_t      symlink;
     vfs_mkfifo_t       mkfifo;
+    vfs_mkdevfile_t    mkdevfile;
     vfs_dir_read_t     dir_read;
     vfs_dir_find_ent_t dir_find_ent;
     vfs_stat_t         stat;

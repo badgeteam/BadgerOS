@@ -8,6 +8,7 @@
 #include "device/dev_addr.h"
 #include "device/dev_class.h"
 #include "device/dtb/dtb.h"
+#include "filesystem.h"
 #include "mutex.h"
 #include "set.h"
 
@@ -121,6 +122,9 @@ struct driver {
     // [optional] Cascade-enable interrupts from some input pin.
     // Can be called with interrupts disabled.
     void (*cascase_enable_irq)(device_t *device, irqpin_t irq_in_pin);
+    // [optional] Create additional device node files.
+    // Called when a new `devtmpfs` is mounted OR after registered to the driver.
+    void (*create_devnodes)(device_t *device, file_t devtmpfs_root, file_t devnode_dir);
 };
 
 // Device filter.
