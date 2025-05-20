@@ -94,10 +94,9 @@ static void get_node_addr(
 }
 
 // Recursive DTB parsing imlpementation that walks the SOC for devices and registers them all.
-static uint32_t
+static device_t *
     dtparse_impl(dtb_handle_t *handle, dtb_node_t *node, uint32_t alen, uint32_t slen, device_t *parent_device) {
     device_t *device = NULL;
-    uint32_t  dev_id = 0;
 
     if (dtb_get_prop(handle, node, "compatible")) {
         // If a compatible node is present, register it as a device.
@@ -107,21 +106,23 @@ static uint32_t
             .dtb_node   = node,
         };
         get_node_addr(handle, node, alen, slen, parent_device, &info);
-        device = device_get(dev_id = device_add(info));
+        device = device_add(info);
+        // TODO: Establish interrupt connections.
+        device_activate(device);
     }
 
     // Walk child nodes.
     uint32_t inner_alen = dtb_read_uint(handle, node, "#address-cells");
     uint32_t inner_slen = dtb_read_uint(handle, node, "#size-cells");
     for (dtb_node_t *child = node->nodes; child; child = child->next) {
-        dtparse_impl(handle, child, inner_alen ?: alen, inner_slen ?: slen, device ?: parent_device);
+        device_t *child_dev =
+            dtparse_impl(handle, child, inner_alen ?: alen, inner_slen ?: slen, device ?: parent_device);
+        if (child_dev) {
+            device_pop_ref(child_dev);
+        }
     }
 
-    if (device) {
-        device_pop_ref(device);
-    }
-
-    return dev_id;
+    return device;
 }
 
 // Parse the DTB and add found devices.
@@ -157,7 +158,7 @@ void dtparse(void *dtb_ptr) {
             logkf(LOG_ERROR, "Missing interrupt controller for CPU%{d}", smp_idx);
             continue;
         }
-        device_t *irqctl = device_get(dtparse_impl(handle, irqctl_node, 0, 0, NULL));
+        device_t *irqctl = dtparse_impl(handle, irqctl_node, 0, 0, NULL);
         if (!irqctl || !irqctl->driver || irqctl->dev_class != DEV_CLASS_IRQCTL) {
             logkf(LOG_ERROR, "Invalid interrupt controller for CPU%{d}", smp_idx);
         } else {
@@ -167,7 +168,10 @@ void dtparse(void *dtb_ptr) {
 
     // Walk the SOC node to detect devices and install drivers.
     for (dtb_node_t *node = soc->nodes; node; node = node->next) {
-        dtparse_impl(handle, node, soc_alen, soc_slen, NULL);
+        device_t *child_dev = dtparse_impl(handle, node, soc_alen, soc_slen, NULL);
+        if (child_dev) {
+            device_pop_ref(child_dev);
+        }
     }
 }
 

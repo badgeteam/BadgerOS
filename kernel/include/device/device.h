@@ -18,6 +18,16 @@
 
 
 
+// Device state.
+typedef enum {
+    // Inactive; being set up.
+    DEV_STATE_INACTIVE,
+    // Active; eligible to receive a driver.
+    DEV_STATE_ACTIVE,
+    // Removed from the device tree.
+    DEV_STATE_REMOVED,
+} dev_state_t;
+
 // Device interrupt pin number.
 typedef uint16_t           irqpin_t;
 // All information required to match drivers with devices and install said drivers.
@@ -53,6 +63,8 @@ struct device_info {
 struct device {
     // Device info.
     device_info_t   info;
+    // Current device state.
+    dev_state_t     state;
     // Device reference count; when it reaches 0, the struct is freed.
     atomic_int      refcount;
     // What class of device this is; must be equal to that of the driver.
@@ -140,8 +152,13 @@ struct dev_filter {
 // Test a device info against a set of DTB compatible strings.
 bool      device_test_dtb_compat(device_info_t const *info, size_t compats_len, char const *const *compats);
 // Register a new device.
+// Takes ownership of any memory in `info`, regardless of success.
 // Returns a nonzero ID if successful.
-uint32_t  device_add(device_info_t info);
+device_t *device_add(device_info_t info);
+// Activate a device; search for a driver for the device.
+// If no driver could be found, the device is now eligible to get one in the future.
+// If this function is not called, no driver will ever be added.
+void      device_activate(device_t *device);
 // Remove a device and its children.
 bool      device_remove(uint32_t id);
 // Try to get a reference to a device by ID.

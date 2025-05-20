@@ -155,9 +155,15 @@ static void device_deinit(device_union_t *device) {
 
 // Register a device to a certain driver.
 // Initializes all data used by devices with drivers.
-// Returns `true` if the device has a driver by the end, which may or may not be `driver`.
+// Returns `true` if the search for drivers should stop, regardless of whether adding this one was successful.
 static bool device_add_to_driver(device_union_t *device, driver_t const *driver) {
     mutex_acquire(&device->base.driver_mtx, TIMESTAMP_US_MAX);
+
+    if (device->base.state != DEV_STATE_ACTIVE) {
+        // Cannot add a driver because the device is inactive.
+        mutex_release(&device->base.driver_mtx);
+        return true;
+    }
 
     if (device->base.driver) {
         // Device had already received a driver.
@@ -276,12 +282,13 @@ bool device_unlink_irq_impl(device_union_t *child, irqpin_t child_pin, device_un
 
 
 // Register a new device.
+// Takes ownership of any memory in `info`, regardless of success.
 // Returns a nonzero ID if successful.
-uint32_t device_add(device_info_t info) {
+device_t *device_add(device_info_t info) {
     device_union_t *device = calloc(1, sizeof(device_union_t));
     if (!device) {
         free(info.addrs);
-        return 0;
+        return NULL;
     }
 
     mutex_acquire(&devs_mtx, TIMESTAMP_US_MAX);
@@ -291,19 +298,20 @@ uint32_t device_add(device_info_t info) {
         free(info.addrs);
         free(device);
         mutex_release(&devs_mtx);
-        return 0;
+        return NULL;
     }
 
     // Initialize device data.
     uint32_t id           = ++id_ctr;
     device->base.info     = info;
     device->base.info.id  = id;
-    device->base.refcount = 1;
+    device->base.refcount = 2;
+    device->base.state    = DEV_STATE_INACTIVE;
     if (!device_init(device)) {
         free(info.addrs);
         free(device);
         mutex_release(&devs_mtx);
-        return 0;
+        return NULL;
     }
 
     // Add to parent's set of children.
@@ -311,12 +319,21 @@ uint32_t device_add(device_info_t info) {
         set_add(device->base.info.parent->children, device);
     }
 
-    // Try to find a matching driver.
-    device_try_find_driver(device);
-
     mutex_release(&devs_mtx);
 
-    return id;
+    return &device->base;
+}
+
+// Activate a device; search for a driver for the device.
+// If no driver could be found, the device is now eligible to get one in the future.
+// If this function is not called, no driver will ever be added.
+void device_activate(device_t *device) {
+    mutex_acquire(&device->driver_mtx, TIMESTAMP_US_MAX);
+    if (device->state == DEV_STATE_INACTIVE) {
+        device->state = DEV_STATE_ACTIVE;
+    }
+    mutex_release(&device->driver_mtx);
+    device_try_find_driver((device_union_t *)device);
 }
 
 // Remove a device and its children.

@@ -65,15 +65,30 @@ static void device_pcictl_dev_detect(device_pcictl_t *device, uint8_t bus, uint8
     // Register new device.
     logkf(LOG_INFO, "Detected PCI device with %{size;d} function%{cs}", info.addrs_len, info.addrs_len == 1 ? "" : "s");
     for (size_t i = 0; i < info.addrs_len; i++) {
+        driver->cam_read(
+            device,
+            (info.addrs[i].pci.bus * 256 + info.addrs[i].pci.dev * 8 + info.addrs[i].pci.func) * 4096,
+            sizeof(pcie_hdr_com_t),
+            &hdr
+        );
         logkf(
             LOG_INFO,
-            "  -> %{u8;x}:%{u8;x}.%{u8;d}",
+            "  -> %{u8;x}:%{u8;x}.%{u8;d} class %{u8;x}:%{u8;x}:%{u8;x}",
             info.addrs[i].pci.bus,
             info.addrs[i].pci.dev,
-            info.addrs[i].pci.func
+            info.addrs[i].pci.func,
+            hdr.classcode.baseclass,
+            hdr.classcode.subclass,
+            hdr.classcode.progif
         );
     }
-    device_add(info);
+    device_t *child_dev = device_add(info);
+    if (!child_dev) {
+        return;
+    }
+
+    // TODO: Establish interrupt connections.
+    device_pop_ref(child_dev);
 }
 
 // Enumerate a PCI or PCIe bus, adding or removing devices accordingly.
