@@ -52,7 +52,7 @@ amd64_syscall_entry:
     call amd64_syscall_raise
     pop  %rdx
     pop  %rax
-    # sti
+    sti
     
     pop  %r9
     pop  %r8
@@ -85,7 +85,7 @@ amd64_syscall_entry:
     # Returns <= 16 bytes; don't clear RAX nor RDX.
     
     # Swap context back to the user one.
-    # cli
+    cli
     push %rax
     push %rdx
     call amd64_syscall_lower

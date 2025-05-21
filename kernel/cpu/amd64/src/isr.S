@@ -6,7 +6,7 @@
 #include "cpu/x86_msr.h"
 #include "cpu/segmentation.h"
 #include "port/hardware.h"
-    .cfi_sections .debug_frame
+    # .cfi_sections .debug_frame
     .intel_syntax
 
 
@@ -199,10 +199,10 @@ __amd64_irq:
     # Move GSBASE into R15 so GDB understands all this.
     mov  %ecx, MSR_GSBASE
     rdmsr
-    mov  %rbp, %rax
+    mov  %r15, %rax
     shl  %rdx, 32
-    or   %rbp, %rdx
-    .cfi_def_cfa %rbp, 0
+    or   %r15, %rdx
+    .cfi_def_cfa %r15, 0
     
     # Save segment regs.
     mov  %ax, %ds

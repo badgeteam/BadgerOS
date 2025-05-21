@@ -154,8 +154,13 @@ bool sched_signal_exit() {
 }
 
 // Return to exit the thread.
-static void sched_exit_self(int code) {
-    thread_exit(code);
+static NAKED void sched_exit_self() {
+    // clang-format off
+    asm(
+        "mov %rdi, %rax;"
+        "call thread_exit;"
+    );
+    // clang-format on
 }
 
 // Prepares a context to be invoked as a kernel thread.
@@ -164,7 +169,7 @@ void sched_prepare_kernel_entry(sched_thread_t *thread, void *entry_point, void 
     mem_set(&thread->kernel_isr_ctx.regs, 0, sizeof(thread->kernel_isr_ctx.regs));
     thread->kernel_isr_ctx.regs.gsbase = (size_t)&thread->kernel_isr_ctx;
     thread->kernel_isr_ctx.regs.rip    = (size_t)entry_point;
-    thread->kernel_isr_ctx.regs.rsp    = thread->kernel_stack_top;
+    thread->kernel_isr_ctx.regs.rsp    = thread->kernel_stack_top - sizeof(size_t);
     thread->kernel_isr_ctx.regs.cs     = FORMAT_SEGMENT(SEGNO_KCODE, 0, PRIV_KERNEL);
     thread->kernel_isr_ctx.regs.ds     = FORMAT_SEGMENT(SEGNO_KDATA, 0, PRIV_KERNEL);
     thread->kernel_isr_ctx.regs.es     = FORMAT_SEGMENT(SEGNO_KDATA, 0, PRIV_KERNEL);
@@ -172,6 +177,9 @@ void sched_prepare_kernel_entry(sched_thread_t *thread, void *entry_point, void 
     thread->kernel_isr_ctx.regs.gs     = FORMAT_SEGMENT(SEGNO_KDATA, 0, PRIV_KERNEL);
     thread->kernel_isr_ctx.regs.ss     = FORMAT_SEGMENT(SEGNO_KDATA, 0, PRIV_KERNEL);
     thread->kernel_isr_ctx.regs.rflags = RFLAGS_AC;
+
+    // Set to return to `sched_exit_self`, which will use its return value as the thread exit code.
+    *(size_t *)thread->kernel_isr_ctx.regs.rsp = (size_t)sched_exit_self;
 }
 
 // Prepares a pair of contexts to be invoked as a userland thread.
