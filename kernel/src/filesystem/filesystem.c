@@ -1067,7 +1067,7 @@ fileoff_t fs_read(badge_err_t *ec, file_t file, void *readbuf, fileoff_t readlen
     if (fd->obj->devfile) {
         // Device file read.
         read = fd->obj->devfile->vtable->read(ec, fd->obj->devfile->cookie, fd->obj, fd->offset, readlen, readbuf);
-        if (fd->obj->devfile->vtable->seekable) {
+        if (read >= 0 && fd->obj->devfile->vtable->seekable) {
             fd->offset += read;
         }
 
@@ -1106,6 +1106,7 @@ fileoff_t fs_read(badge_err_t *ec, file_t file, void *readbuf, fileoff_t readlen
 // Write bytes to a file.
 // Returns the amount of data successfully written.
 fileoff_t fs_write(badge_err_t *ec, file_t file, void const *writebuf, fileoff_t writelen) {
+    fileoff_t written = 0;
     if (writelen < 0) {
         badge_err_set(ec, ELOC_FILESYSTEM, ECAUSE_PARAM);
         return -1;
@@ -1124,26 +1125,32 @@ fileoff_t fs_write(badge_err_t *ec, file_t file, void const *writebuf, fileoff_t
     badge_err_t ec0 = {0};
     ec              = ec ?: &ec0;
 
-    if (fd->obj->type == FILETYPE_FIFO && fd->nonblock) {
+    if (fd->obj->devfile) {
+        // Device file write.
+        written =
+            fd->obj->devfile->vtable->write(ec, fd->obj->devfile->cookie, fd->obj, fd->offset, writelen, writebuf);
+        if (written >= 0 && fd->obj->devfile->vtable->seekable) {
+            fd->offset += written;
+        }
+
+    } else if (fd->obj->type == FILETYPE_FIFO && fd->nonblock) {
         // Non-blocking FIFO writes send as much data as is possible without blocking.
-        return vfs_fifo_write(ec, fd->obj->fifo, true, false, writebuf, writelen);
+        written = vfs_fifo_write(ec, fd->obj->fifo, true, false, writebuf, writelen);
 
     } else if (fd->obj->type == FILETYPE_FIFO) {
         // Blocking FIFO writes block until all data is written,
         // Or set the error code to ECAUSE_PIPE_CLOSED if the FIFO closes midway.
-        fileoff_t total_written = 0;
-        bool      enforce_open  = false;
+        bool enforce_open = false;
         while (writelen) {
-            fileoff_t written = vfs_fifo_write(ec, fd->obj->fifo, fd->nonblock, enforce_open, writebuf, writelen);
+            fileoff_t batch_written = vfs_fifo_write(ec, fd->obj->fifo, fd->nonblock, enforce_open, writebuf, writelen);
             if (!badge_err_is_ok(ec)) {
                 break;
             }
-            writebuf       = (uint8_t const *)writebuf + written;
-            writelen      -= written;
-            total_written += written;
-            enforce_open   = true;
+            writebuf      = (uint8_t const *)writebuf + batch_written;
+            writelen     -= batch_written;
+            written      += batch_written;
+            enforce_open  = true;
         }
-        return total_written;
 
     } else if (fd->append) {
         // Append writes are atomic and require exclusive locking.
@@ -1162,7 +1169,9 @@ fileoff_t fs_write(badge_err_t *ec, file_t file, void const *writebuf, fileoff_t
         mutex_release(&fd->obj->mutex);
         if (newlen < fd->obj->size) {
             badge_err_set(ec, ELOC_FILESYSTEM, ECAUSE_NOSPACE);
-            writelen = -1;
+            written = -1;
+        } else {
+            written = writelen;
         }
 
     } else {
@@ -1202,12 +1211,14 @@ fileoff_t fs_write(badge_err_t *ec, file_t file, void const *writebuf, fileoff_t
         mutex_release_shared(&fd->obj->mutex);
         if (offset + writelen < offset) {
             badge_err_set(ec, ELOC_FILESYSTEM, ECAUSE_NOSPACE);
-            writelen = -1;
+            written = -1;
+        } else {
+            written = writelen;
         }
     }
 
     fd_drop_ref(ec, fd);
-    return writelen;
+    return written;
 }
 
 // Get the current offset in the file.
