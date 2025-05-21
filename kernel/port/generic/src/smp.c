@@ -7,7 +7,6 @@
 #include "assertions.h"
 #include "cpu/mmu.h"
 #include "cpulocal.h"
-#include "device/dtb/dtb.h"
 #include "interrupt.h"
 #include "isr_ctx.h"
 #include "mutex.h"
@@ -16,6 +15,7 @@
 
 #ifdef __riscv
 #include "cpu/riscv_sbi.h"
+#include "device/dtb/dtb.h"
 #endif
 
 #define REQ __attribute__((section(".requests")))
@@ -101,9 +101,9 @@ static REQ struct limine_smp_request smp_req = {
 };
 
 
+#ifdef __riscv
 // Initialise the SMP subsystem.
 void smp_init_dtb(dtb_handle_t *dtb) {
-#ifdef __riscv
     sbi_ret_t res    = sbi_probe_extension(SBI_HART_MGMT_EID);
     sbi_supports_hsm = res.retval && !res.status;
     if (sbi_supports_hsm) {
@@ -113,7 +113,6 @@ void smp_init_dtb(dtb_handle_t *dtb) {
         // SBI doesn't support HSM; CPUs can be started but not stopped.
         logk(LOG_INFO, "SBI doesn't support HSM");
     }
-#endif
 
     // Parse CPU ID information from the DTB.
     dtb_node_t *cpus = dtb_get_node(dtb, dtb_root_node(dtb), "cpus");
@@ -123,22 +122,16 @@ void smp_init_dtb(dtb_handle_t *dtb) {
     uint32_t cpu_acells = dtb_read_uint(dtb, cpus, "#address-cells");
     assert_always(cpu_acells && cpu_acells <= sizeof(size_t) / 4);
     assert_always(dtb_read_uint(dtb, cpus, "#size-cells") == 0);
-#ifdef __riscv
     size_t bsp_cpuid = smp_req.response->bsp_hartid;
-#endif
 
     while (cpu) {
         // Detect usable architecture.
-#ifdef __riscv
         uint32_t    isa_len = 0;
         char const *isa     = dtb_prop_content(dtb, dtb_get_prop(dtb, cpu, "riscv,isa"), &isa_len);
         if (isa_len < 5 || !cstr_prefix_equals(isa, __riscv_xlen == 32 ? "rv32i" : "rv64i", 5)) {
             cpu = cpu->next;
             continue;
         }
-#else
-#error "smp_init: Unsupported architecture"
-#endif
 
         // Detect usable MMU.
         uint32_t    mmu_len = 0;
@@ -190,6 +183,7 @@ void smp_init_dtb(dtb_handle_t *dtb) {
 
     irq_enable_if(ie);
 }
+#endif
 
 // Get the CPU-local data for some CPU.
 cpulocal_t *smp_get_cpulocal(int cpu) {

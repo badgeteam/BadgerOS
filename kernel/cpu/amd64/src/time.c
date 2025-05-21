@@ -4,10 +4,9 @@
 #include "time.h"
 
 #include "assertions.h"
-#include "cpu/x86_ioport.h"
 #include "cpu/x86_cpuid.h"
+#include "cpu/x86_ioport.h"
 #include "interrupt.h"
-#include "port/dtb.h"
 #include "port/hardware_allocation.h"
 #include "scheduler/isr.h"
 #include "time_private.h"

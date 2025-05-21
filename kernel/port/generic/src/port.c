@@ -8,14 +8,15 @@
 #include "device/class/pcictl.h"
 #include "device/dev_class.h"
 #include "device/device.h"
-#include "device/dtb/dtparse.h"
 #include "interrupt.h"
 #include "panic.h"
 #include "port/hardware_allocation.h"
 #include "rawprint.h"
 #include "set.h"
 #include "uacpi/uacpi.h"
-#ifdef __x86_64__
+#ifdef __riscv
+#include "device/dtb/dtparse.h"
+#elif defined(__x86_64__)
 #include "cpu/x86_ioport.h"
 #endif
 
@@ -38,15 +39,17 @@ static REQ struct limine_memmap_request mm_req = {
     .revision = 3,
 };
 
+#ifdef __riscv
 static REQ struct limine_dtb_request dtb_req = {
     .id       = LIMINE_DTB_REQUEST,
     .revision = 3,
 };
-
+#elif defined(__x86_64__)
 static REQ struct limine_rsdp_request rsdp_req = {
     .id       = LIMINE_RSDP_REQUEST,
     .revision = 3,
 };
+#endif
 
 static REQ struct limine_kernel_address_request addr_req = {
     .id       = LIMINE_KERNEL_ADDRESS_REQUEST,
@@ -85,10 +88,17 @@ void port_early_init() {
         logk_from_isr(LOG_FATAL, "Limine memmap response missing");
         panic_poweroff();
     }
-    if (!dtb_req.response && !rsdp_req.response) {
-        logk_from_isr(LOG_FATAL, "Both Limine DTB and Limine RSDP response missing");
+#ifdef __riscv
+    if (!dtb_req.response) {
+        logk_from_isr(LOG_FATAL, "Limine DTB response missing");
         panic_poweroff();
     }
+#elif defined(__x86_64__)
+    if (!rsdp_req.response) {
+        logk_from_isr(LOG_FATAL, "Limine RSDP response missing");
+        panic_poweroff();
+    }
+#endif
     if (!addr_req.response) {
         logk_from_isr(LOG_FATAL, "Limine kernel address response missing");
         panic_poweroff();
@@ -135,15 +145,19 @@ void port_early_init() {
         if (entry->type == LIMINE_MEMMAP_KERNEL_AND_MODULES) {
             kernel_len = entry->length;
         }
+#ifdef __riscv
         // Workaround: Limine has a bug where the DTB is in usable, not reclaimable, memory.
         if ((size_t)dtb_req.response->dtb_ptr - hhdm_req.response->offset < entry->base ||
             (size_t)dtb_req.response->dtb_ptr - hhdm_req.response->offset >= entry->base + entry->length) {
+#endif
             // This second check was always there and just picks the largest candidate.
             if (entry->type == LIMINE_MEMMAP_USABLE && entry->length > biggest_pool_size) {
                 biggest_pool_index = i;
                 biggest_pool_size  = entry->length;
             }
+#ifdef __riscv
         }
+#endif
         if (entry->type != LIMINE_MEMMAP_BAD_MEMORY && entry->type != LIMINE_MEMMAP_RESERVED) {
             mmu_hhdm_size = entry->base + entry->length;
         }
@@ -190,20 +204,20 @@ void port_postheap_init() {
 
 // Full hardware initialization.
 void port_init() {
-    if (dtb_req.response) {
-        // Parse and process DTB.
-        // dtdump(dtb_req.response->dtb_ptr);
-        dtparse(dtb_req.response->dtb_ptr);
-    } else {
-        // Initialize ACPI.
-        time_init_before_acpi();
-        uacpi_status st = uacpi_initialize(0);
-        assert_always(st == UACPI_STATUS_OK);
-        st = uacpi_namespace_load();
-        assert_always(st == UACPI_STATUS_OK);
-        // st = uacpi_namespace_initialize();
-        // assert_always(st == UACPI_STATUS_OK);
-    }
+#ifdef __riscv
+    // Parse and process DTB.
+    // dtdump(dtb_req.response->dtb_ptr);
+    dtparse(dtb_req.response->dtb_ptr);
+#elif defined(__x86_64__)
+    // Initialize ACPI.
+    time_init_before_acpi();
+    uacpi_status st = uacpi_initialize(0);
+    assert_always(st == UACPI_STATUS_OK);
+    st = uacpi_namespace_load();
+    assert_always(st == UACPI_STATUS_OK);
+    // st = uacpi_namespace_initialize();
+    // assert_always(st == UACPI_STATUS_OK);
+#endif
 
     // Enumerate PCIe devices.
     dev_filter_t filter = {

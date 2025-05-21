@@ -6,7 +6,7 @@
 #include "cpu/x86_msr.h"
 #include "cpu/segmentation.h"
 #include "port/hardware.h"
-    // .cfi_sections .debug_frame
+    .cfi_sections .debug_frame
     .intel_syntax
 
 
@@ -39,7 +39,7 @@ __amd64_irq_\index:
     # Macro for saving a single GPR.
     .macro save_reg name
     mov [%gs:isr_ctx_t_regs+cpu_regs_t_\name], %\name
-    // .cfi_offset \name, isr_ctx_t_regs+cpu_regs_t_\name
+    .cfi_offset \name, isr_ctx_t_regs+cpu_regs_t_\name
     .endm
 
 
@@ -47,7 +47,7 @@ __amd64_irq_\index:
     # Macro for restoring a single GPR.
     .macro restore_reg name
     mov %\name, [%gs:isr_ctx_t_regs+cpu_regs_t_\name]
-    // .cfi_restore \name
+    .cfi_restore \name
     .endm
 
 
@@ -188,9 +188,9 @@ isr_context_switch:
     .text
     .type __trap_asm, %function
     .cfi_startproc
-    // .cfi_signal_frame
+    .cfi_signal_frame
 __amd64_irq:
-    // .cfi_return_column rip
+    .cfi_return_column rip
     swapgs
     
     # Save general-purpose registers.
@@ -202,7 +202,7 @@ __amd64_irq:
     mov  %rbp, %rax
     shl  %rdx, 32
     or   %rbp, %rdx
-    // .cfi_def_cfa %rbp, 0
+    .cfi_def_cfa %rbp, 0
     
     # Save segment regs.
     mov  %ax, %ds
@@ -217,7 +217,7 @@ __amd64_irq:
     # Transfer special regs from interrupt frame to ISR context.
     mov  %rax, [%rsp+16+amd64_irqframe_t_rip]
     mov  [%gs:isr_ctx_t_regs+cpu_regs_t_rip], %rax
-    // .cfi_offset %rip, isr_ctx_t_regs+cpu_regs_t_rip
+    .cfi_offset %rip, isr_ctx_t_regs+cpu_regs_t_rip
     mov  %rax, [%rsp+16+amd64_irqframe_t_cs]
     mov  [%gs:isr_ctx_t_regs+cpu_regs_t_cs], %ax
     mov  %rax, [%rsp+16+amd64_irqframe_t_rflags]
