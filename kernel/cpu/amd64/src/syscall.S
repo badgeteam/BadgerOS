@@ -72,15 +72,15 @@ amd64_syscall_entry:
     jne  1f
     
     # Returns void; clear both RAX and RDX.
-    xor  %edx, %edx
-    xor  %eax, %eax
+    xor  %rdx, %rdx
+    xor  %rax, %rax
     jmp  2f
 1:
     cmp  %rdi, 8
     jge  2f
     
     # Returns <= 8 bytes; clear only RDX.
-    xor  %edx, %edx
+    xor  %rdx, %rdx
 2:
     # Returns <= 16 bytes; don't clear RAX nor RDX.
     
@@ -93,13 +93,13 @@ amd64_syscall_entry:
     pop  %rax
     
     # Clear temporary registers.
-    xor  %edi, %edi
-    xor  %esi, %esi
-    xor  %ecx, %ecx
-    xor  %r8w, %r8w
-    xor  %r9w, %r9w
-    xor  %r10w, %r10w
-    xor  %r11w, %r11w
+    xor  %rdi, %rdi
+    xor  %rsi, %rsi
+    xor  %rcx, %rcx
+    xor  %r8, %r8
+    xor  %r9, %r9
+    xor  %r10, %r10
+    xor  %r11, %r11
     
     # Restore callee-save registers.
     mov  %rcx, [%gs:isr_ctx_t_regs+cpu_regs_t_rip]
