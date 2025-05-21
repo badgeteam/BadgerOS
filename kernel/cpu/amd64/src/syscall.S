@@ -79,8 +79,8 @@ amd64_syscall_entry:
     cmp  %rdi, 8
     jge  2f
     
-    # Returns <= 8 bytes; clear only RAX.
-    xor  %eax, %eax
+    # Returns <= 8 bytes; clear only RDX.
+    xor  %edx, %edx
 2:
     # Returns <= 16 bytes; don't clear RAX nor RDX.
     

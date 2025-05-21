@@ -1,9 +1,7 @@
 
 // SPDX-License-Identifier: MIT
 
-#include "cpu/x86_msr.h"
 #include "isr_ctx.h"
-#include "scheduler/types.h"
 
 
 
