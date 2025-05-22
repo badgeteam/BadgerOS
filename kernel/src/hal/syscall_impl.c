@@ -10,8 +10,6 @@
 #include "syscall_util.h"
 #include "usercopy.h"
 
-// #include <config.h>
-
 
 
 // Returns the amount of GPIO pins present.
@@ -103,7 +101,7 @@ size_t syscall_i2c_master_write_to(badge_err_t *ec, int i2c_num, int slave_id, v
 
 
 
-#ifdef CONFIG_TARGET_esp32p4
+#ifdef CONFIG_SOC_ESP32P4
 // Returns the amount of SPI peripherals present.
 // Cannot produce an error.
 int syscall_spi_count() {

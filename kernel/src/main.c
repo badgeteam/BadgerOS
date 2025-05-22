@@ -72,7 +72,7 @@ void basic_runtime_init() {
     port_early_init();
 
     // Announce that we're alive.
-    logk_from_isr(LOG_INFO, "BadgerOS " CONFIGSTR_BOOT_PROTOCOL " starting...");
+    logk_from_isr(LOG_INFO, "BadgerOS " CONFIGSTR_CPU " starting...");
 
     // Kernel memory allocator initialization.
     kernel_heap_init();

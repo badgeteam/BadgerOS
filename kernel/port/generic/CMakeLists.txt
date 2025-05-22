@@ -24,8 +24,8 @@ set(port_include
     lib/limine
 )
 set(port_link
-    -T${CMAKE_CURRENT_LIST_DIR}/linker_${CONFIG_CPU}.ld
-    -L${CMAKE_CURRENT_LIST_DIR}
+    # -T${CMAKE_CURRENT_LIST_DIR}/linker_${CONFIG_CPU}.ld
+    # -L${CMAKE_CURRENT_LIST_DIR}
 )
 set(port_flags)
 set_target_properties(${target} PROPERTIES LINK_DEPENDS ${CMAKE_CURRENT_LIST_DIR}/linker.ld)

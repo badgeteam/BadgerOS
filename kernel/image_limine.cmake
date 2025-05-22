@@ -5,33 +5,33 @@ set(limine_efi ${CMAKE_CURRENT_LIST_DIR}/lib/limine/BOOTRISCV64.EFI)
 elseif("${CONFIG_CPU}" STREQUAL "x86_64")
 set(limine_efi ${CMAKE_CURRENT_LIST_DIR}/lib/limine/BOOTX64.EFI)
 endif()
-set(limine_conf ${CMAKE_CURRENT_LIST_DIR}/limine.conf)
+set(limine_boot ${CMAKE_CURRENT_LIST_DIR}/limine.conf)
+if("${CONFIG_CPU}" STREQUAL "x86_64")
+    list(APPEND limine_boot ${CMAKE_CURRENT_LIST_DIR}/lib/limine/limine-bios.sys)
+endif()
 
 # Custom target that collects the files for the boot partition.
 set(boot_dir ${CMAKE_BINARY_DIR}/boot.dir)
+set(boot_fatfs ${CMAKE_BINARY_DIR}/boot.fatfs)
 add_custom_command(
-    OUTPUT ${boot_dir}
+    OUTPUT ${boot_fatfs}
+    
+    # Populating the boot directory.
     COMMAND rm -rf ${boot_dir}
     COMMAND mkdir -p ${boot_dir}/EFI/BOOT
     COMMAND mkdir -p ${boot_dir}/boot
     COMMAND cp ${limine_efi} ${boot_dir}/EFI/BOOT/
-    COMMAND cp ${limine_conf} ${boot_dir}/boot/
+    COMMAND cp ${limine_boot} ${boot_dir}/boot/
     COMMAND cp ${CMAKE_BINARY_DIR}/badger-os.elf ${boot_dir}/boot/
-    DEPENDS badger-os.elf ${limine_efi} ${limine_conf}
-)
-add_custom_target(boot.dir.target DEPENDS ${boot_dir})
-
-# Custom target that creates an appropriate FAT filesystem.
-set(boot_fatfs ${CMAKE_BINARY_DIR}/boot.fatfs)
-add_custom_command(
-    OUTPUT ${boot_fatfs}
+    
+    # Making a FAT filesystem image from it.
     COMMAND rm -f ${boot_fatfs}
     COMMAND dd if=/dev/zero bs=1M count=4 of=${boot_fatfs}
     COMMAND mformat -i ${boot_fatfs}
     COMMAND mcopy -s -i ${boot_fatfs} ${boot_dir}/* ::/
-    DEPENDS boot.dir.target
+    
+    DEPENDS badger-os.elf ${limine_efi} ${limine_boot}
 )
-add_custom_target(boot.fatfs.target DEPENDS ${boot_fatfs})
 
 # Custom target for building the image.
 set(image_iso ${CMAKE_BINARY_DIR}/image.iso)
@@ -58,10 +58,38 @@ if(CONFIG_EMBED_UBOOT)
         COMMAND dd if=${CMAKE_CURRENT_LIST_DIR}/lib/u-boot/spl/u-boot-spl.bin bs=512 seek=34   of=${image_iso} conv=notrunc
         COMMAND dd if=${CMAKE_CURRENT_LIST_DIR}/lib/u-boot/u-boot.itb         bs=512 seek=2082 of=${image_iso} conv=notrunc
         COMMAND dd if=${boot_fatfs}                                           bs=512 seek=4096 of=${image_iso} conv=notrunc
-        DEPENDS badger-os.elf boot.fatfs.target uboot.target   
+        DEPENDS badger-os.elf ${boot_fatfs} uboot.target
+    )
+elseif("${CONFIG_CPU}" STREQUAL "x86_64")
+    # Variant with Limine-BIOS embedded.
+    add_custom_command(
+        OUTPUT ${image_iso}
+        COMMAND rm -f ${image_iso}
+        COMMAND dd if=/dev/zero bs=1M count=64 of=${image_iso}
+        COMMAND
+            sgdisk -a 1
+                --new=3:34:8225 --change-name=3:boot --typecode=3:0x0700
+                --new=4:8226:-0 --change-name=4:root --typecode=4:0x8300
+                ${image_iso}
+        COMMAND dd if=${boot_fatfs} bs=512 seek=34 of=${image_iso} conv=notrunc
+        COMMAND make -C ${CMAKE_CURRENT_LIST_DIR}/lib/limine
+        COMMAND ${CMAKE_CURRENT_LIST_DIR}/lib/limine/limine bios-install ${image_iso}
+        DEPENDS badger-os.elf ${boot_fatfs}
     )
 else()
-    # Variant without U-boot embedded.
+    # Variant without U-boot nor Limine-BIOS embedded.
+    add_custom_command(
+        OUTPUT ${image_iso}
+        COMMAND rm -f ${image_iso}
+        COMMAND dd if=/dev/zero bs=1M count=64 of=${image_iso}
+        COMMAND
+            sgdisk -a 1
+                --new=3:34:8225 --change-name=3:boot --typecode=3:0x0700
+                --new=4:8226:-0 --change-name=4:root --typecode=4:0x8300
+                ${image_iso}
+        COMMAND dd if=${boot_fatfs} bs=512 seek=34 of=${image_iso} conv=notrunc
+        DEPENDS badger-os.elf ${boot_fatfs}
+    )
 endif()
 add_custom_target(image.iso.target ALL DEPENDS ${image_iso})
-
+install(FILES ${image_iso} DESTINATION .)

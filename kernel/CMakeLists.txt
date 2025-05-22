@@ -32,11 +32,12 @@ include(cpu/${CONFIG_CPU}/CMakeLists.txt)
 if("${CONFIG_CPU}" STREQUAL "riscv32")
     config_const(BOOT_PROTOCOL "ESP32" "Boot protocol")
     config_enum(
-        SOC "ESP32P4" "Choose chipset"
-        "ESP32P4" "ESP32C6"
+        SOC "esp32p4" "Choose chipset"
+        "esp32p4" "esp32c6"
     )
 else()
     config_const(BOOT_PROTOCOL "Limine" "Boot protocol")
+    config_const(SOC "generic" "Boot protocol")
 endif()
 
 config_enum(
@@ -89,6 +90,7 @@ add_link_options(
     ${common_compiler_flags} ${cpu_flags} ${port_flags}
     ${cpu_link} ${port_link}
     -Wl,--gc-sections -Wl,--build-id=none -nodefaultlibs -nostartfiles
+    -T${CMAKE_CURRENT_LIST_DIR}/ld/${CONFIG_SOC}_${CONFIG_CPU}.ld
 )
 
 

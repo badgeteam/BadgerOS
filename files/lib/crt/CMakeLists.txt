@@ -3,7 +3,7 @@
 
 cmake_minimum_required(VERSION 3.10.0)
 
-if(${CONFIG_CPU} STREQUAL "amd64")
+if(${CONFIG_CPU} STREQUAL "x86_64")
     add_library(crt start_amd64.S)
 else()
     add_library(crt start_riscv.S)

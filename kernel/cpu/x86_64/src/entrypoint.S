@@ -1,8 +1,6 @@
 
 # SPDX-License-Identifier: MIT
 
-#include <config.h>
-
 	# This is the C entrypoint, which will be called when basic CRT is set up.
 	.global basic_runtime_init
 

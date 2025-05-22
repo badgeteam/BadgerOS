@@ -1,21 +1,19 @@
 
 # SPDX-License-Identifier: MIT
 
-CONFIG_PATH       ?= ../.config/config.mk
+CONFIG_PATH        = ../.config/config.mk
 include $(CONFIG_PATH)
+include cpu/$(CONFIG_CPU)/cpu.mk
 
 MAKEFLAGS         += --silent -j$(shell nproc)
 SHELL             := /usr/bin/env bash
-OUTPUT            ?= $(shell pwd)/firmware
-BUILDDIR          ?= build
-BADGER_RAMFS_ROOT ?= ../files/root
+OUTPUT             = $(shell pwd)/firmware
+BUILDDIR           = $(shell pwd)/build
+BADGER_RAMFS_ROOT ?= $(shell pwd)/../files/root
 CROSS_COMPILE      = $(CONFIG_TC_PREFIX)
 GDB               ?= $(CROSS_COMPILE)gdb
 CLANG_FORMAT      ?= clang-format-18
 CLANG_TIDY        ?= clang-tidy-18
-CONFIG_TARGET = generic
-
-include port/$(CONFIG_TARGET)/port.mk
 
 .PHONY: cmake-configure
 cmake-configure:  $(BUILDDIR)/fs_root.c
@@ -58,3 +56,13 @@ clang-tidy-check: cmake-configure
 .PHONY: gdb
 gdb:
 	$(GDB) -x port/$(CONFIG_TARGET)/gdbinit build/badger-os.elf
+
+.PHONY: burn
+burn: build
+	sudo dd if=$(OUTPUT)/image.iso of=$(DRIVE) bs=1M oflag=sync conv=nocreat
+
+.PHONY: monitor
+monitor:
+	echo -e "\033[1mType ^A^X to exit.\033[0m"
+	picocom -q -b 115200 '$(PORT)' \
+	| ../tools/address-filter.py -A $(CROSS_COMPILE)addr2line '$(OUTPUT)/badger-os.elf'; echo -e '\033[0m'

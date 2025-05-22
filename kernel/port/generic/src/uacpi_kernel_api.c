@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: MIT
 
 #include "assertions.h"
-#include "config.h"
 #include "housekeeping.h"
 #include "interrupt.h"
 #include "log.h"
@@ -15,7 +14,7 @@
 #include "uacpi/kernel_api.h"
 #include "uacpi/status.h"
 
-#ifdef CONFIG_CPU_amd64
+#ifdef __x86_64__
 #include "cpu/x86_ioport.h"
 #endif
 
@@ -75,7 +74,7 @@ void uacpi_kernel_io_unmap(uacpi_handle handle) {
  * You are NOT allowed to break e.g. a 4-byte access into four 1-byte accesses.
  * Hardware ALWAYS expects accesses to be of the exact width.
  */
-#ifdef CONFIG_CPU_amd64
+#ifdef __x86_64__
 uacpi_status uacpi_kernel_io_read8(uacpi_handle handle, uacpi_size offset, uacpi_u8 *out_value) {
     *out_value = inb((size_t)handle + offset);
     return UACPI_STATUS_OK;

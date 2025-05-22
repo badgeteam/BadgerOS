@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: MIT
 
 from argparse import ArgumentParser
-import os, subprocess
+import os, subprocess, re
 
 assert __name__ == "__main__"
 
@@ -116,21 +116,24 @@ config["prefix"] = prefixes[compiler]
 
 if os.uname().machine == config["cpu"] and prompt_yesno("Use native ISA?", True):
     config["isa_spec"] = "native"
+    if config["cpu"].startswith("riscv"):
+        config["kisa_spec"] = "rv" + config["cpu"][5:] + "imac_zicsr_zifencei"
+    else:
+        config["kisa_spec"] = "x86-64"
 elif config["cpu"].startswith("riscv"):
     rv_float_enum = ["none", "single", "double"]
     rv_float_isa  = ["", "f", "fd"]
     float_spec = prompt_choice("float spec", rv_float_enum, 2)
     use_vec = prompt_yesno("Support vector extensions?", True)
-    use_comp = prompt_yesno("Use compressed instructions?", True)
     config["rv_float_spec"] = rv_float_enum[float_spec]
     config["rv_use_vector"] = str(use_vec)
-    config["isa_spec"] = "rv" + config["cpu"][5:] + "ima" + rv_float_isa[float_spec] + ("c" if use_comp else "") + ("v" if use_vec else "") + "_zicsr_zifencei"
-    config["kisa_spec"] = "rv" + config["cpu"][5:] + "ima" + ("c" if use_comp else "") + "_zicsr_zifencei"
+    config["isa_spec"] = "rv" + config["cpu"][5:] + "ima" + rv_float_isa[float_spec] + "c" + ("v" if use_vec else "") + "_zicsr_zifencei"
+    config["kisa_spec"] = "rv" + config["cpu"][5:] + "imac_zicsr_zifencei"
 else:
     x64_arch_enum = ["minimum", "~2008 onwards", "~2013 onwards"]
     x64_arch_isa  = ["x86-64", "x86-64-v2", "x86-64-v3"]
     config["isa_spec"] = x64_arch_isa[prompt_choice("approx. architecture", x64_arch_enum, 2)]
-    config["kisa_spec"] = "x86_64"
+    config["kisa_spec"] = "x86-64"
 
 if config["cpu"].startswith("riscv"):
     config["kabi_spec"] = "ilp32" if config["cpu"] == "riscv32" else "lp64"
@@ -160,3 +163,7 @@ with open(config_path + "/config.cmake", "w") as fd:
     fd.write(f'# WARNING: This is a generated file, do not edit it!\n')
     for opt in config:
         fd.write(f'set(CONFIG_{opt.upper()} {config[opt]})\n')
+        if re.match("^\\w+$", config[opt]):
+            fd.write(f'add_definitions(-DCONFIG_{opt.upper()}={config[opt]})\n')
+            fd.write(f'add_definitions(-DCONFIGENUM_{opt.upper()}_{config[opt]})\n')
+        fd.write(f'add_definitions(-DCONFIGSTR_{opt.upper()}="{config[opt]}")\n')
