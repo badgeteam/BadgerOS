@@ -1,7 +1,7 @@
 
 # SPDX-License-Identifier: MIT
 
-#include <config.h>
+// #include <config.h>
 
 	# This is the C entrypoint, which will be called when basic CRT is set up.
 	.global basic_runtime_init
@@ -36,16 +36,17 @@ _start:
 	mv   tp, x0
 	
 	# Zero out .bss section.
-#ifndef CONFIG_TARGET_generic
-	la   a0, __start_bss
-	la   a1, __stop_bss
-	beq  a0, a1, .bssinit_skip
-.bssinit_loop:
-	sw   x0, 0(a0)
-	addi a0, a0, 4
-	bne  a0, a1, .bssinit_loop
-.bssinit_skip:
-#endif
+	// TODO: Detect whether this is needed based on image type CMake option.
+// #ifndef CONFIG_TARGET_generic
+// 	la   a0, __start_bss
+// 	la   a1, __stop_bss
+// 	beq  a0, a1, .bssinit_skip
+// .bssinit_loop:
+// 	sw   x0, 0(a0)
+// 	addi a0, a0, 4
+// 	bne  a0, a1, .bssinit_loop
+// .bssinit_skip:
+// #endif
 	
 	# Jump to the C entrypoint.
 	jal  basic_runtime_init

@@ -4,7 +4,7 @@
 CONFIG_PATH       ?= ../.config/config.mk
 include $(CONFIG_PATH)
 
-MAKEFLAGS         += --silent
+MAKEFLAGS         += --silent -j$(shell nproc)
 SHELL             := /usr/bin/env bash
 OUTPUT            ?= $(shell pwd)/firmware
 BUILDDIR          ?= build
@@ -13,6 +13,7 @@ CROSS_COMPILE      = $(CONFIG_TC_PREFIX)
 GDB               ?= $(CROSS_COMPILE)gdb
 CLANG_FORMAT      ?= clang-format-18
 CLANG_TIDY        ?= clang-tidy-18
+CONFIG_TARGET = generic
 
 include port/$(CONFIG_TARGET)/port.mk
 

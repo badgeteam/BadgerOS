@@ -6,7 +6,6 @@
 #include "arrays.h"
 #include "assertions.h"
 #include "badge_strings.h"
-#include "config.h"
 #include "cpu/isr.h"
 #include "cpulocal.h"
 #include "housekeeping.h"
@@ -22,6 +21,13 @@
 #include "smp.h"
 #include "spinlock.h"
 #include "time.h"
+
+// TODO: Use CMake option instead.
+#if MEMMAP_VMEM
+#define CONFIG_STACK_SIZE (64 * 1024)
+#else
+#define CONFIG_STACK_SIZE (16 * 1024)
+#endif
 
 
 

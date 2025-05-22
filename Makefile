@@ -1,18 +1,26 @@
 
 # SPDX-License-Identifier: MIT
 
-MAKEFLAGS += --silent
+MAKEFLAGS += --silent -j$(shell nproc)
 SHELL     := /usr/bin/env bash
 
 .PHONY: all
 all: build
 
+.PHONY: selarch
+selarch:
+	./tools/selarch.py
+
+.PHONY: gui-config
+gui-config: cmake-configure
+	cmake-gui -S kernel -B kernel/build
+
 .PHONY: config
-configure: config
-config:
-	./tools/config.py
-	git submodule update --init
-	$(MAKE) -C kernel _on_config
+config: cmake-configure
+	ccmake kernel -B kernel/build
+	# ./tools/config.py
+	# git submodule update --init
+	# $(MAKE) -C kernel _on_config
 
 .PHONY: hh24_defconfig
 hh24_defconfig:

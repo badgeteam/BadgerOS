@@ -5,13 +5,13 @@ cmake_minimum_required(VERSION 3.10.0)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS true)
 include(../.config/config.cmake)
-include(../common/compiler.cmake)
+set(CMAKE_C_COMPILER ${CONFIG_COMPILER})
 
 set(badge_cflags
     -ffreestanding
     -fpie -pie
-    -march=${target_arch}              # Selects the target CPU.
-    -mabi=${target_abi}                # Selects target ABI
+    -march=${CONFIG_ISA_SPEC}          # Selects the target CPU.
+    -mabi=${CONFIG_ABI_SPEC}           # Selects target ABI
     -nodefaultlibs -nostdlib           # Do not link any default libraries like libgcc or libc.
     -O2                                # Optimize the code.
     -Werror=return-type                # Error when a function doesn't return a value, but declares to do so.

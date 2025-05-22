@@ -14,18 +14,48 @@ if(NOT DEFINED BADGER_RAMFS_ROOT)
     set(BADGER_RAMFS_ROOT ${CMAKE_CURRENT_LIST_DIR}/root)
 endif()
 
+
+
 # Include the config.
 include(../.config/config.cmake)
-include(../common/compiler.cmake)
+include(config_helper.cmake)
+set(CMAKE_C_COMPILER ${CONFIG_COMPILER})
+set(CONFIG_TARGET generic)
 
 # Include port-specific.
 include(port/${CONFIG_TARGET}/CMakeLists.txt)
 include(cpu/${CONFIG_CPU}/CMakeLists.txt)
 
+
+
+# Define options.
+if("${CONFIG_CPU}" STREQUAL "riscv32")
+    config_const(BOOT_PROTOCOL "ESP32" "Boot protocol")
+    config_enum(
+        SOC "ESP32P4" "Choose chipset"
+        "ESP32P4" "ESP32C6"
+    )
+else()
+    config_const(BOOT_PROTOCOL "Limine" "Boot protocol")
+endif()
+
+config_enum(
+    STACK_SIZE 16384 "Kernel stack size"
+    8192 16384 32768 65536
+)
+
+if("${CONFIG_BOOT_PROTOCOL}" STREQUAL "Limine" AND "${CONFIG_CPU}" STREQUAL "riscv64")
+    config_bool(EMBED_UBOOT true "Embed U-boot")
+else()
+    config_const(EMBED_UBOOT false "Embed U-boot")
+endif()
+
+
+
 set(common_compiler_flags
     -ffreestanding                     # We do not compile against an OS.
-    -march=${target_arch}              # Selects the target CPU.
-    -mabi=${target_abi}                # Selects target ABI
+    -march=${CONFIG_KISA_SPEC}         # Selects the target CPU.
+    -mabi=${CONFIG_KABI_SPEC}          # Selects target ABI
     -nodefaultlibs                     # Do not link any default libraries like libgcc or libc.
     -O0                                # Optimize the code.
     -ggdb -gdwarf-2                    # Generate debug information in default extended format.
@@ -60,6 +90,8 @@ add_link_options(
     ${cpu_link} ${port_link}
     -Wl,--gc-sections -Wl,--build-id=none -nodefaultlibs -nostartfiles
 )
+
+
 
 # Define executable.
 project(badgeros C ASM)
@@ -148,6 +180,7 @@ target_link_libraries(kbelf PRIVATE badgelib)
 target_link_libraries(${target} PRIVATE kbelf badgelib)
 
 
+
 # Copy the BadgerOS binary to the output directory.
 install(TARGETS badger-os.elf DESTINATION .)
 
@@ -155,21 +188,12 @@ install(TARGETS badger-os.elf DESTINATION .)
 add_custom_target(
     badger-os.elf.disasm
     ALL
-    COMMAND ${BADGER_OBJDUMP} -Sd badger-os.elf > badger-os.elf.disasm
+    COMMAND ${CONFIG_PREFIX}objdump -Sd badger-os.elf > badger-os.elf.disasm
     DEPENDS badger-os.elf
 )
 
-if(${create_esp32_bin})
-    # Convert the raw binary file into a ESP32 image file
-    add_custom_command(
-        OUTPUT badger-os.bin
-        COMMAND cp badger-os.elf badger-os.elf.patch
-        COMMAND ${BADGER_OBJCOPY} -O binary badger-os.elf badger-os.nochecksum.bin
-        COMMAND python3 ${CMAKE_CURRENT_LIST_DIR}/../tools/pack-image.py badger-os.nochecksum.bin badger-os.bin
-        DEPENDS badger-os.elf
-    )
-
-    # Install the ESP32 image.
-    add_custom_target(badger-os.bin.target ALL DEPENDS badger-os.bin)
-    install(FILES ${CMAKE_CURRENT_BINARY_DIR}/badger-os.bin DESTINATION .)
+if("${CONFIG_BOOT_PROTOCOL}" STREQUAL "ESP32")
+    include(image_esp32.cmake)
+elseif("${CONFIG_BOOT_PROTOCOL}" STREQUAL "Limine")
+    include(image_limine.cmake)
 endif()
