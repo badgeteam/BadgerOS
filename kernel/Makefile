@@ -14,6 +14,8 @@ CROSS_COMPILE      = $(CONFIG_TC_PREFIX)
 GDB               ?= $(CROSS_COMPILE)gdb
 CLANG_FORMAT      ?= clang-format-18
 CLANG_TIDY        ?= clang-tidy-18
+DRIVE             ?= /dev/null
+PORT              ?= /dev/ttyUSB1
 
 .PHONY: cmake-configure
 cmake-configure:  $(BUILDDIR)/fs_root.c
