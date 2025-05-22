@@ -22,13 +22,6 @@
 #include "spinlock.h"
 #include "time.h"
 
-// TODO: Use CMake option instead.
-#if MEMMAP_VMEM
-#define CONFIG_STACK_SIZE (64 * 1024)
-#else
-#define CONFIG_STACK_SIZE (16 * 1024)
-#endif
-
 
 
 // Number of CPUs with running schedulers.
