@@ -14,7 +14,7 @@
 #include "process/types.h"
 #include "scheduler/cpu.h"
 #include "sys/wait.h"
-#if MEMMAP_VMEM
+#if !CONFIG_NOMMU
 #include "cpu/mmu.h"
 #endif
 
@@ -33,7 +33,7 @@ char const *signames[SIG_COUNT] = {
 // Show memmap info for a virtual address.
 static inline void memmap_info(process_t *const proc, size_t vaddr) {
     logkf_from_isr(LOG_INFO, "While accessing 0x%{size;x}", vaddr);
-#if MEMMAP_VMEM
+#if !CONFIG_NOMMU
     uint32_t flags = memprotect_virt2phys(&proc->memmap.mpu_ctx, vaddr).flags;
 #else
     uint32_t flags = proc_map_contains_raw(proc, vaddr, 1);
@@ -65,7 +65,7 @@ static void run_sighandler(int signum, uint64_t cause) {
                 memmap_info(proc, cause);
             }
             // Print backtrace of the calling thread.
-#if MEMMAP_VMEM
+#if !CONFIG_NOMMU
             mmu_enable_sum();
 #endif
 #ifdef __riscv
@@ -73,7 +73,7 @@ static void run_sighandler(int signum, uint64_t cause) {
 #elif defined(__x86_86__)
             backtrace_from_ptr((void *)thread->user_isr_ctx.regs.rbp);
 #endif
-#if MEMMAP_VMEM
+#if !CONFIG_NOMMU
             mmu_disable_sum();
 #endif
             isr_ctx_dump(&thread->user_isr_ctx);
@@ -137,7 +137,7 @@ static void trap_signal_handler(int signum, uint64_t cause) {
             memmap_info(proc, cause);
         }
         // Print backtrace of the calling thread.
-#if MEMMAP_VMEM
+#if !CONFIG_NOMMU
         mmu_enable_sum();
 #endif
 #ifdef __riscv
@@ -145,7 +145,7 @@ static void trap_signal_handler(int signum, uint64_t cause) {
 #elif defined(__x86_86__)
         backtrace_from_ptr((void *)thread->user_isr_ctx.regs.rbp);
 #endif
-#if MEMMAP_VMEM
+#if !CONFIG_NOMMU
         mmu_disable_sum();
 #endif
         isr_ctx_dump(&thread->user_isr_ctx);

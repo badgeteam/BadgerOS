@@ -14,7 +14,6 @@
 #include "memprotect.h"
 #include "page_alloc.h"
 #include "panic.h"
-#include "port/hardware_allocation.h"
 #include "port/port.h"
 #include "process/internal.h"
 #include "process/sighandler.h"
@@ -25,7 +24,7 @@
 #include "sys/wait.h"
 #include "usercopy.h"
 
-#if MEMMAP_VMEM
+#if !CONFIG_NOMMU
 #include "cpu/mmu.h"
 #endif
 
@@ -175,7 +174,7 @@ process_t *proc_create_raw(badge_err_t *ec, pid_t parentpid, char const *binary,
         .memmap =
             {
                 .regions_len = 0,
-#if MEMMAP_VMEM
+#if !CONFIG_NOMMU
                 .regions_cap = 0,
                 .regions     = NULL,
 #endif
@@ -549,7 +548,7 @@ void proc_delete_runtime_raw(process_t *process) {
 
     // Unmap all memory regions.
     while (process->memmap.regions_len) {
-#if MEMMAP_VMEM
+#if !CONFIG_NOMMU
         proc_unmap_raw(NULL, process, process->memmap.regions[0].vaddr, process->memmap.regions[0].size);
 #else
         proc_unmap_raw(NULL, process, process->memmap.regions[0].paddr, process->memmap.regions[0].size);

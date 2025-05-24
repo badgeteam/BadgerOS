@@ -9,8 +9,6 @@
 #include "interrupt.h"
 #include "isr_ctx.h"
 
-_Static_assert(MEMMAP_PAGE_SIZE == MMU_PAGE_SIZE, "MEMMAP_PAGE_SIZE must equal MMU_PAGE_SIZE");
-
 
 
 // Virtual address offset used for HHDM.

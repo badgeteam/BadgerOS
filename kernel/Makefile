@@ -7,10 +7,10 @@ include cpu/$(CONFIG_CPU)/cpu.mk
 
 MAKEFLAGS         += --silent -j$(shell nproc)
 SHELL             := /usr/bin/env bash
-OUTPUT             = $(shell pwd)/firmware
+OUTPUT             = $(shell pwd)/output
 BUILDDIR           = $(shell pwd)/build
 BADGER_RAMFS_ROOT ?= $(shell pwd)/../files/root
-CROSS_COMPILE      = $(CONFIG_TC_PREFIX)
+CROSS_COMPILE      = $(CONFIG_PREFIX)
 GDB               ?= $(CROSS_COMPILE)gdb
 CLANG_FORMAT      ?= clang-format-18
 CLANG_TIDY        ?= clang-tidy-18
@@ -57,7 +57,7 @@ clang-tidy-check: cmake-configure
 
 .PHONY: gdb
 gdb:
-	$(GDB) -x port/$(CONFIG_TARGET)/gdbinit build/badger-os.elf
+	$(GDB) -x misc/gdbinit build/badger-os.elf
 
 .PHONY: burn
 burn: build

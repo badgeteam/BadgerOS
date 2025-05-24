@@ -4,7 +4,6 @@
 #pragma once
 
 #include "cpu/riscv.h"
-#include "port/hardware.h"
 
 #ifndef __ASSEMBLER__
 #include <stdbool.h>
@@ -14,7 +13,7 @@
 
 
 
-#if RISCV_M_MODE_KERNEL
+#if CONFIG_NOMMU
 
 // Exception PC CSR.
 #define CSR_EPC     mepc

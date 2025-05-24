@@ -12,9 +12,8 @@
 #include "memprotect.h"
 #include "page_alloc.h"
 #include "panic.h"
-#include "port/hardware_allocation.h"
 
-_Static_assert(MEMMAP_PAGE_SIZE == MMU_PAGE_SIZE, "MEMMAP_PAGE_SIZE must equal MMU_PAGE_SIZE");
+
 
 // Virtual address offset currently used for HHDM.
 size_t mmu_hhdm_vaddr;
@@ -71,18 +70,18 @@ void mmu_early_init() {
 // MMU-specific init code.
 void mmu_init() {
     // Get a dummy page to do testing on.
-    size_t va = memprotect_alloc_vaddr(MMU_PAGE_SIZE);
-    size_t pa = memprotect_kernel_vpn * MMU_PAGE_SIZE;
+    size_t va = memprotect_alloc_vaddr(CONFIG_PAGE_SIZE);
+    size_t pa = memprotect_kernel_vpn * CONFIG_PAGE_SIZE;
     assert_always(va);
 
     // TODO: Check for accessed and dirty bit scheme.
 
     // Check for Svpbmt.
     mmu_svpbmt = true;
-    assert_always(memprotect_k(va, pa, MMU_PAGE_SIZE, MEMPROTECT_FLAG_R | MEMPROTECT_FLAG_IO));
+    assert_always(memprotect_k(va, pa, CONFIG_PAGE_SIZE, MEMPROTECT_FLAG_R | MEMPROTECT_FLAG_IO));
     uint8_t dummy;
     mmu_svpbmt = isr_noexc_copy_u8(&dummy, (uint8_t const *)pa);
-    assert_always(memprotect_k(va, pa, MMU_PAGE_SIZE, 0));
+    assert_always(memprotect_k(va, pa, CONFIG_PAGE_SIZE, 0));
     if (mmu_svpbmt) {
         logkf(LOG_INFO, "MMU supports Svpbmt");
     }

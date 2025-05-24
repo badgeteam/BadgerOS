@@ -123,11 +123,11 @@ uacpi_status uacpi_kernel_io_write32(uacpi_handle handle, uacpi_size offset, uac
 #endif
 
 void *uacpi_kernel_map(uacpi_phys_addr paddr, uacpi_size len) {
-    size_t off  = paddr % MEMMAP_PAGE_SIZE;
-    len        += paddr % MEMMAP_PAGE_SIZE;
-    paddr      -= paddr % MEMMAP_PAGE_SIZE;
-    if (len % MEMMAP_PAGE_SIZE) {
-        len += MEMMAP_PAGE_SIZE - len % MEMMAP_PAGE_SIZE;
+    size_t off  = paddr % CONFIG_PAGE_SIZE;
+    len        += paddr % CONFIG_PAGE_SIZE;
+    paddr      -= paddr % CONFIG_PAGE_SIZE;
+    if (len % CONFIG_PAGE_SIZE) {
+        len += CONFIG_PAGE_SIZE - len % CONFIG_PAGE_SIZE;
     }
     size_t vaddr = memprotect_alloc_vaddr(len);
     assert_always(memprotect_k(vaddr, paddr, len, MEMPROTECT_FLAG_RW));
@@ -135,10 +135,10 @@ void *uacpi_kernel_map(uacpi_phys_addr paddr, uacpi_size len) {
 }
 void uacpi_kernel_unmap(void *addr, uacpi_size len) {
     size_t vaddr  = (size_t)addr;
-    len          += vaddr % MEMMAP_PAGE_SIZE;
-    vaddr        -= vaddr % MEMMAP_PAGE_SIZE;
-    if (len % MEMMAP_PAGE_SIZE) {
-        len += MEMMAP_PAGE_SIZE - len % MEMMAP_PAGE_SIZE;
+    len          += vaddr % CONFIG_PAGE_SIZE;
+    vaddr        -= vaddr % CONFIG_PAGE_SIZE;
+    if (len % CONFIG_PAGE_SIZE) {
+        len += CONFIG_PAGE_SIZE - len % CONFIG_PAGE_SIZE;
     }
     assert_always(memprotect_k(vaddr, 0, len, 0));
 }

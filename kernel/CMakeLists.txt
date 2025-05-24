@@ -30,14 +30,16 @@ include(cpu/${CONFIG_CPU}/CMakeLists.txt)
 
 # Define options.
 if("${CONFIG_CPU}" STREQUAL "riscv32")
-    config_const(BOOT_PROTOCOL "ESP32" "Boot protocol")
+    config_const(BOOT_PROTOCOL "esp32" "Boot protocol")
     config_enum(
         SOC "esp32p4" "Choose chipset"
         "esp32p4" "esp32c6"
     )
+    config_const(ENABLE_ACPI false "Enable ACPI support")
 else()
-    config_const(BOOT_PROTOCOL "Limine" "Boot protocol")
+    config_const(BOOT_PROTOCOL "limine" "Boot protocol")
     config_const(SOC "generic" "Boot protocol")
+    config_bool(ENABLE_ACPI true "Enable ACPI support")
 endif()
 
 config_enum(
@@ -45,11 +47,14 @@ config_enum(
     8192 16384 32768 65536
 )
 
-if("${CONFIG_BOOT_PROTOCOL}" STREQUAL "Limine" AND "${CONFIG_CPU}" STREQUAL "riscv64")
+if("${CONFIG_BOOT_PROTOCOL}" STREQUAL "limine" AND "${CONFIG_CPU}" STREQUAL "riscv64")
     config_bool(EMBED_UBOOT true "Embed U-boot")
 else()
     config_const(EMBED_UBOOT false "Embed U-boot")
 endif()
+
+config_const(NOMMU false "Build for system without an MMU")
+config_const(PAGE_SIZE 4096 "MMU / memory map page size")
 
 
 
@@ -58,7 +63,7 @@ set(common_compiler_flags
     -march=${CONFIG_KISA_SPEC}         # Selects the target CPU.
     -mabi=${CONFIG_KABI_SPEC}          # Selects target ABI
     -nodefaultlibs                     # Do not link any default libraries like libgcc or libc.
-    -O0                                # Optimize the code.
+    -O2                                # Optimize the code.
     -ggdb -gdwarf-2                    # Generate debug information in default extended format.
     -Werror=return-type                # Error when a function doesn't return a value, but declares to do so.
     -Werror=implicit-fallthrough
@@ -90,7 +95,7 @@ add_link_options(
     ${common_compiler_flags} ${cpu_flags} ${port_flags}
     ${cpu_link} ${port_link}
     -Wl,--gc-sections -Wl,--build-id=none -nodefaultlibs -nostartfiles
-    -T${CMAKE_CURRENT_LIST_DIR}/ld/${CONFIG_SOC}_${CONFIG_CPU}.ld
+    -T${CMAKE_CURRENT_LIST_DIR}/misc/ld/${CONFIG_SOC}_${CONFIG_CPU}.ld
 )
 
 
@@ -98,7 +103,8 @@ add_link_options(
 # Define executable.
 project(badgeros C ASM)
 set(target badger-os.elf)
-add_executable(${target}
+
+set(kernel_src
     ${CMAKE_CURRENT_LIST_DIR}/build/fs_root.c
     ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/badge_format_str.c
     ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/fifo.c
@@ -117,6 +123,8 @@ add_executable(${target}
     ${CMAKE_CURRENT_LIST_DIR}/src/blockdevice/blkdev_ram.c
     ${CMAKE_CURRENT_LIST_DIR}/src/blockdevice/blockdevice.c
     
+    ${CMAKE_CURRENT_LIST_DIR}/src/bootp/${CONFIG_BOOT_PROTOCOL}.c
+    
     ${CMAKE_CURRENT_LIST_DIR}/src/device/builtin_driver/pcie.c
     ${CMAKE_CURRENT_LIST_DIR}/src/device/class/block.c
     ${CMAKE_CURRENT_LIST_DIR}/src/device/class/pcictl.c
@@ -133,7 +141,6 @@ add_executable(${target}
     ${CMAKE_CURRENT_LIST_DIR}/src/filesystem/vfs_internal.c
     ${CMAKE_CURRENT_LIST_DIR}/src/freestanding/int_routines.c
     ${CMAKE_CURRENT_LIST_DIR}/src/freestanding/string.c
-    ${CMAKE_CURRENT_LIST_DIR}/src/hal/syscall_impl.c
     
     ${CMAKE_CURRENT_LIST_DIR}/src/malloc/malloc.c
     ${CMAKE_CURRENT_LIST_DIR}/src/malloc/static-buddy.c
@@ -153,20 +160,36 @@ add_executable(${target}
     ${CMAKE_CURRENT_LIST_DIR}/src/housekeeping.c
     ${CMAKE_CURRENT_LIST_DIR}/src/interrupt.c
     ${CMAKE_CURRENT_LIST_DIR}/src/main.c
+    ${CMAKE_CURRENT_LIST_DIR}/src/memprotect.c
     ${CMAKE_CURRENT_LIST_DIR}/src/page_alloc.c
+    ${CMAKE_CURRENT_LIST_DIR}/src/smp.c
     ${CMAKE_CURRENT_LIST_DIR}/src/syscall.c
     ${CMAKE_CURRENT_LIST_DIR}/src/time.c
-    
-    ${cpu_src}
-    ${port_src}
 )
-include_directories(
+set(kernel_include
     ${CMAKE_CURRENT_LIST_DIR}/include
-    # ${CMAKE_CURRENT_LIST_DIR}/src/malloc
     ${CMAKE_CURRENT_LIST_DIR}/include/badgelib
     ${CMAKE_CURRENT_LIST_DIR}/../common/include
     ${CMAKE_CURRENT_LIST_DIR}/../common/badgelib
     ${CMAKE_CURRENT_LIST_DIR}/../.config
+)
+
+if(${CONFIG_ENABLE_ACPI})
+    include(lib/uacpi/uacpi.cmake)
+    set(kernel_src ${kernel_src}
+        ${CMAKE_CURRENT_LIST_DIR}/src/device/uacpi_kernel_api.c
+        ${UACPI_SOURCES}
+    )
+    set(kernel_include ${kernel_include} ${UACPI_INCLUDES})
+endif()
+
+add_executable(${target}
+    ${kernel_src}
+    ${cpu_src}
+    ${port_src}
+)
+include_directories(
+    ${kernel_include}
     ${cpu_include}
     ${port_include}
 )
@@ -194,8 +217,8 @@ add_custom_target(
     DEPENDS badger-os.elf
 )
 
-if("${CONFIG_BOOT_PROTOCOL}" STREQUAL "ESP32")
+if("${CONFIG_BOOT_PROTOCOL}" STREQUAL "esp32")
     include(image_esp32.cmake)
-elseif("${CONFIG_BOOT_PROTOCOL}" STREQUAL "Limine")
+elseif("${CONFIG_BOOT_PROTOCOL}" STREQUAL "limine")
     include(image_limine.cmake)
 endif()

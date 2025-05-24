@@ -14,9 +14,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
-typedef struct cpulocal_t     cpulocal_t;
-typedef struct sched_thread_t sched_thread_t;
-typedef struct isr_ctx_t      isr_ctx_t;
+typedef struct cpulocal     cpulocal_t;
+typedef struct sched_thread sched_thread_t;
+typedef struct isr_ctx      isr_ctx_t;
 // Custom trap handler callback, returns true if the trap was suppressed.
 typedef bool (*isr_noexc_cb_t)(isr_ctx_t *ctx, void *cookie);
 #endif
@@ -25,20 +25,20 @@ typedef bool (*isr_noexc_cb_t)(isr_ctx_t *ctx, void *cookie);
 
 #define STRUCT_BEGIN(structname)
 #if __riscv_xlen == 64
-#define STRUCT_FIELD_WORD(structname, name, offset)         .equ structname##_##name, offset * 8
-#define STRUCT_FIELD_PTR(structname, type, name, offset)    .equ structname##_##name, offset * 8
-#define STRUCT_FIELD_STRUCT(structname, type, name, offset) .equ structname##_##name, offset * 8
+#define STRUCT_FIELD_WORD(structname, name, offset)         .equ structname##_t_##name, offset * 8
+#define STRUCT_FIELD_PTR(structname, type, name, offset)    .equ structname##_t_##name, offset * 8
+#define STRUCT_FIELD_STRUCT(structname, type, name, offset) .equ structname##_t_##name, offset * 8
 #else
-#define STRUCT_FIELD_WORD(structname, name, offset)         .equ structname##_##name, offset * 4
-#define STRUCT_FIELD_PTR(structname, type, name, offset)    .equ structname##_##name, offset * 4
-#define STRUCT_FIELD_STRUCT(structname, type, name, offset) .equ structname##_##name, offset * 4
+#define STRUCT_FIELD_WORD(structname, name, offset)         .equ structname##_t_##name, offset * 4
+#define STRUCT_FIELD_PTR(structname, type, name, offset)    .equ structname##_t_##name, offset * 4
+#define STRUCT_FIELD_STRUCT(structname, type, name, offset) .equ structname##_t_##name, offset * 4
 #endif
 #define STRUCT_END(structname)
 
 #else
 
 #define STRUCT_BEGIN(structname)                                                                                       \
-    typedef struct structname structname;                                                                              \
+    typedef struct structname structname##_t;                                                                          \
     struct structname {
 #define STRUCT_FIELD_WORD(structname, name, offset)         size_t name;
 #define STRUCT_FIELD_PTR(structname, type, name, offset)    type *name;
@@ -52,30 +52,30 @@ typedef bool (*isr_noexc_cb_t)(isr_ctx_t *ctx, void *cookie);
 
 
 // Context for interrupts, exceptions and traps in relation to threads.
-STRUCT_BEGIN(isr_ctx_t)
+STRUCT_BEGIN(isr_ctx)
 // Pointer to currently active memory protection information.
-STRUCT_FIELD_PTR(isr_ctx_t, mpu_ctx_t, mpu_ctx, 0)
+STRUCT_FIELD_PTR(isr_ctx, mpu_ctx_t, mpu_ctx, 0)
 // Frame pointer to use for backtraces.
-STRUCT_FIELD_PTR(isr_ctx_t, void, frameptr, 1)
+STRUCT_FIELD_PTR(isr_ctx, void, frameptr, 1)
 // Registers storage.
 // The trap/interrupt handler will save registers to here.
-STRUCT_FIELD_STRUCT(isr_ctx_t, cpu_regs_t, regs, 2)
+STRUCT_FIELD_STRUCT(isr_ctx, cpu_regs_t, regs, 2)
 // Pointer to next isr_ctx_t to switch to.
 // If nonnull, the trap/interrupt handler will context switch to this new context before exiting.
-STRUCT_FIELD_PTR(isr_ctx_t, isr_ctx_t, ctxswitch, 34)
+STRUCT_FIELD_PTR(isr_ctx, isr_ctx_t, ctxswitch, 34)
 // Pointer to owning sched_thread_t.
-STRUCT_FIELD_PTR(isr_ctx_t, sched_thread_t, thread, 35)
+STRUCT_FIELD_PTR(isr_ctx, sched_thread_t, thread, 35)
 // Kernel context flags, only 32 bits available even on 64-bit targets.
-STRUCT_FIELD_WORD(isr_ctx_t, flags, 36)
+STRUCT_FIELD_WORD(isr_ctx, flags, 36)
 // Custom trap handler to call.
-STRUCT_FIELD_STRUCT(isr_ctx_t, isr_noexc_cb_t, noexc_cb, 37)
+STRUCT_FIELD_STRUCT(isr_ctx, isr_noexc_cb_t, noexc_cb, 37)
 // Cookie for custom trap handler.
-STRUCT_FIELD_PTR(isr_ctx_t, void, noexc_cookie, 38)
+STRUCT_FIELD_PTR(isr_ctx, void, noexc_cookie, 38)
 // Pointer to CPU-local struct.
-STRUCT_FIELD_PTR(isr_ctx_t, cpulocal_t, cpulocal, 39)
+STRUCT_FIELD_PTR(isr_ctx, cpulocal_t, cpulocal, 39)
 // Pointer to stack to use for user exceptions.
-STRUCT_FIELD_WORD(isr_ctx_t, user_isr_stack, 40)
-STRUCT_END(isr_ctx_t)
+STRUCT_FIELD_WORD(isr_ctx, user_isr_stack, 40)
+STRUCT_END(isr_ctx)
 
 // `isr_ctx_t` flag: Is a kernel thread.
 #define ISR_CTX_FLAG_KERNEL    (1 << 0)

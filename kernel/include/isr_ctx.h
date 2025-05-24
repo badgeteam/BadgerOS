@@ -7,7 +7,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-typedef struct isr_ctx_t isr_ctx_t;
+typedef struct isr_ctx isr_ctx_t;
 
 // Get the current ISR context.
 static inline isr_ctx_t *isr_ctx_get();

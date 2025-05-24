@@ -12,15 +12,15 @@
 #include <stdint.h>
 
 // Processs struct.
-typedef struct process_t      process_t;
+typedef struct process_t    process_t;
 // Globally unique thread ID.
-typedef int                   tid_t;
+typedef int                 tid_t;
 // Thread struct.
-typedef struct sched_thread_t sched_thread_t;
+typedef struct sched_thread sched_thread_t;
 // Kernel thread entrypoint.
 typedef int (*sched_entry_t)(void *arg);
 // CPU-local scheduler data.
-typedef struct sched_cpulocal_t sched_cpulocal_t;
+typedef struct sched_cpulocal sched_cpulocal_t;
 
 // Time usage information.
 typedef struct {

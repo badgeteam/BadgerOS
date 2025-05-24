@@ -9,7 +9,7 @@
 #include "isr_ctx.h"
 #include "memprotect.h"
 #include "process/internal.h"
-#if MEMMAP_VMEM
+#if !CONFIG_NOMMU
 #include "cpu/mmu.h"
 #endif
 
@@ -40,7 +40,7 @@ ptrdiff_t strlen_from_user_raw(process_t *process, size_t user_vaddr, ptrdiff_t 
     while (len < max_len && *(char const *)user_vaddr) {
         len++;
         user_vaddr++;
-        if (user_vaddr % MEMMAP_PAGE_SIZE == 0) {
+        if (user_vaddr % CONFIG_PAGE_SIZE == 0) {
             // Check further page permissions.
 #if !RISCV_M_MODE_KERNEL
             asm("csrc sstatus, %0" ::"r"((1 << RISCV_STATUS_SUM_BIT) | (1 << RISCV_STATUS_MXR_BIT)));

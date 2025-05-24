@@ -12,14 +12,13 @@
 #include "interrupt.h"
 #include "log.h"
 #include "panic.h"
-#include "port/hardware.h"
 #include "process/internal.h"
 #include "process/sighandler.h"
 #include "process/types.h"
 #include "rawprint.h"
 #include "scheduler/cpu.h"
 #include "scheduler/types.h"
-#if MEMMAP_VMEM
+#if !CONFIG_NOMMU
 #include "cpu/mmu.h"
 #include "memprotect.h"
 #endif
@@ -119,7 +118,7 @@ void riscv_trap_handler() {
                 isr_ctx_swap(kctx);
                 return;
 
-#if MEMMAP_VMEM
+#if !CONFIG_NOMMU
                 // With VMEM enabled, only page faults are expected.
             case RISCV_TRAP_IPAGE:
             case RISCV_TRAP_LPAGE:
@@ -185,7 +184,7 @@ void riscv_trap_handler() {
 
     rawputc('\n');
 
-#if MEMMAP_VMEM
+#if !CONFIG_NOMMU
     // Print what page table thinks.
     if ((1 << trapno) & MEM_ADDR_TRAPS) {
         virt2phys_t info = memprotect_virt2phys(kctx->mpu_ctx, tval);

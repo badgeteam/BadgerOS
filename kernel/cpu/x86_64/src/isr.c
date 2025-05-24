@@ -9,14 +9,13 @@
 #include "interrupt.h"
 #include "log.h"
 #include "panic.h"
-#include "port/hardware.h"
 #include "process/internal.h"
 #include "process/sighandler.h"
 #include "process/types.h"
 #include "rawprint.h"
 #include "scheduler/cpu.h"
 #include "scheduler/types.h"
-#if MEMMAP_VMEM
+#if !CONFIG_NOMMU
 #include "cpu/mmu.h"
 #include "memprotect.h"
 #endif

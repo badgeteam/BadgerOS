@@ -12,10 +12,10 @@
 
 
 // CPU-local scheduler data.
-typedef struct sched_cpulocal_t sched_cpulocal_t;
+typedef struct sched_cpulocal sched_cpulocal_t;
 
 // CPU-local data.
-typedef struct cpulocal_t {
+typedef struct cpulocal {
     // Current CPU ID.
     size_t            cpuid;
     // Current SMP CPU inder.

@@ -4,7 +4,6 @@
 #pragma once
 
 #include "cpulocal.h"
-#include "port/smp.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -15,6 +14,9 @@
 // Number of detected usable CPU cores.
 // Never changes after smp_init.
 extern int smp_count;
+
+// Initialise the SMP subsystem.
+void smp_init_dtb(dtb_handle_t *dtb);
 
 // Get the CPU-local data for some CPU.
 cpulocal_t *smp_get_cpulocal(int cpu);

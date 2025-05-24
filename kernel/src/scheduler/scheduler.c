@@ -15,6 +15,7 @@
 #include "malloc.h"
 #include "panic.h"
 #include "process/sighandler.h"
+#include "process/types.h"
 #include "scheduler/cpu.h"
 #include "scheduler/isr.h"
 #include "scheduler/types.h"

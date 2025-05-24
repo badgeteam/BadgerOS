@@ -4,6 +4,7 @@
 #include "assertions.h"
 #include "badge_strings.h"
 #include "blockdevice/blkdev_ram.h"
+#include "bootp.h"
 #include "cpulocal.h"
 #include "filesystem.h"
 #include "housekeeping.h"
@@ -69,7 +70,7 @@ void basic_runtime_init() {
     // Early memory protection initialization.
     memprotect_early_init();
     // Early platform initialization.
-    port_early_init();
+    bootp_early_init();
 
     // Announce that we're alive.
     logk_from_isr(LOG_INFO, "BadgerOS " CONFIGSTR_CPU " starting...");
@@ -79,8 +80,6 @@ void basic_runtime_init() {
 
     // Post-heap memory protection initialization.
     memprotect_postheap_init();
-    // Post-heap platform initialization.
-    port_postheap_init();
 
     // Global scheduler initialization.
     sched_init();
@@ -113,7 +112,7 @@ static void kernel_lifetime_func() {
     // Start other CPUs.
     sched_start_altcpus();
     // After secondary CPUs are started, any potential reclaiming of bootloader memory is possible.
-    port_reclaim_mem();
+    bootp_reclaim_mem();
     // Start userland.
     userland_init();
 
@@ -179,7 +178,7 @@ static void kernel_init() {
     // Memory protection initialization.
     memprotect_init();
     // Full hardware initialization.
-    port_init();
+    bootp_full_init();
 
     // Temporary filesystem image.
     fs_mount(&ec, "ramfs", NULL, FILE_NONE, "/", 1, 0);

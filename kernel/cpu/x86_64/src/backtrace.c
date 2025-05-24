@@ -7,6 +7,7 @@
 #include "isr_ctx.h"
 #include "rawprint.h"
 
+#include <stdatomic.h>
 #include <stddef.h>
 
 #ifndef BACKTRACE_DEPTH

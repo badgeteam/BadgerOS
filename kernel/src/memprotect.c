@@ -99,7 +99,7 @@ static pt_walk_t pt_walk(size_t pt_ppn, size_t vpn) {
     // Walk the page table.
     for (int i = 0; i < mmu_levels; i++) {
         int level  = mmu_levels - i - 1;
-        pte_addr   = pt_ppn * MMU_PAGE_SIZE + mmu_vpn_part(vpn, level) * sizeof(mmu_pte_t);
+        pte_addr   = pt_ppn * CONFIG_PAGE_SIZE + mmu_vpn_part(vpn, level) * sizeof(mmu_pte_t);
         pte        = mmu_read_pte(pte_addr);
         size_t ppn = mmu_pte_get_ppn(pte, level);
 
@@ -112,7 +112,7 @@ static pt_walk_t pt_walk(size_t pt_ppn, size_t vpn) {
             if (level && ppn & ((1 << MMU_BITS_PER_LEVEL * level) - 1)) {
                 // Misaligned superpage.
                 logkf(LOG_FATAL, "PT corrupt: L%{d} leaf PTE @ %{size;x} (%{size;x}) misaligned", i, pte_addr, pte.val);
-                logkf(LOG_FATAL, "Offending VADDR: %{size;x}", vpn * MMU_PAGE_SIZE);
+                logkf(LOG_FATAL, "Offending VADDR: %{size;x}", vpn * CONFIG_PAGE_SIZE);
                 panic_abort();
             }
 #else
@@ -125,7 +125,7 @@ static pt_walk_t pt_walk(size_t pt_ppn, size_t vpn) {
                     pte_addr,
                     pte.val
                 );
-                logkf(LOG_FATAL, "Offending VADDR: %{size;x}", vpn * MMU_PAGE_SIZE);
+                logkf(LOG_FATAL, "Offending VADDR: %{size;x}", vpn * CONFIG_PAGE_SIZE);
                 panic_abort();
             }
 #endif
@@ -139,7 +139,7 @@ static pt_walk_t pt_walk(size_t pt_ppn, size_t vpn) {
 
     // Not a leaf node.
     logkf(LOG_FATAL, "PT corrupt: L0 PTE @ %{size;x} (%{size;x}) not a leaf PTE", pte_addr, pte.val);
-    logkf(LOG_FATAL, "Offending VADDR: %{size;x}", vpn * MMU_PAGE_SIZE);
+    logkf(LOG_FATAL, "Offending VADDR: %{size;x}", vpn * CONFIG_PAGE_SIZE);
     panic_abort();
 }
 
@@ -159,7 +159,7 @@ static inline size_t pt_split(size_t pt_ppn, int pt_level, size_t pte_paddr, mmu
     size_t   ppn   = mmu_pte_get_ppn(pte, pt_level);
     uint32_t flags = mmu_pte_get_flags(pte, pt_level);
     for (size_t i = 0; i < (1 << MMU_BITS_PER_LEVEL); i++) {
-        size_t low_pte_paddr = next_pt * MMU_PAGE_SIZE + i * sizeof(mmu_pte_t);
+        size_t low_pte_paddr = next_pt * CONFIG_PAGE_SIZE + i * sizeof(mmu_pte_t);
         mmu_write_pte(low_pte_paddr, mmu_pte_new_leaf(ppn + i, pt_level - 1, flags));
     }
 
@@ -177,7 +177,7 @@ static inline size_t pt_split(size_t pt_ppn, int pt_level, size_t pte_paddr, mmu
         pte_paddr,
         pte.val
     );
-    logkf(LOG_FATAL, "Offending VADDR: %{size;x}", vpn * MMU_PAGE_SIZE);
+    logkf(LOG_FATAL, "Offending VADDR: %{size;x}", vpn * CONFIG_PAGE_SIZE);
     panic_abort();
 #endif
 }
@@ -202,7 +202,7 @@ static bool pt_map_1(size_t pt_ppn, int pt_level, size_t vpn, size_t ppn, int pt
 
     // Walk the page table, adding new tables as needed.
     for (; pte_level < pt_level; pt_level--) {
-        size_t    pte_paddr = pt_ppn * MMU_PAGE_SIZE + mmu_vpn_part(vpn, pt_level) * sizeof(mmu_pte_t);
+        size_t    pte_paddr = pt_ppn * CONFIG_PAGE_SIZE + mmu_vpn_part(vpn, pt_level) * sizeof(mmu_pte_t);
         // Too high; read PTE to go to next table.
         mmu_pte_t pte       = mmu_read_pte(pte_paddr);
         if (!mmu_pte_is_valid(pte, pt_level)) {
@@ -223,7 +223,7 @@ static bool pt_map_1(size_t pt_ppn, int pt_level, size_t vpn, size_t ppn, int pt
     }
 
     // At the correct level; write leaf PTE.
-    size_t pte_paddr = pt_ppn * MMU_PAGE_SIZE + mmu_vpn_part(vpn, pte_level) * sizeof(mmu_pte_t);
+    size_t pte_paddr = pt_ppn * CONFIG_PAGE_SIZE + mmu_vpn_part(vpn, pte_level) * sizeof(mmu_pte_t);
     mmu_write_pte(pte_paddr, mmu_pte_new_leaf(ppn, pte_level, flags));
     return top_edit;
 }
@@ -246,7 +246,7 @@ static bool pt_unmap_1(size_t pt_ppn, int pt_level, size_t vpn, int pte_level) {
 
     // Walk the page table, adding new tables as needed.
     for (; pte_level < pt_level; pt_level--) {
-        size_t    pte_paddr = pt_ppn * MMU_PAGE_SIZE + mmu_vpn_part(vpn, pt_level) * sizeof(mmu_pte_t);
+        size_t    pte_paddr = pt_ppn * CONFIG_PAGE_SIZE + mmu_vpn_part(vpn, pt_level) * sizeof(mmu_pte_t);
         // Too high; read PTE to go to next table.
         mmu_pte_t pte       = mmu_read_pte(pte_paddr);
         if (!mmu_pte_is_valid(pte, pt_level)) {
@@ -263,7 +263,7 @@ static bool pt_unmap_1(size_t pt_ppn, int pt_level, size_t vpn, int pte_level) {
     }
 
     // At the correct level; write leaf PTE.
-    size_t pte_paddr = pt_ppn * MMU_PAGE_SIZE + mmu_vpn_part(vpn, pte_level) * sizeof(mmu_pte_t);
+    size_t pte_paddr = pt_ppn * CONFIG_PAGE_SIZE + mmu_vpn_part(vpn, pte_level) * sizeof(mmu_pte_t);
     mmu_write_pte(pte_paddr, MMU_PTE_NULL);
     return top_edit;
 }
@@ -318,9 +318,9 @@ static bool pt_unmap(size_t pt_ppn, int pt_level, size_t vpn, size_t pages) {
 // Broadcast global mappings.
 static void broadcast_to(size_t dest_pt_ppn, size_t src_pt_ppn) {
     for (size_t i = 1 << (MMU_BITS_PER_LEVEL - 1); i < (1 << MMU_BITS_PER_LEVEL); i++) {
-        mmu_pte_t pte = mmu_read_pte(src_pt_ppn * MMU_PAGE_SIZE + i * sizeof(mmu_pte_t));
+        mmu_pte_t pte = mmu_read_pte(src_pt_ppn * CONFIG_PAGE_SIZE + i * sizeof(mmu_pte_t));
         if (mmu_pte_is_valid(pte, mmu_levels - 1)) {
-            mmu_write_pte(dest_pt_ppn * MMU_PAGE_SIZE + i * sizeof(mmu_pte_t), pte);
+            mmu_write_pte(dest_pt_ppn * CONFIG_PAGE_SIZE + i * sizeof(mmu_pte_t), pte);
         }
     }
 }
@@ -335,10 +335,10 @@ virt2phys_t memprotect_virt2phys(mpu_ctx_t *ctx, size_t vaddr) {
     if (vaddr >= mmu_half_size && vaddr < mmu_high_vaddr) {
         return (virt2phys_t){0};
     }
-    pt_walk_t walk = pt_walk(ctx->root_ppn, vaddr / MMU_PAGE_SIZE);
+    pt_walk_t walk = pt_walk(ctx->root_ppn, vaddr / CONFIG_PAGE_SIZE);
     if (walk.found) {
-        size_t page_size  = MMU_PAGE_SIZE << (MMU_BITS_PER_LEVEL * walk.level);
-        size_t page_paddr = mmu_pte_get_ppn(walk.pte, walk.level) * MMU_PAGE_SIZE;
+        size_t page_size  = CONFIG_PAGE_SIZE << (MMU_BITS_PER_LEVEL * walk.level);
+        size_t page_paddr = mmu_pte_get_ppn(walk.pte, walk.level) * CONFIG_PAGE_SIZE;
         return (virt2phys_t){
             mmu_pte_get_flags(walk.pte, walk.level),
             page_paddr + (vaddr & (page_size - 1)),
@@ -407,7 +407,7 @@ static spinlock_t vmm_lock = SPINLOCK_T_INIT;
 size_t memprotect_alloc_vaddr(size_t len) {
     bool ie = irq_disable();
     spinlock_take(&vmm_lock);
-    size_t pages = (len - 1) / MEMMAP_PAGE_SIZE + 3;
+    size_t pages = (len - 1) / CONFIG_PAGE_SIZE + 3;
     size_t i;
     for (i = 0; i < vmm_free_len; i++) {
         if (vmm_free[i].pages >= pages) {
@@ -436,13 +436,13 @@ size_t memprotect_alloc_vaddr(size_t len) {
     }
     spinlock_release(&vmm_lock);
     irq_enable_if(ie);
-    return (range.vpn + 1) * MEMMAP_PAGE_SIZE;
+    return (range.vpn + 1) * CONFIG_PAGE_SIZE;
 }
 
 // Free a virtual address range allocated with `memprotect_alloc_vaddr`.
 void memprotect_free_vaddr(size_t vaddr) {
-    assert_always(vaddr % MEMMAP_PAGE_SIZE == 0);
-    size_t vpn = vaddr / MEMMAP_PAGE_SIZE - 1;
+    assert_always(vaddr % CONFIG_PAGE_SIZE == 0);
+    size_t vpn = vaddr / CONFIG_PAGE_SIZE - 1;
     bool   ie  = irq_disable();
     spinlock_take(&vmm_lock);
 
@@ -513,7 +513,7 @@ void memprotect_postheap_init() {
     pt_map(
         mpu_global_ctx.root_ppn,
         mmu_levels - 1,
-        mmu_hhdm_vaddr / MMU_PAGE_SIZE,
+        mmu_hhdm_vaddr / CONFIG_PAGE_SIZE,
         0,
         memprotect_hhdm_pages,
         MEMPROTECT_FLAG_RW | MEMPROTECT_FLAG_GLOBAL | MEMPROTECT_FLAG_KERNEL
@@ -523,8 +523,8 @@ void memprotect_postheap_init() {
     size_t ppn = memprotect_kernel_ppn;
     size_t sect_len;
     // Kernel RX.
-    sect_len = (__stop_text - __start_text) / MMU_PAGE_SIZE;
-    assert_dev_drop((__stop_text - __start_text) % MMU_PAGE_SIZE == 0);
+    sect_len = (__stop_text - __start_text) / CONFIG_PAGE_SIZE;
+    assert_dev_drop((__stop_text - __start_text) % CONFIG_PAGE_SIZE == 0);
     pt_map(
         mpu_global_ctx.root_ppn,
         mmu_levels - 1,
@@ -536,8 +536,8 @@ void memprotect_postheap_init() {
     vpn      += sect_len;
     ppn      += sect_len;
     // Kernel R.
-    sect_len  = (__stop_rodata - __start_rodata) / MMU_PAGE_SIZE;
-    assert_dev_drop((__stop_rodata - __start_rodata) % MMU_PAGE_SIZE == 0);
+    sect_len  = (__stop_rodata - __start_rodata) / CONFIG_PAGE_SIZE;
+    assert_dev_drop((__stop_rodata - __start_rodata) % CONFIG_PAGE_SIZE == 0);
     pt_map(
         mpu_global_ctx.root_ppn,
         mmu_levels - 1,
@@ -549,8 +549,8 @@ void memprotect_postheap_init() {
     vpn      += sect_len;
     ppn      += sect_len;
     // Kernel RW.
-    sect_len  = (__stop_data - __start_data) / MMU_PAGE_SIZE;
-    assert_dev_drop((__stop_data - __start_data) % MMU_PAGE_SIZE == 0);
+    sect_len  = (__stop_data - __start_data) / CONFIG_PAGE_SIZE;
+    assert_dev_drop((__stop_data - __start_data) % CONFIG_PAGE_SIZE == 0);
     pt_map(
         mpu_global_ctx.root_ppn,
         mmu_levels - 1,
@@ -580,9 +580,9 @@ void memprotect_create(mpu_ctx_t *ctx) {
     ctx->node     = DLIST_NODE_EMPTY;
     ctx->root_ppn = phys_page_alloc(1, false);
     assert_always(ctx->root_ppn);
-    size_t src_vaddr  = mmu_hhdm_vaddr + mpu_global_ctx.root_ppn * MMU_PAGE_SIZE;
-    size_t dest_vaddr = mmu_hhdm_vaddr + ctx->root_ppn * MMU_PAGE_SIZE;
-    mem_copy((void *)dest_vaddr, (void const *)src_vaddr, MMU_PAGE_SIZE);
+    size_t src_vaddr  = mmu_hhdm_vaddr + mpu_global_ctx.root_ppn * CONFIG_PAGE_SIZE;
+    size_t dest_vaddr = mmu_hhdm_vaddr + ctx->root_ppn * CONFIG_PAGE_SIZE;
+    mem_copy((void *)dest_vaddr, (void const *)src_vaddr, CONFIG_PAGE_SIZE);
     dlist_append(&ctx_list, &ctx->node);
 }
 
@@ -622,15 +622,14 @@ void memprotect_impl(mpu_ctx_t *ctx, size_t vpn, size_t ppn, size_t pages, uint3
 }
 
 // Add a memory protection region for user memory.
-bool memprotect_u(proc_memmap_t *new_mm, mpu_ctx_t *ctx, size_t vaddr, size_t paddr, size_t length, uint32_t flags) {
-    (void)new_mm;
-    if ((vaddr | paddr | length) % MMU_PAGE_SIZE) {
+bool memprotect_u(mpu_ctx_t *ctx, size_t vaddr, size_t paddr, size_t length, uint32_t flags) {
+    if ((vaddr | paddr | length) % CONFIG_PAGE_SIZE) {
         // Misaligned.
         return false;
     }
-    vaddr  /= MMU_PAGE_SIZE;
-    paddr  /= MMU_PAGE_SIZE;
-    length /= MMU_PAGE_SIZE;
+    vaddr  /= CONFIG_PAGE_SIZE;
+    paddr  /= CONFIG_PAGE_SIZE;
+    length /= CONFIG_PAGE_SIZE;
     if (vaddr + length > mmu_half_pages) {
         // Out of bounds.
         return false;
@@ -642,13 +641,13 @@ bool memprotect_u(proc_memmap_t *new_mm, mpu_ctx_t *ctx, size_t vaddr, size_t pa
 
 // Add a memory protection region for kernel memory.
 bool memprotect_k(size_t vaddr, size_t paddr, size_t length, uint32_t flags) {
-    if ((vaddr | paddr | length) % MMU_PAGE_SIZE) {
+    if ((vaddr | paddr | length) % CONFIG_PAGE_SIZE) {
         // Misaligned.
         return false;
     }
-    vaddr  /= MMU_PAGE_SIZE;
-    paddr  /= MMU_PAGE_SIZE;
-    length /= MMU_PAGE_SIZE;
+    vaddr  /= CONFIG_PAGE_SIZE;
+    paddr  /= CONFIG_PAGE_SIZE;
+    length /= CONFIG_PAGE_SIZE;
     if (vaddr < mmu_high_vpn || vaddr + length > mmu_high_vpn + mmu_half_pages) {
         // Out of bounds.
         return false;

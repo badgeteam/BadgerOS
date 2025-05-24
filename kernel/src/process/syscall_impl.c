@@ -17,7 +17,7 @@
 #include "sys/wait.h"
 #include "syscall_util.h"
 #include "usercopy.h"
-#if MEMMAP_VMEM
+#if !CONFIG_NOMMU
 #include "cpu/mmu.h"
 #endif
 
@@ -192,11 +192,11 @@ NOASAN int syscall_proc_waitpid(int pid, int *wstatus, int options) {
 void syscall_temp_write(char const *message, size_t length) {
     sysutil_memassert_r(message, length);
     mutex_acquire(&log_mtx, TIMESTAMP_US_MAX);
-#if MEMMAP_VMEM
+#if !CONFIG_NOMMU
     mmu_enable_sum();
 #endif
     rawprint_substr(message, length);
-#if MEMMAP_VMEM
+#if !CONFIG_NOMMU
     mmu_disable_sum();
 #endif
     mutex_release(&log_mtx);

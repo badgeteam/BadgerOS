@@ -5,7 +5,6 @@
 #include "cpu/regs.h"
 #include "cpu/x86_msr.h"
 #include "cpu/segmentation.h"
-#include "port/hardware.h"
     # .cfi_sections .debug_frame
     .intel_syntax
 

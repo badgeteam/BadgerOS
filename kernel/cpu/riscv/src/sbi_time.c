@@ -5,7 +5,6 @@
 #include "cpu/riscv_sbi.h"
 #include "device/dtb/dtb.h"
 #include "interrupt.h"
-#include "port/hardware_allocation.h"
 #include "port/time.h"
 #include "scheduler/isr.h"
 #include "time.h"

@@ -12,7 +12,6 @@
 
 
 #define MMU_BITS_PER_LEVEL     9
-#define MMU_PAGE_SIZE          0x1000LLU
 #define MMU_SUPPORT_SUPERPAGES 1
 
 // PBMT modes.
@@ -117,11 +116,11 @@ extern int    mmu_levels;
 // Whether RISC-V Svpbmt is supported.
 extern bool   mmu_svpbmt;
 // Virtual page number offset used for HHDM.
-#define mmu_hhdm_vpn   (mmu_hhdm_vaddr / MMU_PAGE_SIZE)
+#define mmu_hhdm_vpn   (mmu_hhdm_vaddr / CONFIG_PAGE_SIZE)
 // Virtual page number of the higher half.
-#define mmu_high_vpn   (mmu_high_vaddr / MMU_PAGE_SIZE)
+#define mmu_high_vpn   (mmu_high_vaddr / CONFIG_PAGE_SIZE)
 // Virtual page size of a "half".
-#define mmu_half_pages (mmu_half_size / MMU_PAGE_SIZE)
+#define mmu_half_pages (mmu_half_size / CONFIG_PAGE_SIZE)
 
 
 

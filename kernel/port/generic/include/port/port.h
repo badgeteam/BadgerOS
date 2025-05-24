@@ -7,14 +7,6 @@
 #include <stddef.h>
 #include <stdint.h>
 
-// Early hardware initialization.
-void port_early_init();
-// Post-heap hardware initialization.
-void port_postheap_init();
-// Reclaim bootloader memory.
-void port_reclaim_mem();
-// Full hardware initialization.
-void port_init();
 // Power off.
 void port_poweroff(bool restart);
 // Send a single character to the log output.

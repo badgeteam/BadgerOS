@@ -224,7 +224,7 @@ size_t smp_get_cpuid(int cpu) {
 
 
 // First stage entrypoint for secondary CPUs.
-static NAKED void cpu1_init0_limine(struct limine_smp_info *info) {
+NAKED void cpu1_init0_limine(struct limine_smp_info *info) {
     // clang-format off
 #ifdef __riscv
     asm(
@@ -240,7 +240,7 @@ static NAKED void cpu1_init0_limine(struct limine_smp_info *info) {
 }
 
 // Second stage entrypoint for secondary CPUs.
-__attribute__((unused)) static void cpu1_init1_limine(struct limine_smp_info *info) {
+__attribute__((unused)) void cpu1_init1_limine(struct limine_smp_info *info) {
     int       cur_cpu       = (int)info->extra_argument;
     isr_ctx_t tmp_ctx       = {0};
     tmp_ctx.flags           = ISR_CTX_FLAG_KERNEL;

@@ -60,7 +60,7 @@
 #define SCHED_DUMPSTATE (1 << 3)
 
 // Thread struct.
-struct sched_thread_t {
+struct sched_thread {
     // Thread queue link.
     dlist_node_t node;
 
@@ -100,7 +100,7 @@ struct sched_thread_t {
 };
 
 // CPU-local scheduler data.
-struct sched_cpulocal_t {
+struct sched_cpulocal {
     // Scheduler start/stop spinlock.
     spinlock_t     run_lock;
     // Threads list spinlock.

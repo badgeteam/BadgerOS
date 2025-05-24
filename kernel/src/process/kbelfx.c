@@ -11,7 +11,7 @@
 #include "process/process.h"
 #include "process/types.h"
 #include "usercopy.h"
-#if MEMMAP_VMEM
+#if !CONFIG_NOMMU
 #include "cpu/mmu.h"
 #endif
 
@@ -171,7 +171,7 @@ long kbelfx_load(kbelf_inst inst, void *fd, kbelf_laddr laddr, long len) {
     if (len < 0)
         return -1;
     process_t *proc    = proc_get_unsafe(kbelf_inst_getpid(inst));
-    long       tmp_cap = MEMMAP_VMEM ? 2097152 : 16384;
+    long       tmp_cap = !CONFIG_NOMMU ? 2097152 : 16384;
     tmp_cap            = tmp_cap < len ? tmp_cap : len;
     void *tmp          = malloc(tmp_cap);
     long  total        = 0;

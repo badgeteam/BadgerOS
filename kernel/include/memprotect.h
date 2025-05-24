@@ -3,9 +3,13 @@
 
 #pragma once
 
+#include "list.h"
+
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+
+typedef struct mpu_ctx mpu_ctx_t;
 
 #define MEMPROTECT_FLAG_R      0x00000001
 #define MEMPROTECT_FLAG_W      0x00000002
@@ -23,12 +27,26 @@
 // Non-cachable; if possible, mark region as non-cacheable.
 #define MEMPROTECT_FLAG_NC     0x00000080
 
-#include "port/hardware_allocation.h"
-#include "port/memprotect.h"
-#include "process/types.h"
 
 
-#if MEMMAP_VMEM
+#if !CONFIG_NOMMU
+
+// HHDM length in pages.
+extern size_t memprotect_hhdm_pages;
+// Kernel virtual page number.
+extern size_t memprotect_kernel_vpn;
+// Kernel physical page number.
+extern size_t memprotect_kernel_ppn;
+// Kernel length in pages.
+extern size_t memprotect_kernel_pages;
+
+struct mpu_ctx {
+    // Linked list node.
+    dlist_node_t node;
+    // Page table root physical page number.
+    size_t       root_ppn;
+};
+
 // For systems with VMEM: global MMU context.
 extern mpu_ctx_t mpu_global_ctx;
 // Virtual to physical lookup results.
@@ -64,7 +82,7 @@ void memprotect_create(mpu_ctx_t *ctx);
 // Clean up a memory protection context.
 void memprotect_destroy(mpu_ctx_t *ctx);
 // Add a memory protection region for user memory.
-bool memprotect_u(proc_memmap_t *new_mm, mpu_ctx_t *ctx, size_t vaddr, size_t paddr, size_t length, uint32_t flags);
+bool memprotect_u(mpu_ctx_t *ctx, size_t vaddr, size_t paddr, size_t length, uint32_t flags);
 // Add a memory protection region for kernel memory.
 bool memprotect_k(size_t vaddr, size_t paddr, size_t length, uint32_t flags);
 // Commit pending memory protections, if any.

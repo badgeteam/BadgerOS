@@ -4,6 +4,7 @@ build/
 .ccache/
 .cache/
 firmware/
+output/
 app/
 root/
 .venv/

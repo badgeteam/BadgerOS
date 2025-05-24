@@ -15,7 +15,7 @@
 #include "process/types.h"
 #include "scheduler/cpu.h"
 #include "scheduler/isr.h"
-#if MEMMAP_VMEM
+#if !CONFIG_NOMMU
 #include "cpu/mmu.h"
 #endif
 
@@ -103,12 +103,12 @@ bool sched_signal_enter(size_t handler_vaddr, size_t return_vaddr, int signum) {
     thread->user_isr_ctx.regs.rsp -= usize;
 
     // Save context to user's stack.
-#if MEMMAP_VMEM
+#if !CONFIG_NOMMU
     mmu_enable_sum();
 #endif
     size_t *stackptr = (size_t *)thread->user_isr_ctx.regs.rsp;
     // TODO: Save caller-save registers.
-#if MEMMAP_VMEM
+#if !CONFIG_NOMMU
     mmu_disable_sum();
 #endif
 
@@ -137,12 +137,12 @@ bool sched_signal_exit() {
     }
 
 // Restore user's state.
-#if MEMMAP_VMEM
+#if !CONFIG_NOMMU
     mmu_enable_sum();
 #endif
     size_t *stackptr = (size_t *)thread->user_isr_ctx.regs.rsp;
     // TODO: Restore user's caller-save registers.
-#if MEMMAP_VMEM
+#if !CONFIG_NOMMU
     mmu_disable_sum();
 #endif
 

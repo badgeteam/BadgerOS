@@ -12,12 +12,9 @@ set(port_src
     ${CMAKE_CURRENT_LIST_DIR}/src/driver/ata/sata_ahci_pcie.c
     ${CMAKE_CURRENT_LIST_DIR}/src/driver/ata/blkdev_ata.c
     ${CMAKE_CURRENT_LIST_DIR}/src/driver/pcie.c
-    ${CMAKE_CURRENT_LIST_DIR}/src/hal/gpio.c
-    ${CMAKE_CURRENT_LIST_DIR}/src/hal/i2c.c
-    ${CMAKE_CURRENT_LIST_DIR}/src/hal/spi.c
-    ${CMAKE_CURRENT_LIST_DIR}/src/memprotect.c
-    ${CMAKE_CURRENT_LIST_DIR}/src/port.c
-    ${CMAKE_CURRENT_LIST_DIR}/src/smp.c
+    # ${CMAKE_CURRENT_LIST_DIR}/src/memprotect.c
+    # ${CMAKE_CURRENT_LIST_DIR}/src/port.c
+    # ${CMAKE_CURRENT_LIST_DIR}/src/smp.c
 )
 set(port_include
     ${CMAKE_CURRENT_LIST_DIR}/include
@@ -29,12 +26,3 @@ set(port_link
 )
 set(port_flags)
 set_target_properties(${target} PROPERTIES LINK_DEPENDS ${CMAKE_CURRENT_LIST_DIR}/linker.ld)
-
-if(${CONFIG_CPU} STREQUAL "x86_64")
-    include(lib/uacpi/uacpi.cmake)
-    set(port_src ${port_src}
-        ${CMAKE_CURRENT_LIST_DIR}/src/uacpi_kernel_api.c
-        ${UACPI_SOURCES}
-    )
-    set(port_include ${port_include} ${UACPI_INCLUDES})
-endif()

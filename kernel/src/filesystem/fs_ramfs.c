@@ -8,7 +8,6 @@
 #include "filesystem/devfile.h"
 #include "filesystem/fs_ramfs_types.h"
 #include "malloc.h"
-#include "port/hardware_allocation.h"
 
 #define RAMFS(vfs)    (*(fs_ramfs_t *)(vfs)->cookie)
 #define RAMFILE(file) ((fs_ramfs_inode_t *)(file)->cookie)
@@ -283,7 +282,7 @@ bool fs_ramfs_mount(badge_err_t *ec, vfs_t *vfs) {
     // TODO: Parameters.
     atomic_store_explicit(&RAMFS(vfs).ram_usage, 0, memory_order_relaxed);
     RAMFS(vfs).ram_limit      = 65536;
-    RAMFS(vfs).inode_list_len = MEMMAP_VMEM ? 1024 : 64;
+    RAMFS(vfs).inode_list_len = !CONFIG_NOMMU ? 1024 : 64;
     RAMFS(vfs).inode_list     = malloc(sizeof(*RAMFS(vfs).inode_list) * RAMFS(vfs).inode_list_len);
     if (!RAMFS(vfs).inode_list) {
         free(vfs->cookie);

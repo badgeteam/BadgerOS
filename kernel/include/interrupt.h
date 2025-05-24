@@ -3,9 +3,9 @@
 
 #pragma once
 
-#include "port/interrupt.h"
+#include "cpu/interrupt.h"
 
-typedef struct isr_ctx_t isr_ctx_t;
+typedef struct isr_ctx isr_ctx_t;
 // Interrupt service routine functions.
 typedef void (*isr_t)(int irq, void *cookie);
 // Installed ISR (opaque struct).

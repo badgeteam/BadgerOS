@@ -3,7 +3,6 @@
 
 #include "cpu/isr.h"
 #include "cpu/regs.h"
-#include "port/hardware.h"
     .global __global_pointer$
     .global memprotect_swap_from_isr
     .cfi_sections .debug_frame
@@ -352,12 +351,12 @@ riscv_interrupt_vector_table:
     # Trap handler.
     j __trap_asm
     # Interrupt handlers.
-    .rept RISCV_VT_INT_COUNT
+    .rept 31 # RISCV_VT_INT_COUNT
     j __trap_asm
     .endr
     # Padding.
-#if RISCV_VT_PADDING
-    .skip RISCV_VT_PADDING*4
-#endif
+# #if RISCV_VT_PADDING
+#     .skip RISCV_VT_PADDING*4
+# #endif
     .option pop
 #pragma endregion

@@ -17,7 +17,6 @@
 #include "list.h"
 #include "memprotect.h"
 #include "mutex.h"
-#include "port/hardware_allocation.h"
 #include "set.h"
 #include "spinlock.h"
 #include "time.h"
@@ -106,17 +105,17 @@ static bool device_init(device_union_t *device) {
                 }
                 return false;
             }
-            addr->vaddr = vaddr + addr->paddr % MEMMAP_PAGE_SIZE;
+            addr->vaddr = vaddr + addr->paddr % CONFIG_PAGE_SIZE;
         }
     }
     for (size_t i = 0; i < device->base.info.addrs_len; i++) {
         if (device->base.info.addrs[i].type == DEV_ATYPE_MMIO) {
             dev_mmio_addr_t addr  = device->base.info.addrs[i].mmio;
-            addr.size            += addr.vaddr % MEMMAP_PAGE_SIZE;
-            addr.paddr           -= addr.vaddr % MEMMAP_PAGE_SIZE;
-            addr.vaddr           -= addr.vaddr % MEMMAP_PAGE_SIZE;
-            if (addr.size % MEMMAP_PAGE_SIZE) {
-                addr.size += MEMMAP_PAGE_SIZE - addr.size % MEMMAP_PAGE_SIZE;
+            addr.size            += addr.vaddr % CONFIG_PAGE_SIZE;
+            addr.paddr           -= addr.vaddr % CONFIG_PAGE_SIZE;
+            addr.vaddr           -= addr.vaddr % CONFIG_PAGE_SIZE;
+            if (addr.size % CONFIG_PAGE_SIZE) {
+                addr.size += CONFIG_PAGE_SIZE - addr.size % CONFIG_PAGE_SIZE;
             }
             assert_dev_keep(memprotect_k(addr.vaddr, addr.paddr, addr.size, MEMPROTECT_FLAG_IO | MEMPROTECT_FLAG_RW));
         }
@@ -133,11 +132,11 @@ static void device_deinit(device_union_t *device) {
     for (size_t i = 0; i < device->base.info.addrs_len; i++) {
         if (device->base.info.addrs[i].type == DEV_ATYPE_MMIO) {
             dev_mmio_addr_t addr  = device->base.info.addrs[i].mmio;
-            addr.size            += addr.vaddr % MEMMAP_PAGE_SIZE;
-            addr.paddr           -= addr.vaddr % MEMMAP_PAGE_SIZE;
-            addr.vaddr           -= addr.vaddr % MEMMAP_PAGE_SIZE;
-            if (addr.size % MEMMAP_PAGE_SIZE) {
-                addr.size += MEMMAP_PAGE_SIZE - addr.size % MEMMAP_PAGE_SIZE;
+            addr.size            += addr.vaddr % CONFIG_PAGE_SIZE;
+            addr.paddr           -= addr.vaddr % CONFIG_PAGE_SIZE;
+            addr.vaddr           -= addr.vaddr % CONFIG_PAGE_SIZE;
+            if (addr.size % CONFIG_PAGE_SIZE) {
+                addr.size += CONFIG_PAGE_SIZE - addr.size % CONFIG_PAGE_SIZE;
             }
             assert_dev_keep(memprotect_k(addr.vaddr, addr.paddr, addr.size, 0));
         }

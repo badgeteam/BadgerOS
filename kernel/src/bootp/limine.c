@@ -1,16 +1,15 @@
 
 // SPDX-License-Identifier: MIT
 
-#include "port/port.h"
-
 #include "assertions.h"
+#include "bootp.h"
 #include "cpu/mmu.h"
 #include "device/class/pcictl.h"
 #include "device/dev_class.h"
 #include "device/device.h"
 #include "interrupt.h"
 #include "panic.h"
-#include "port/hardware_allocation.h"
+#include "port/port.h"
 #include "rawprint.h"
 #include "set.h"
 
@@ -83,7 +82,7 @@ uacpi_status uacpi_kernel_get_rsdp(uacpi_phys_addr *out_rsdp_address) {
 static size_t early_alloc_index;
 
 // Early hardware initialization.
-void port_early_init() {
+void bootp_early_init() {
     rawprint("\033[0m\033[2J");
 
     // Verify needed requests have been answered.
@@ -168,14 +167,14 @@ void port_early_init() {
 
     // Pass info to memory protection.
     mmu_hhdm_vaddr        = hhdm_req.response->offset;
-    memprotect_hhdm_pages = (mmu_hhdm_size - 1) / MMU_PAGE_SIZE + 1;
-    memprotect_kernel_ppn = addr_req.response->physical_base / MMU_PAGE_SIZE;
-    memprotect_kernel_vpn = addr_req.response->virtual_base / MMU_PAGE_SIZE;
-    if (addr_req.response->physical_base % MMU_PAGE_SIZE) {
+    memprotect_hhdm_pages = (mmu_hhdm_size - 1) / CONFIG_PAGE_SIZE + 1;
+    memprotect_kernel_ppn = addr_req.response->physical_base / CONFIG_PAGE_SIZE;
+    memprotect_kernel_vpn = addr_req.response->virtual_base / CONFIG_PAGE_SIZE;
+    if (addr_req.response->physical_base % CONFIG_PAGE_SIZE) {
         logkf_from_isr(LOG_FATAL, "Kernel is not aligned to page size");
         panic_poweroff();
     }
-    memprotect_kernel_pages = (kernel_len - 1) / MMU_PAGE_SIZE + 1;
+    memprotect_kernel_pages = (kernel_len - 1) / CONFIG_PAGE_SIZE + 1;
 
     // Report memory stats.
     logkf_from_isr(
@@ -201,12 +200,8 @@ void port_early_init() {
     );
 }
 
-// Post-heap hardware initialization.
-void port_postheap_init() {
-}
-
 // Full hardware initialization.
-void port_init() {
+void bootp_full_init() {
 #ifdef __riscv
     // Parse and process DTB.
     // dtdump(dtb_req.response->dtb_ptr);
@@ -236,7 +231,7 @@ void port_init() {
 }
 
 // Reclaim bootloader memory.
-void port_reclaim_mem() {
+void bootp_reclaim_mem() {
     // Reclaim all reclaimable memory.
     size_t base = 0;
     size_t len  = 0;
@@ -248,7 +243,7 @@ void port_reclaim_mem() {
             continue;
         }
         if (entry->base != base + len) {
-            if (len > 16 * MEMMAP_PAGE_SIZE) {
+            if (len > 16 * CONFIG_PAGE_SIZE) {
                 // logkf_from_isr(LOG_DEBUG, "Adding memory at 0x%{size;x}-0x%{size;x}", base, base + len - 1);
                 init_pool((void *)(base + mmu_hhdm_vaddr), (void *)(base + len + mmu_hhdm_vaddr), 0);
             }
@@ -258,7 +253,7 @@ void port_reclaim_mem() {
             len += entry->length;
         }
     }
-    if (len >= 16 * MEMMAP_PAGE_SIZE) {
+    if (len >= 16 * CONFIG_PAGE_SIZE) {
         // logkf_from_isr(LOG_DEBUG, "Adding memory at 0x%{size;x}-0x%{size;x}", base, base + len - 1);
         init_pool((void *)(base + mmu_hhdm_vaddr), (void *)(base + len + mmu_hhdm_vaddr), 0);
     }

@@ -168,69 +168,6 @@ SYSCALL_DEF(25, SYSCALL_MEM_UNMAP, syscall_mem_unmap, bool, void *address, size_
 
 
 
-/* ==== LOW-LEVEL HAL SYSCALLS ==== */
-// Implemented in hal/syscall_impl.c
-
-// Returns the amount of GPIO pins present.
-// Cannot produce an error.
-SYSCALL_DEF(26, SYSCALL_IO_COUNT, syscall_io_count, int)
-// Sets the mode of GPIO pin `pin` to `mode`.
-SYSCALL_DEF_V(27, SYSCALL_IO_MODE, syscall_io_mode, badge_err_t *ec, int pin, io_mode_t mode)
-// Get the mode of GPIO pin `pin`.
-SYSCALL_DEF(28, SYSCALL_IO_GETMODE, syscall_io_getmode, io_mode_t, badge_err_t *ec, int pin)
-// Sets the pull resistor behaviour of GPIO pin `pin` to `dir`.
-SYSCALL_DEF_V(29, SYSCALL_IO_PULL, syscall_io_pull, badge_err_t *ec, int pin, io_pull_t dir)
-// Get the  pull resistor behaviour of GPIO pin `pin`.
-SYSCALL_DEF(30, SYSCALL_IO_GETPULL, syscall_io_getpull, io_pull_t, badge_err_t *ec, int pin)
-// Writes level to GPIO pin pin.
-SYSCALL_DEF_V(31, SYSCALL_IO_WRITE, syscall_io_write, badge_err_t *ec, int pin, bool level)
-// Reads logic level value from GPIO pin `pin`.
-// Returns false on error.
-SYSCALL_DEF(32, SYSCALL_IO_READ, syscall_io_read, bool, badge_err_t *ec, int pin)
-// Determine whether GPIO `pin` is claimed by a peripheral.
-// Returns false on error.
-SYSCALL_DEF(33, SYSCALL_IO_IS_PERIPHERAL, syscall_io_is_peripheral, bool, badge_err_t *ec, int pin)
-
-// Returns the amount of I²C peripherals present.
-// Cannot produce an error.
-SYSCALL_DEF(34, SYSCALL_I2C_COUNT, syscall_i2c_count, int)
-// Initialises I²C peripheral i2c_num in slave mode with SDA pin `sda_pin`, SCL pin `scl_pin` and clock speed/bitrate
-// bitrate. When initialised as an I²C master, the modes of the SDA and SCL pins are changed automatically. This
-// function may be used again to change the settings on an initialised I²C peripheral in master mode.
-SYSCALL_DEF_V(35, SYSCALL_I2C_MASTER_INIT, syscall_i2c_master_init, badge_err_t *ec, int i2c_num, int sda_pin, int scl_pin, int32_t bitrate)
-// De-initialises I²C peripheral i2c_num in master mode.
-SYSCALL_DEF_V(36, SYSCALL_I2C_MASTER_DEINIT, syscall_i2c_master_deinit, badge_err_t *ec, int i2c_num)
-// Reads len bytes into buffer buf from I²C slave with ID slave_id.
-// This function blocks until the entire transaction is completed and returns the number of acknowledged read bytes.
-SYSCALL_DEF(37, SYSCALL_I2C_MASTER_READ_FROM, syscall_i2c_master_read_from, size_t, badge_err_t *ec, int i2c_num, int slave_id, void *buf, size_t len)
-// Writes len bytes from buffer buf to I²C slave with ID slave_id.
-// This function blocks until the entire transaction is completed and returns the number of acknowledged written bytes.
-SYSCALL_DEF(38, SYSCALL_I2C_MASTER_WRITE_TO, syscall_i2c_master_write_to, size_t, badge_err_t *ec, int i2c_num, int slave_id, void const *buf, size_t len)
-
-// Returns the amount of SPI peripherals present.
-// Cannot produce an error.
-SYSCALL_DEF(39, SYSCALL_SPI_COUNT, syscall_spi_count, int)
-// Initialises SPI peripheral spi_num in controller mode with SCLK pin `sclk_pin`, MOSI pin `mosi_pin`, MISO pin
-// `miso_pin`, SS pin `ss_pin` and clock speed/bitrate bitrate. The modes of the SCLK, MOSI, MISO and SS pins are
-// changed automatically. This function may be used again to change the settings on an initialised SPI peripheral in
-// controller mode.
-SYSCALL_DEF_V(40, SYSCALL_SPI_CONTROLLER_INIT, syscall_spi_controller_init, badge_err_t *ec, int spi_num, int sclk_pin, int mosi_pin, int miso_pin, int ss_pin, int32_t bitrate)
-// De-initialises SPI peripheral.
-SYSCALL_DEF_V(41, SYSCALL_SPI_DEINIT, syscall_spi_deinit, badge_err_t *ec, int spi_num)
-// Reads len bytes into buffer buf from SPI device.
-// This function blocks until the entire transaction is completed.
-SYSCALL_DEF_V(42, SYSCALL_SPI_CONTROLLER_READ, syscall_spi_controller_read, badge_err_t *ec, int spi_num, void *buf, size_t len)
-// Writes len bytes from buffer buf to SPI device.
-// This function blocks until the entire transaction is completed.
-SYSCALL_DEF_V(43, SYSCALL_SPI_CONTROLLER_WRITE, syscall_spi_controller_write, badge_err_t *ec, int spi_num, void const *buf, size_t len)
-// Writes len bytes from buffer buf to SPI device, then reads len bytes into buffer buf from SPI device.
-// Write and read happen simultaneously if the full-duplex flag fdx is set.
-// This function blocks until the entire transaction is completed.
-SYSCALL_DEF_V(44, SYSCALL_SPI_CONTROLLER_TRANSFER, syscall_spi_controller_transfer, badge_err_t *ec, int spi_num, void *buf, size_t len, bool fdx)
-
-
-
-
 /* ==== SYSTEM MANAGEMENT SYSCALLS ==== */
 // Implemented in main.c
 

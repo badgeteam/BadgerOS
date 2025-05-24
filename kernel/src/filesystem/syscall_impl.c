@@ -4,11 +4,10 @@
 #include "filesystem/syscall_impl.h"
 
 #include "filesystem.h"
-#include "port/hardware_allocation.h"
 #include "process/internal.h"
 #include "syscall_util.h"
 #include "usercopy.h"
-#if MEMMAP_VMEM
+#if !CONFIG_NOMMU
 #include "cpu/mmu.h"
 #endif
 
@@ -24,7 +23,7 @@ file_t syscall_fs_open(file_t dirfd, char const *path, size_t path_len, int ofla
     }
     process_t *const proc = proc_current();
 
-#if MEMMAP_VMEM
+#if !CONFIG_NOMMU
     // Safely copy the path from user memory to the kernel stack.
     char k_path[FILESYSTEM_PATH_MAX + 1];
     copy_from_user_raw(proc_current(), k_path, (size_t)path, path_len);
@@ -72,11 +71,11 @@ long syscall_fs_read(file_t u_fd, void *read_buf, long read_len) {
     badge_err_t ec;
     file_t      fd = proc_find_fd_raw(&ec, proc_current(), u_fd);
     if (fd != -1) {
-#if MEMMAP_VMEM
+#if !CONFIG_NOMMU
         mmu_enable_sum();
 #endif
         fileoff_t read = fs_read(&ec, fd, read_buf, read_len);
-#if MEMMAP_VMEM
+#if !CONFIG_NOMMU
         mmu_disable_sum();
 #endif
         if (read <= 0) {
@@ -95,11 +94,11 @@ long syscall_fs_write(file_t u_fd, void const *write_buf, long write_len) {
     badge_err_t ec;
     file_t      fd = proc_find_fd_raw(&ec, proc_current(), u_fd);
     if (fd != -1) {
-#if MEMMAP_VMEM
+#if !CONFIG_NOMMU
         mmu_enable_sum();
 #endif
         fileoff_t written = fs_write(&ec, fd, write_buf, write_len);
-#if MEMMAP_VMEM
+#if !CONFIG_NOMMU
         mmu_disable_sum();
 #endif
         if (written <= 0) {
@@ -134,7 +133,7 @@ int syscall_fs_stat(file_t fd, char const *path, size_t path_len, bool follow_li
 
     badge_err_t ec;
 
-#if MEMMAP_VMEM
+#if !CONFIG_NOMMU
     // Safely copy the path from user memory to the kernel stack.
     char k_path[FILESYSTEM_PATH_MAX + 1];
     copy_from_user_raw(proc_current(), k_path, (size_t)path, path_len);
@@ -160,7 +159,7 @@ int syscall_fs_mkdir(file_t at, char const *path, size_t path_len) {
 
     badge_err_t ec;
 
-#if MEMMAP_VMEM
+#if !CONFIG_NOMMU
     // Safely copy the path from user memory to the kernel stack.
     char k_path[FILESYSTEM_PATH_MAX + 1];
     copy_from_user_raw(proc_current(), k_path, (size_t)path, path_len);
@@ -184,7 +183,7 @@ int syscall_fs_rmdir(file_t at, char const *path, size_t path_len) {
 
     badge_err_t ec;
 
-#if MEMMAP_VMEM
+#if !CONFIG_NOMMU
     // Safely copy the path from user memory to the kernel stack.
     char k_path[FILESYSTEM_PATH_MAX + 1];
     copy_from_user_raw(proc_current(), k_path, (size_t)path, path_len);
@@ -211,7 +210,7 @@ int syscall_fs_link(
 
     badge_err_t ec;
 
-#if MEMMAP_VMEM
+#if !CONFIG_NOMMU
     char k_old_path[FILESYSTEM_PATH_MAX + 1];
     copy_from_user_raw(proc_current(), k_old_path, (size_t)old_path, old_path_len);
 
@@ -237,7 +236,7 @@ int syscall_fs_unlink(file_t at, char const *path, size_t path_len) {
 
     badge_err_t ec;
 
-#if MEMMAP_VMEM
+#if !CONFIG_NOMMU
     // Safely copy the path from user memory to the kernel stack.
     char k_path[FILESYSTEM_PATH_MAX + 1];
     copy_from_user_raw(proc_current(), k_path, (size_t)path, path_len);
@@ -261,7 +260,7 @@ int syscall_fs_mkfifo(file_t at, char const *path, size_t path_len) {
 
     badge_err_t ec;
 
-#if MEMMAP_VMEM
+#if !CONFIG_NOMMU
     // Safely copy the path from user memory to the kernel stack.
     char k_path[FILESYSTEM_PATH_MAX + 1];
     copy_from_user_raw(proc_current(), k_path, (size_t)path, path_len);

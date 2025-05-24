@@ -4,55 +4,54 @@
 #include "page_alloc.h"
 
 #include "badge_strings.h"
-#include "port/hardware_allocation.h"
 #include "static-buddy.h"
-#if MEMMAP_VMEM
+#if !CONFIG_NOMMU
 #include "cpu/mmu.h"
 #endif
 
 
 
 // Allocate pages of physical memory.
-// Uses physical page numbers (paddr / MEMMAP_PAGE_SIZE).
+// Uses physical page numbers (paddr / CONFIG_PAGE_SIZE).
 size_t phys_page_alloc(size_t page_count, bool for_user) {
-    void *mem = buddy_allocate(page_count * MEMMAP_PAGE_SIZE, for_user ? BLOCK_TYPE_USER : BLOCK_TYPE_PAGE, 0);
+    void *mem = buddy_allocate(page_count * CONFIG_PAGE_SIZE, for_user ? BLOCK_TYPE_USER : BLOCK_TYPE_PAGE, 0);
     if (!mem) {
         return 0;
     }
-    mem_set(mem, 0, page_count * MEMMAP_PAGE_SIZE);
-#if MEMMAP_VMEM
-    return ((size_t)mem - mmu_hhdm_vaddr) / MEMMAP_PAGE_SIZE;
+    mem_set(mem, 0, page_count * CONFIG_PAGE_SIZE);
+#if !CONFIG_NOMMU
+    return ((size_t)mem - mmu_hhdm_vaddr) / CONFIG_PAGE_SIZE;
 #else
-    return (size_t)mem / MEMMAP_PAGE_SIZE;
+    return (size_t)mem / CONFIG_PAGE_SIZE;
 #endif
 }
 
 // Returns how large a physical allocation actually is.
-// Uses physical page numbers (paddr / MEMMAP_PAGE_SIZE).
+// Uses physical page numbers (paddr / CONFIG_PAGE_SIZE).
 size_t phys_page_size(size_t ppn) {
-#if MEMMAP_VMEM
-    return buddy_get_size((void *)(ppn * MEMMAP_PAGE_SIZE + mmu_hhdm_vaddr)) / MEMMAP_PAGE_SIZE;
+#if !CONFIG_NOMMU
+    return buddy_get_size((void *)(ppn * CONFIG_PAGE_SIZE + mmu_hhdm_vaddr)) / CONFIG_PAGE_SIZE;
 #else
-    return buddy_get_size((void *)(ppn * MEMMAP_PAGE_SIZE)) / MEMMAP_PAGE_SIZE;
+    return buddy_get_size((void *)(ppn * CONFIG_PAGE_SIZE)) / CONFIG_PAGE_SIZE;
 #endif
 }
 
 // Free pages of physical memory.
-// Uses physical page numbers (paddr / MEMMAP_PAGE_SIZE).
+// Uses physical page numbers (paddr / CONFIG_PAGE_SIZE).
 void phys_page_free(size_t ppn) {
-#if MEMMAP_VMEM
-    buddy_deallocate((void *)(ppn * MEMMAP_PAGE_SIZE + mmu_hhdm_vaddr));
+#if !CONFIG_NOMMU
+    buddy_deallocate((void *)(ppn * CONFIG_PAGE_SIZE + mmu_hhdm_vaddr));
 #else
-    buddy_deallocate((void *)(ppn * MEMMAP_PAGE_SIZE));
+    buddy_deallocate((void *)(ppn * CONFIG_PAGE_SIZE));
 #endif
 }
 
 // Split a physical page allocation into two in the allocator.
-// Uses physical page numbers (paddr / MEMMAP_PAGE_SIZE).
+// Uses physical page numbers (paddr / CONFIG_PAGE_SIZE).
 void phys_page_split(size_t ppn) {
-#if MEMMAP_VMEM
-    buddy_split_allocated((void *)(ppn * MEMMAP_PAGE_SIZE + mmu_hhdm_vaddr));
+#if !CONFIG_NOMMU
+    buddy_split_allocated((void *)(ppn * CONFIG_PAGE_SIZE + mmu_hhdm_vaddr));
 #else
-    buddy_split_allocated((void *)(ppn * MEMMAP_PAGE_SIZE));
+    buddy_split_allocated((void *)(ppn * CONFIG_PAGE_SIZE));
 #endif
 }

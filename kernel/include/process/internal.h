@@ -6,6 +6,7 @@
 #include "filesystem.h"
 #include "mutex.h"
 #include "process/process.h"
+#include "process/types.h"
 
 extern mutex_t proc_mtx;
 
