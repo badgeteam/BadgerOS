@@ -4,7 +4,10 @@ use core::{
     ops::{Deref, DerefMut},
 };
 
-use super::raw::{self, mutex_t, timestamp_us_t};
+use super::{
+    error::ErrnoError,
+    raw::{self, mutex_t, timestamp_us_t},
+};
 
 /// A BadgerOS mutex.
 pub struct Mutex<T, const SHARED: bool> {
@@ -25,7 +28,10 @@ impl<T, const SHARED: bool> Mutex<T, SHARED> {
         }
     }
     /// Try to lock the mutex.
-    pub fn try_lock<'a>(&'a self, timeout: timestamp_us_t) -> Option<MutexGuard<'a, T, SHARED>> {
+    pub fn try_lock<'a>(
+        &'a self,
+        timeout: timestamp_us_t,
+    ) -> Result<MutexGuard<'a, T, SHARED>, ErrnoError> {
         MutexGuard::try_new(self, timeout)
     }
     /// Lock the mutex.
@@ -39,7 +45,7 @@ impl<T> Mutex<T, true> {
     pub fn try_lock_shared<'a>(
         &'a self,
         timeout: timestamp_us_t,
-    ) -> Option<SharedMutexGuard<'a, T>> {
+    ) -> Result<SharedMutexGuard<'a, T>, ErrnoError> {
         SharedMutexGuard::try_new(self, timeout)
     }
     /// Lock the mutex as shared.
@@ -55,9 +61,14 @@ pub struct MutexGuard<'a, T, const SHARED: bool> {
 
 impl<'a, T, const SHARED: bool> MutexGuard<'a, T, SHARED> {
     /// Try to lock a mutex.
-    pub fn try_new(mutex: &'a Mutex<T, SHARED>, timeout: timestamp_us_t) -> Option<Self> {
+    pub fn try_new(
+        mutex: &'a Mutex<T, SHARED>,
+        timeout: timestamp_us_t,
+    ) -> Result<Self, ErrnoError> {
         unsafe {
-            raw::mutex_acquire(mutex.inner.as_mut_unchecked(), timeout).then_some(Self { mutex })
+            raw::mutex_acquire(mutex.inner.as_mut_unchecked(), timeout)
+                .then_some(Self { mutex })
+                .ok_or(errno!(ETIMEDOUT))
         }
     }
     /// Lock a mutex.
@@ -95,10 +106,11 @@ pub struct SharedMutexGuard<'a, T> {
 
 impl<'a, T> SharedMutexGuard<'a, T> {
     /// Try to lock a mutex as shared.
-    pub fn try_new(mutex: &'a Mutex<T, true>, timeout: timestamp_us_t) -> Option<Self> {
+    pub fn try_new(mutex: &'a Mutex<T, true>, timeout: timestamp_us_t) -> Result<Self, ErrnoError> {
         unsafe {
             raw::mutex_acquire_shared(mutex.inner.as_mut_unchecked(), timeout)
                 .then_some(Self { mutex })
+                .ok_or(errno!(ETIMEDOUT))
         }
     }
     /// Lock a mutex as shared.

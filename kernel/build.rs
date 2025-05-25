@@ -13,6 +13,7 @@ fn main() {
             "-I../common/include",
             "-I../common/badgelib/include",
             "-Wno-unknown-attributes",
+            "-DBADGEROS_KERNEL",
         ])
         // Fix: For some reason, `malloc` and `realloc` specifically do not use `usize`.
         .blocklist_function("malloc")

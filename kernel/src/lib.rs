@@ -5,6 +5,8 @@
 #![allow(dead_code)]
 #![allow(unused_macros)]
 #![feature(unsafe_cell_access)]
+#![feature(error_generic_member_access)]
+#![feature(str_from_raw_parts)]
 
 extern crate alloc;
 

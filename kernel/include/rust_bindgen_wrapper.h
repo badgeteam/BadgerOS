@@ -7,6 +7,7 @@
 #include "device/class/union.h"
 #include "device/device.h"
 #include "device/dtb/dtb.h"
+#include "errno.h"
 #include "filesystem.h"
 #include "interrupt.h"
 #include "log.h"
@@ -17,4 +18,5 @@
 #include "rawprint.h"
 #include "scheduler/scheduler.h"
 #include "semaphore.h"
+#include "signal.h"
 #include "usercopy.h"
