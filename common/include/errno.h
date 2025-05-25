@@ -3,6 +3,15 @@
 
 #pragma once
 
+#if BADGEROS_KERNEL
+// Get the name of an ERRNO.
+char const *errno_get_name(int errno);
+// Get a brief description of an errno.
+char const *errno_get_desc(int errno);
+#endif
+
+
+
 // Operation not permitted.
 #define EPERM   1
 // No such file or directory.
@@ -226,7 +235,7 @@
 #define ESHUTDOWN       108
 // Too many references: cannot splice.
 #define ETOOMANYREFS    109
-// Connection timed out.
+// Connection (or other operation) timed out.
 #define ETIMEDOUT       110
 // Connection refused.
 #define ECONNREFUSED    111

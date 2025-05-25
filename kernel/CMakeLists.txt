@@ -157,6 +157,7 @@ set(kernel_src
     ${CMAKE_CURRENT_LIST_DIR}/src/scheduler/waitlist.c
     
     ${CMAKE_CURRENT_LIST_DIR}/src/cache.c
+    ${CMAKE_CURRENT_LIST_DIR}/src/errno.c
     ${CMAKE_CURRENT_LIST_DIR}/src/housekeeping.c
     ${CMAKE_CURRENT_LIST_DIR}/src/interrupt.c
     ${CMAKE_CURRENT_LIST_DIR}/src/main.c
