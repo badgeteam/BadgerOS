@@ -39,12 +39,12 @@ static bool riscv_plic_match(device_info_t *info) {
 
 static errno_t riscv_plic_add(device_t *device) {
     if (device->info.addrs_len != 1 || device->info.addrs[0].type != DEV_ATYPE_MMIO) {
-        return (errno_t){-ENOTSUP};
+        return -ENOTSUP;
     }
     for (size_t i = 0; i < device->irq_children_len; i++) {
         riscv_plic_enable_irq_in(device, i, false);
     }
-    return (errno_t){0};
+    return 0;
 }
 
 static void riscv_plic_remove(device_t *device) {
@@ -60,7 +60,7 @@ static void riscv_plic_interrupt(device_t *device, irqpin_t pin) {
 }
 
 static errno_t riscv_plic_enable_irq_out(device_t *device, irqpin_t pin, bool enable) {
-    return (errno_t){-ENOTSUP};
+    return -ENOTSUP;
 }
 
 static errno_t riscv_plic_enable_irq_in(device_t *device, irqpin_t pin, bool enable) {
@@ -72,7 +72,7 @@ static errno_t riscv_plic_enable_irq_in(device_t *device, irqpin_t pin, bool ena
     } else {
         REG_CLEAR_BIT(PLIC_ENABLE_OFF(ctx_no) + pin / 32 * 4 + vaddr, pin % 32);
     }
-    return (errno_t){-ENOTSUP};
+    return -ENOTSUP;
 }
 
 static void riscv_plic_cascade_enable(device_t *device, irqpin_t irq_in_pin) {

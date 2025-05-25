@@ -48,7 +48,7 @@ errno_t device_block_write_bytes(device_block_t *device, uint64_t offset, uint64
             device->block_count,
             device->block_size
         );
-        return (errno_t){-EINVAL};
+        return -EINVAL;
     }
 
     mutex_acquire_shared(&device->base.driver_mtx, TIMESTAMP_US_MAX);
@@ -80,7 +80,7 @@ errno_t device_block_write_bytes(device_block_t *device, uint64_t offset, uint64
             // Try to cache a read from the device, then write.
             if (!cache_lock(&device->cache, i, TIMESTAMP_US_MAX)) {
                 mutex_release_shared(&device->base.driver_mtx);
-                return (errno_t){-EINVAL};
+                return -EINVAL;
             }
 
             cache_data_t existing = cache_get_unsafe(&device->cache, i);
@@ -94,7 +94,7 @@ errno_t device_block_write_bytes(device_block_t *device, uint64_t offset, uint64
                 void *raw_buf = malloc(device->block_size);
                 if (!raw_buf) {
                     mutex_release_shared(&device->base.driver_mtx);
-                    return (errno_t){-ENOMEM};
+                    return -ENOMEM;
                 }
                 cache_data_t new_ent = {
                     .valid    = true,
@@ -104,7 +104,7 @@ errno_t device_block_write_bytes(device_block_t *device, uint64_t offset, uint64
                 if (!new_ent.buffer) {
                     free(raw_buf);
                     mutex_release_shared(&device->base.driver_mtx);
-                    return (errno_t){-ENOMEM};
+                    return -ENOMEM;
                 }
 
                 // Read the data and copy into it.
@@ -115,7 +115,7 @@ errno_t device_block_write_bytes(device_block_t *device, uint64_t offset, uint64
                 if (!cache_set_unsafe(&device->cache, i, new_ent)) {
                     rc_delete(new_ent.buffer);
                     mutex_release_shared(&device->base.driver_mtx);
-                    return (errno_t){-ENOMEM};
+                    return -ENOMEM;
                 }
             }
 
@@ -128,7 +128,7 @@ errno_t device_block_write_bytes(device_block_t *device, uint64_t offset, uint64
     }
 
     mutex_release_shared(&device->base.driver_mtx);
-    return (errno_t){0};
+    return 0;
 }
 
 // Read block device bytes.
@@ -144,7 +144,7 @@ errno_t device_block_read_bytes(device_block_t *device, uint64_t offset, uint64_
             device->block_count,
             device->block_size
         );
-        return (errno_t){-EINVAL};
+        return -EINVAL;
     }
 
     mutex_acquire_shared(&device->base.driver_mtx, TIMESTAMP_US_MAX);
@@ -180,7 +180,7 @@ errno_t device_block_read_bytes(device_block_t *device, uint64_t offset, uint64_
             // Try to cache a read from the device.
             if (!cache_lock(&device->cache, i, TIMESTAMP_US_MAX)) {
                 mutex_release_shared(&device->base.driver_mtx);
-                return (errno_t){-EINVAL};
+                return -EINVAL;
             }
 
             cache_data_t existing = cache_get_unsafe(&device->cache, i);
@@ -194,7 +194,7 @@ errno_t device_block_read_bytes(device_block_t *device, uint64_t offset, uint64_
                 void *raw_buf = malloc(device->block_size);
                 if (!raw_buf) {
                     mutex_release_shared(&device->base.driver_mtx);
-                    return (errno_t){-ENOMEM};
+                    return -ENOMEM;
                 }
                 cache_data_t new_ent = {
                     .valid    = true,
@@ -204,7 +204,7 @@ errno_t device_block_read_bytes(device_block_t *device, uint64_t offset, uint64_
                 if (!new_ent.buffer) {
                     free(raw_buf);
                     mutex_release_shared(&device->base.driver_mtx);
-                    return (errno_t){-ENOMEM};
+                    return -ENOMEM;
                 }
 
                 // Read the data and copy it out.
@@ -226,7 +226,7 @@ errno_t device_block_read_bytes(device_block_t *device, uint64_t offset, uint64_
     }
 
     mutex_release_shared(&device->base.driver_mtx);
-    return (errno_t){0};
+    return 0;
 }
 
 // Erase block device bytes.
@@ -240,7 +240,7 @@ errno_t device_block_erase_bytes(device_block_t *device, uint64_t offset, uint64
             device->block_count,
             device->block_size
         );
-        return (errno_t){-EINVAL};
+        return -EINVAL;
     }
 
     mutex_acquire_shared(&device->base.driver_mtx, TIMESTAMP_US_MAX);
@@ -272,14 +272,14 @@ errno_t device_block_erase_bytes(device_block_t *device, uint64_t offset, uint64
             // Try to cache a read from the device, then write.
             if (!cache_lock(&device->cache, i, TIMESTAMP_US_MAX)) {
                 mutex_release_shared(&device->base.driver_mtx);
-                return (errno_t){-EINVAL};
+                return -EINVAL;
             }
 
             // Make new entry.
             void *raw_buf = malloc(device->block_size);
             if (!raw_buf) {
                 mutex_release_shared(&device->base.driver_mtx);
-                return (errno_t){-ENOMEM};
+                return -ENOMEM;
             }
             cache_data_t new_ent = {
                 .valid    = true,
@@ -289,7 +289,7 @@ errno_t device_block_erase_bytes(device_block_t *device, uint64_t offset, uint64
             if (!new_ent.buffer) {
                 free(raw_buf);
                 mutex_release_shared(&device->base.driver_mtx);
-                return (errno_t){-ENOMEM};
+                return -ENOMEM;
             }
 
             // Fill the new buffer with the erase value.
@@ -299,7 +299,7 @@ errno_t device_block_erase_bytes(device_block_t *device, uint64_t offset, uint64
             if (!cache_set_unsafe(&device->cache, i, new_ent)) {
                 rc_delete(new_ent.buffer);
                 mutex_release_shared(&device->base.driver_mtx);
-                return (errno_t){-ENOMEM};
+                return -ENOMEM;
             }
 
             cache_unlock(&device->cache, i);
@@ -311,7 +311,7 @@ errno_t device_block_erase_bytes(device_block_t *device, uint64_t offset, uint64
     }
 
     mutex_release_shared(&device->base.driver_mtx);
-    return (errno_t){0};
+    return 0;
 }
 
 
@@ -324,11 +324,11 @@ errno_t device_block_sync_all(device_block_t *device, bool flush) {
 static errno_t device_block_sync_block(device_block_t *device, uint64_t block, bool flush) {
     if (block > device->block_count) {
         logkf(LOG_WARN, "OOB block device sync ignored; syncing at 0x%{u64;x}", block * device->block_size);
-        return (errno_t){0};
+        return 0;
     }
 
     if (!cache_lock(&device->cache, block, TIMESTAMP_US_MAX)) {
-        return (errno_t){-EINVAL};
+        return -EINVAL;
     }
 
     driver_block_t const *driver = (void *)device->base.driver;
@@ -336,13 +336,13 @@ static errno_t device_block_sync_block(device_block_t *device, uint64_t block, b
     if (!ent.valid) {
         // No data; no need to sync.
         cache_unlock_remove(&device->cache, block);
-        return (errno_t){0};
+        return 0;
     }
 
-    errno_t res = (errno_t){0};
+    errno_t res = 0;
     if (ent.is_dirty) {
         res = driver->write_blocks(device, block, 1, ent.buffer->data);
-        if (res.errno < 0) {
+        if (res < 0) {
             logkf(
                 LOG_WARN,
                 "Block device sync failed at 0x%{u64;x}; write data remains cached",
@@ -352,10 +352,10 @@ static errno_t device_block_sync_block(device_block_t *device, uint64_t block, b
     }
     rc_delete(ent.buffer);
 
-    if (flush && res.errno >= 0) {
+    if (flush && res >= 0) {
         cache_unlock_remove(&device->cache, block);
     } else {
-        if (res.errno >= 0) {
+        if (res >= 0) {
             cache_mark_clean_unsafe(&device->cache, block);
         }
         cache_unlock(&device->cache, block);
@@ -369,17 +369,17 @@ errno_t device_block_sync_blocks(device_block_t *device, uint64_t start, uint64_
     mutex_acquire_shared(&device->base.driver_mtx, TIMESTAMP_US_MAX);
     if (!device->base.driver) {
         mutex_release_shared(&device->base.driver_mtx);
-        return (errno_t){-ENOENT};
+        return -ENOENT;
     }
     for (; count; start++, count--) {
         errno_t res = device_block_sync_block(device, start, flush);
-        if (res.errno < 0) {
+        if (res < 0) {
             mutex_release_shared(&device->base.driver_mtx);
             return res;
         }
     }
     mutex_release_shared(&device->base.driver_mtx);
-    return (errno_t){0};
+    return 0;
 }
 
 // Apply pending changes in a range of bytes.

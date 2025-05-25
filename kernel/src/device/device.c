@@ -172,7 +172,7 @@ static bool device_add_to_driver(device_union_t *device, driver_t const *driver)
 
     dev_class_t dev_class   = device->base.dev_class;
     bool        match_class = (dev_class == DEV_CLASS_UNKNOWN || dev_class == driver->dev_class);
-    if (match_class && driver->match(&device->base.info) && driver->add(&device->base).errno >= 0) {
+    if (match_class && driver->match(&device->base.info) && driver->add(&device->base) >= 0) {
         device->base.dev_class = driver->dev_class;
 
         // Take the irq spinlock around the driver set to guard against partial write of the field during an interrupt.
@@ -228,13 +228,13 @@ static errno_t
     device_link_irq_impl(device_union_t *child, irqpin_t child_pin, device_union_t *parent, irqpin_t parent_pin) {
     // Enfore both devices are in the tree.
     if (!child->base.info.id || !parent->base.info.id) {
-        return (errno_t){-EINVAL};
+        return -EINVAL;
     }
 
     // Create a struct to represent the connection.
     irqconn_t *conn = calloc(1, sizeof(irqconn_t));
     if (!conn) {
-        return (errno_t){-ENOMEM};
+        return -ENOMEM;
     }
     conn->child.device  = &child->base;
     conn->child.pin     = child_pin;
@@ -245,7 +245,7 @@ static errno_t
     dlist_append(&child->base.irq_parents[child_pin], &conn->child.node);
     dlist_append(&parent->base.irq_children[parent_pin], &conn->parent.node);
 
-    return (errno_t){0};
+    return 0;
 }
 
 // Remove a device interrupt link; see `device_link_irq`.
@@ -253,7 +253,7 @@ static errno_t
     device_unlink_irq_impl(device_union_t *child, irqpin_t child_pin, device_union_t *parent, irqpin_t parent_pin) {
     // Enfore both devices are in the tree.
     if (!child->base.info.id || !parent->base.info.id) {
-        return (errno_t){-EINVAL};
+        return -EINVAL;
     }
 
     // Find the interrupt connection.
@@ -274,11 +274,11 @@ static errno_t
             // Free memory.
             free(conn);
 
-            return (errno_t){0};
+            return 0;
         }
     }
 
-    return (errno_t){-ENOENT};
+    return -ENOENT;
 }
 
 
@@ -573,7 +573,7 @@ errno_t device_enable_irq_out(device_t *device, irqpin_t irq_out_pin, bool enabl
     mutex_acquire_shared(&device->driver_mtx, TIMESTAMP_US_MAX);
     errno_t res;
     if (!device->driver) {
-        res = (errno_t){-EFAULT};
+        res = -EFAULT;
     } else {
         res = device->driver->enable_irq_out(device, irq_out_pin, enabled);
     }
@@ -586,10 +586,10 @@ errno_t device_cascade_enable_irq_out(device_t *device, irqpin_t irq_out_pin) {
     mutex_acquire_shared(&device->driver_mtx, TIMESTAMP_US_MAX);
     if (!device->driver || !device->irq_parents[irq_out_pin].len) {
         mutex_release_shared(&device->driver_mtx);
-        return (errno_t){-ENOENT};
+        return -ENOENT;
     }
     errno_t res = device->driver->enable_irq_out(device, irq_out_pin, true);
-    if (res.errno < 0) {
+    if (res < 0) {
         return res;
     }
     dlist_foreach(irqconn_t, conn, child.node, &device->irq_parents[irq_out_pin]) {
@@ -600,7 +600,7 @@ errno_t device_cascade_enable_irq_out(device_t *device, irqpin_t irq_out_pin) {
         parent->driver->cascase_enable_irq(parent, conn->parent.pin);
     }
     mutex_release_shared(&device->driver_mtx);
-    return (errno_t){0};
+    return 0;
 }
 
 // Enable an incoming interrupt.
@@ -608,7 +608,7 @@ errno_t device_enable_irq_in(device_t *device, irqpin_t irq_in_pin, bool enabled
     mutex_acquire_shared(&device->driver_mtx, TIMESTAMP_US_MAX);
     errno_t res;
     if (!device->driver || !device->driver->enable_irq_in) {
-        res = (errno_t){-ENOENT};
+        res = -ENOENT;
     } else {
         res = device->driver->enable_irq_in(device, irq_in_pin, enabled);
     }
@@ -645,7 +645,7 @@ errno_t driver_add(driver_t const *driver) {
     mutex_acquire(&drivers_mtx, TIMESTAMP_US_MAX);
     if (!set_add(&drivers, driver)) {
         mutex_release(&drivers_mtx);
-        return (errno_t){-ENOMEM};
+        return -ENOMEM;
     }
     mutex_release(&drivers_mtx);
 
@@ -658,7 +658,7 @@ errno_t driver_add(driver_t const *driver) {
     }
     mutex_release(&devs_mtx);
 
-    return (errno_t){0};
+    return 0;
 }
 
 // Remove a driver.
@@ -666,7 +666,7 @@ errno_t driver_remove(driver_t const *driver) {
     mutex_acquire(&drivers_mtx, TIMESTAMP_US_MAX);
     if (!set_remove(&drivers, driver)) {
         mutex_release(&drivers_mtx);
-        return (errno_t){-ENOENT};
+        return -ENOENT;
     }
     mutex_release(&drivers_mtx);
 
@@ -680,7 +680,7 @@ errno_t driver_remove(driver_t const *driver) {
         }
     }
 
-    return (errno_t){0};
+    return 0;
 }
 
 

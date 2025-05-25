@@ -22,7 +22,7 @@ bool riscv_intc_match(device_info_t *info) {
 
 errno_t riscv_intc_add(device_t *device) {
     asm("csrwi sie, 0");
-    return (errno_t){0};
+    return 0;
 }
 
 void riscv_intc_remove(device_t *device) {
@@ -45,19 +45,19 @@ void riscv_intc_interrupt(device_t *device, irqpin_t pin) {
 }
 
 errno_t riscv_intc_enable_irq(device_t *device, irqpin_t pin, bool enable) {
-    return (errno_t){-ENOTSUP};
+    return -ENOTSUP;
 }
 
 errno_t riscv_intc_enable_in(device_t *device, irqpin_t pin, bool enable) {
     if (pin == 0 || pin > 32) {
-        return (errno_t){-EINVAL};
+        return -EINVAL;
     }
     if (enable) {
         asm("csrs sie, %0" ::"r"(1 << pin));
     } else {
         asm("csrc sie, %0" ::"r"(1 << pin));
     }
-    return (errno_t){0};
+    return 0;
 }
 
 static void riscv_intc_cascade_enable(device_t *device, irqpin_t irq_in_pin) {
