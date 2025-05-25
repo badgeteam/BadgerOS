@@ -22,7 +22,7 @@ add_custom_command(
     COMMAND mkdir -p ${boot_dir}/boot
     COMMAND cp ${limine_efi} ${boot_dir}/EFI/BOOT/
     COMMAND cp ${limine_boot} ${boot_dir}/boot/
-    COMMAND cp ${CMAKE_BINARY_DIR}/badger-os.elf ${boot_dir}/boot/
+    COMMAND cp ${CMAKE_BINARY_DIR}/badger-os.stripped.elf ${boot_dir}/boot/badger-os.elf
     
     # Making a FAT filesystem image from it.
     COMMAND rm -f ${boot_fatfs}
@@ -30,7 +30,7 @@ add_custom_command(
     COMMAND mformat -i ${boot_fatfs}
     COMMAND mcopy -s -i ${boot_fatfs} ${boot_dir}/* ::/
     
-    DEPENDS badger-os.elf ${limine_efi} ${limine_boot}
+    DEPENDS badger-os.stripped.elf ${limine_efi} ${limine_boot}
 )
 
 # Custom target for building the image.
@@ -58,7 +58,7 @@ if(CONFIG_EMBED_UBOOT)
         COMMAND dd if=${CMAKE_CURRENT_LIST_DIR}/lib/u-boot/spl/u-boot-spl.bin bs=512 seek=34   of=${image_iso} conv=notrunc
         COMMAND dd if=${CMAKE_CURRENT_LIST_DIR}/lib/u-boot/u-boot.itb         bs=512 seek=2082 of=${image_iso} conv=notrunc
         COMMAND dd if=${boot_fatfs}                                           bs=512 seek=4096 of=${image_iso} conv=notrunc
-        DEPENDS badger-os.elf ${boot_fatfs} uboot.target
+        DEPENDS ${boot_fatfs} uboot.target
     )
 elseif("${CONFIG_CPU}" STREQUAL "x86_64")
     # Variant with Limine-BIOS embedded.
@@ -74,7 +74,7 @@ elseif("${CONFIG_CPU}" STREQUAL "x86_64")
         COMMAND dd if=${boot_fatfs} bs=512 seek=34 of=${image_iso} conv=notrunc
         COMMAND make -C ${CMAKE_CURRENT_LIST_DIR}/lib/limine
         COMMAND ${CMAKE_CURRENT_LIST_DIR}/lib/limine/limine bios-install ${image_iso}
-        DEPENDS badger-os.elf ${boot_fatfs}
+        DEPENDS ${boot_fatfs}
     )
 else()
     # Variant without U-boot nor Limine-BIOS embedded.
@@ -88,7 +88,7 @@ else()
                 --new=4:8226:-0 --change-name=4:root --typecode=4:0x8300
                 ${image_iso}
         COMMAND dd if=${boot_fatfs} bs=512 seek=34 of=${image_iso} conv=notrunc
-        DEPENDS badger-os.elf ${boot_fatfs}
+        DEPENDS ${boot_fatfs}
     )
 endif()
 add_custom_target(image.iso.target ALL DEPENDS ${image_iso})

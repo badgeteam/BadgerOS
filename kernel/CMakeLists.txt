@@ -204,7 +204,11 @@ elseif("${CONFIG_CPU}" STREQUAL "riscv64")
     set(rust_target "riscv64imac-unknown-none-elf")
 endif()
 set(rust_lib ${CMAKE_CURRENT_LIST_DIR}/target/${rust_target}/debug/libbadgeros_kernel.a)
-add_custom_target(rust.target ALL cargo +nightly build --target=${rust_target})
+set(ENV{RUSTFLAGS} "-C target-feature=+frame-pointer")
+add_custom_target(
+    rust.target ALL
+    cargo +nightly build -Z build-std=core,alloc --target=${rust_target}
+)
 add_dependencies(${target} rust.target)
 target_link_libraries(${target} PRIVATE ${rust_lib})
 
@@ -221,6 +225,14 @@ target_link_libraries(${target} PRIVATE kbelf badgelib)
 
 # Copy the BadgerOS binary to the output directory.
 install(TARGETS badger-os.elf DESTINATION .)
+add_custom_command(
+    OUTPUT badger-os.stripped.elf
+    ALL
+    COMMAND cp badger-os.elf badger-os.stripped.elf
+    COMMAND ${CONFIG_PREFIX}strip -g badger-os.stripped.elf
+    DEPENDS badger-os.elf
+)
+install(FILES ${CMAKE_BINARY_DIR}/badger-os.stripped.elf DESTINATION .)
 
 # Create a disassembled version for easier debugging.
 add_custom_target(

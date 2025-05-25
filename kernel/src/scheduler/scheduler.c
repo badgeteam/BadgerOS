@@ -852,7 +852,7 @@ void thread_exit(int code) {
 }
 
 // Wait for another thread to exit.
-void thread_join(tid_t tid) {
+int thread_join(tid_t tid) {
     // TODO: This can be done more efficiently.
     while (1) {
         irq_disable();
@@ -860,15 +860,16 @@ void thread_join(tid_t tid) {
         sched_thread_t *thread = find_thread(tid);
         if (thread) {
             if (atomic_load(&thread->flags) & THREAD_EXITED) {
+                int exit_code = thread->exit_code;
                 atomic_fetch_or(&thread->flags, THREAD_DETACHED);
                 spinlock_release_shared(&threads_lock);
                 irq_enable();
-                return;
+                return exit_code;
             }
         } else {
             spinlock_release_shared(&threads_lock);
             irq_enable();
-            return;
+            return 0;
         }
         spinlock_release_shared(&threads_lock);
         // No need to re-enable IRQs because the yield implicitly does so.

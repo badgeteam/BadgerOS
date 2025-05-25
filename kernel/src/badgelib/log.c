@@ -39,6 +39,7 @@ static char const *const term = "\033[0m\n";
 
 
 
+// Print the timestamp and prefix for a log message without locking `log_mtx`.
 void logk_prefix(log_level_t level) {
     if (isvalidlevel(level))
         rawprint(colcode[level]);
@@ -62,6 +63,14 @@ static bool putccb(char const *msg, size_t len, void *cookie) {
 void logk(log_level_t level, char const *msg) {
     bool acq = mutex_acquire(&log_mtx, LOG_MUTEX_TIMEOUT);
     logk_from_isr(level, msg);
+    if (acq)
+        mutex_release(&log_mtx);
+}
+
+// Print an unformatted message.
+void logk_len(log_level_t level, char const *msg, size_t msg_len) {
+    bool acq = mutex_acquire(&log_mtx, LOG_MUTEX_TIMEOUT);
+    logk_len_from_isr(level, msg, msg_len);
     if (acq)
         mutex_release(&log_mtx);
 }
@@ -102,11 +111,16 @@ void logk_hexdump_vaddr(log_level_t level, char const *msg, void const *data, si
 
 // Print an unformatted message.
 void logk_from_isr(log_level_t level, char const *msg) {
+    logk_len_from_isr(level, msg, cstr_length(msg));
+}
+
+// Print an unformatted message from an interrupt.
+// Only use this function in emergencies.
+void logk_len_from_isr(log_level_t level, char const *msg, size_t msg_len) {
     logk_prefix(level);
-    size_t msg_len = cstr_length(msg);
-    if (msg_len >= 2 && msg[msg_len - 2] == '\r' && msg[msg_len - 1] == '\n')
+    if (msg_len >= 2 && msg[msg_len - 2] == '\r' && msg[msg_len - 1] == '\n') {
         msg_len -= 2;
-    if (msg_len && msg[msg_len - 1] == '\n') {
+    } else if (msg_len && msg[msg_len - 1] == '\n') {
         msg_len--;
     }
     rawprint_substr(msg, msg_len);
@@ -136,9 +150,9 @@ void logk_hexdump_from_isr(log_level_t level, char const *msg, void const *data,
 void logk_hexdump_vaddr_from_isr(log_level_t level, char const *msg, void const *data, size_t size, size_t vaddr) {
     logk_prefix(level);
     size_t msg_len = cstr_length(msg);
-    if (msg_len >= 2 && msg[msg_len - 2] == '\r' && msg[msg_len - 1] == '\n')
+    if (msg_len >= 2 && msg[msg_len - 2] == '\r' && msg[msg_len - 1] == '\n') {
         msg_len -= 2;
-    if (msg_len && msg[msg_len - 1] == '\n') {
+    } else if (msg_len && msg[msg_len - 1] == '\n') {
         msg_len--;
     }
     rawprint_substr(msg, msg_len);
