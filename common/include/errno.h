@@ -4,10 +4,27 @@
 #pragma once
 
 #if BADGEROS_KERNEL
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+
 // Get the name of an ERRNO.
 char const *errno_get_name(int errno);
 // Get a brief description of an errno.
 char const *errno_get_desc(int errno);
+// Indicates that a function returns an errno.
+typedef struct {
+    int errno;
+} errno_t;
+// Indicates that a function returns a size_t or errno.
+typedef struct {
+    intptr_t errno;
+} errno_size_t;
+// Indicates that a function returns a pointer or an errno.
+typedef struct {
+    void *ptr;
+    int   errno;
+} errno_ptr_t;
 #endif
 
 
@@ -95,6 +112,8 @@ char const *errno_get_desc(int errno);
 #define ENOTEMPTY   39
 // Too many symbolic links encountered.
 #define ELOOP       40
+// Not supported.
+#define ENOTSUP     41
 // Operation would block.
 #define EWOULDBLOCK EAGAIN
 // No message of desired type.

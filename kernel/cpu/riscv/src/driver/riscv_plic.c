@@ -24,12 +24,12 @@
         REG_WRITE(atmp, REG_READ(atmp) & ~mask);                                                                       \
     })
 
-static bool riscv_plic_match(device_info_t *device);
-static bool riscv_plic_add(device_t *device);
-static void riscv_plic_remove(device_t *device);
-static void riscv_plic_interrupt(device_t *device, irqpin_t pin);
-static bool riscv_plic_enable_irq_out(device_t *device, irqpin_t pin, bool enable);
-static bool riscv_plic_enable_irq_in(device_t *device, irqpin_t pin, bool enable);
+static bool    riscv_plic_match(device_info_t *device);
+static errno_t riscv_plic_add(device_t *device);
+static void    riscv_plic_remove(device_t *device);
+static void    riscv_plic_interrupt(device_t *device, irqpin_t pin);
+static errno_t riscv_plic_enable_irq_out(device_t *device, irqpin_t pin, bool enable);
+static errno_t riscv_plic_enable_irq_in(device_t *device, irqpin_t pin, bool enable);
 
 
 
@@ -37,14 +37,14 @@ static bool riscv_plic_match(device_info_t *info) {
     return device_test_dtb_compat(info, 1, (char const *const[]){"riscv,plic0", "sifive,plic-1.0.0"});
 }
 
-static bool riscv_plic_add(device_t *device) {
+static errno_t riscv_plic_add(device_t *device) {
     if (device->info.addrs_len != 1 || device->info.addrs[0].type != DEV_ATYPE_MMIO) {
-        return false;
+        return (errno_t){-ENOTSUP};
     }
     for (size_t i = 0; i < device->irq_children_len; i++) {
         riscv_plic_enable_irq_in(device, i, false);
     }
-    return true;
+    return (errno_t){0};
 }
 
 static void riscv_plic_remove(device_t *device) {
@@ -59,11 +59,11 @@ static void riscv_plic_interrupt(device_t *device, irqpin_t pin) {
     }
 }
 
-static bool riscv_plic_enable_irq_out(device_t *device, irqpin_t pin, bool enable) {
-    return false;
+static errno_t riscv_plic_enable_irq_out(device_t *device, irqpin_t pin, bool enable) {
+    return (errno_t){-ENOTSUP};
 }
 
-static bool riscv_plic_enable_irq_in(device_t *device, irqpin_t pin, bool enable) {
+static errno_t riscv_plic_enable_irq_in(device_t *device, irqpin_t pin, bool enable) {
     size_t   vaddr  = device->info.addrs[0].mmio.vaddr;
     // TODO: Figure out content numbers.
     uint32_t ctx_no = 0;
@@ -72,7 +72,7 @@ static bool riscv_plic_enable_irq_in(device_t *device, irqpin_t pin, bool enable
     } else {
         REG_CLEAR_BIT(PLIC_ENABLE_OFF(ctx_no) + pin / 32 * 4 + vaddr, pin % 32);
     }
-    return false;
+    return (errno_t){-ENOTSUP};
 }
 
 static void riscv_plic_cascade_enable(device_t *device, irqpin_t irq_in_pin) {

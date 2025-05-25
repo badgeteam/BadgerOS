@@ -8,6 +8,7 @@
 #include "device/dev_addr.h"
 #include "device/dev_class.h"
 #include "device/dtb/dtb.h"
+#include "errno.h"
 #include "filesystem.h"
 #include "mutex.h"
 #include "set.h"
@@ -107,7 +108,7 @@ struct driver {
     // Try to match this driver against a certain device.
     bool (*match)(device_info_t *info);
     // Register a new device to this driver.
-    bool (*add)(device_t *device);
+    errno_t (*add)(device_t *device);
     // Remove a device from this driver.
     void (*remove)(device_t *device);
     // Device interrupt handler; also responsible for any potential forwarding of interrupts.
@@ -115,10 +116,10 @@ struct driver {
     void (*interrupt)(device_t *device, irqpin_t irq_pin);
     // Enable a certain interrupt output.
     // Can be called with interrupts disabled.
-    bool (*enable_irq_out)(device_t *device, irqpin_t irq_pin, bool enable);
+    errno_t (*enable_irq_out)(device_t *device, irqpin_t irq_pin, bool enable);
     // [optional] Enable an incoming interrupt.
     // Can be called with interrupts disabled.
-    bool (*enable_irq_in)(device_t *device, irqpin_t irq_in_pin, bool enabled);
+    errno_t (*enable_irq_in)(device_t *device, irqpin_t irq_in_pin, bool enabled);
     // [optional] Cascade-enable interrupts from some input pin.
     // Can be called with interrupts disabled.
     void (*cascase_enable_irq)(device_t *device, irqpin_t irq_in_pin);
@@ -183,22 +184,22 @@ set_t device_get_filtered(dev_filter_t const *filter);
 // Add a device interrupt link; child is the device that generates the interrupt, parent the one that receives it.
 // Any device interrupt pin can be connected to any number of opposite pins, but the resulting graph must be acyclic.
 // If a device has incoming interrupts then it must be an interrupt controller and only such drivers can match.
-bool device_link_irq(device_t *child, irqpin_t child_pin, device_t *parent, irqpin_t parent_pin);
+errno_t device_link_irq(device_t *child, irqpin_t child_pin, device_t *parent, irqpin_t parent_pin);
 // Remove a device interrupt link; see `device_link_irq`.
-bool device_unlink_irq(device_t *child, irqpin_t child_pin, device_t *parent, irqpin_t parent_pin);
+errno_t device_unlink_irq(device_t *child, irqpin_t child_pin, device_t *parent, irqpin_t parent_pin);
 // Enable an outgoing interrupt.
-bool device_enable_irq_out(device_t *device, irqpin_t irq_out_pin, bool enabled);
+errno_t device_enable_irq_out(device_t *device, irqpin_t irq_out_pin, bool enabled);
 // Cascade-enable an interrupt output.
-bool device_cascade_enable_irq_out(device_t *device, irqpin_t irq_out_pin);
+errno_t device_cascade_enable_irq_out(device_t *device, irqpin_t irq_out_pin);
 // Enable an incoming interrupt.
-bool device_enable_irq_in(device_t *device, irqpin_t irq_in_pin, bool enabled);
+errno_t device_enable_irq_in(device_t *device, irqpin_t irq_in_pin, bool enabled);
 // Helper to send an interrupt to all children on a certain pin.
-void device_forward_interrupt(device_t *device, irqpin_t irq_in_pin);
+void    device_forward_interrupt(device_t *device, irqpin_t irq_in_pin);
 
 // Notify of a device interrupt.
 void device_interrupt(device_t *device, irqpin_t irq_pin);
 
 // Register a new driver.
-bool driver_add(driver_t const *driver);
+errno_t driver_add(driver_t const *driver);
 // Remove a driver.
-bool driver_remove(driver_t const *driver);
+errno_t driver_remove(driver_t const *driver);

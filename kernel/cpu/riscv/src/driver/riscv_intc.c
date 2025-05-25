@@ -20,9 +20,9 @@ bool riscv_intc_match(device_info_t *info) {
     return device_test_dtb_compat(info, 1, (char const *const[]){"riscv,cpu-intc"});
 }
 
-bool riscv_intc_add(device_t *device) {
+errno_t riscv_intc_add(device_t *device) {
     asm("csrwi sie, 0");
-    return true;
+    return (errno_t){0};
 }
 
 void riscv_intc_remove(device_t *device) {
@@ -44,20 +44,20 @@ void riscv_intc_interrupt(device_t *device, irqpin_t pin) {
     }
 }
 
-bool riscv_intc_enable_irq(device_t *device, irqpin_t pin, bool enable) {
-    return false;
+errno_t riscv_intc_enable_irq(device_t *device, irqpin_t pin, bool enable) {
+    return (errno_t){-ENOTSUP};
 }
 
-bool riscv_intc_enable_in(device_t *device, irqpin_t pin, bool enable) {
+errno_t riscv_intc_enable_in(device_t *device, irqpin_t pin, bool enable) {
     if (pin == 0 || pin > 32) {
-        return false;
+        return (errno_t){-EINVAL};
     }
     if (enable) {
         asm("csrs sie, %0" ::"r"(1 << pin));
     } else {
         asm("csrc sie, %0" ::"r"(1 << pin));
     }
-    return true;
+    return (errno_t){0};
 }
 
 static void riscv_intc_cascade_enable(device_t *device, irqpin_t irq_in_pin) {

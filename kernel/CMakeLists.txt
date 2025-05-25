@@ -73,7 +73,7 @@ set(common_compiler_flags
     -Wall -Wextra                      # Ramp up warning level.
     -Wno-missing-braces
     -std=gnu11                         # We use the C11 standard
-    -DBADGEROS_KERNEL                  # Tell the code we're building for the kernel
+    -DBADGEROS_KERNEL=1                # Tell the code we're building for the kernel
     -DBADGEROS_MALLOC_DEBUG_LEVEL=2    # Malloc debug level set to WARN
     -DSOFTBIT                          # Turn on our emulated bit operations
     -fno-omit-frame-pointer            # Always use frame pointer

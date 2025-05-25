@@ -114,30 +114,30 @@ bool pcie_generic_match(device_info_t *info) {
     return device_test_dtb_compat(info, 1, (char const *const[]){"pci-host-ecam-generic"});
 }
 
-bool pcie_generic_add_ecam_from_dtb(device_pcictl_t *device) {
+errno_t pcie_generic_add_ecam_from_dtb(device_pcictl_t *device) {
     // Read bus range.
     dtb_prop_t *bus_range = dtb_get_prop(device->base.info.dtb_handle, device->base.info.dtb_node, "bus-range");
     if (bus_range->content_len != 8) {
         logk(LOG_ERROR, "Incorrect bus-range for PCI");
-        return false;
+        return (errno_t){-EINVAL};
     }
     device->bus_start = dtb_prop_read_cell(device->base.info.dtb_handle, bus_range, 0);
     device->bus_end   = dtb_prop_read_cell(device->base.info.dtb_handle, bus_range, 1);
 
     if (!pci_dtb_ranges(device, device->base.info.dtb_handle, device->base.info.dtb_node)) {
-        return false;
+        return (errno_t){-EINVAL};
     }
     if (!pci_dtb_irqmap(device, device->base.info.dtb_handle, device->base.info.dtb_node)) {
         free(device->ranges);
         device->ranges_len = 0;
         device->ranges     = NULL;
-        return false;
+        return (errno_t){-EINVAL};
     }
 
-    return true;
+    return (errno_t){0};
 }
 
-bool pcie_generic_add(device_t *device) {
+errno_t pcie_generic_add(device_t *device) {
     // if (device_test_dtb_compat(&device->info, 1, (char const *const[]){"pci-host-ecam-generic"})) {
     return pcie_generic_add_ecam_from_dtb((device_pcictl_t *)device);
     // }
@@ -150,8 +150,8 @@ void pcie_generic_remove(device_t *device) {
 void pcie_generic_interrupt(device_t *device, irqpin_t pin) {
 }
 
-bool pcie_generic_enable_irq(device_t *device, irqpin_t pin, bool enable) {
-    return false;
+errno_t pcie_generic_enable_irq(device_t *device, irqpin_t pin, bool enable) {
+    return (errno_t){-ENOTSUP};
 }
 
 void pcie_generic_cam_read(device_pcictl_t *device, uint32_t addr, uint32_t len, void *data) {

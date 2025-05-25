@@ -47,6 +47,7 @@ char const *errno_get_name(int errno) {
         case ENOSYS: return "ENOSYS";
         case ENOTEMPTY: return "ENOTEMPTY";
         case ELOOP: return "ELOOP";
+        case ENOTSUP: return "ENOTSUP";
         case ENOMSG: return "ENOMSG";
         case EIDRM: return "EIDRM";
         case ECHRNG: return "ECHRNG";
@@ -185,6 +186,7 @@ char const *errno_get_desc(int errno) {
         case ENOSYS: return "Invalid system call number";
         case ENOTEMPTY: return "Directory not empty";
         case ELOOP: return "Too many symbolic links encountered";
+        case ENOTSUP: return "Not supported";
         case ENOMSG: return "No message of desired type";
         case EIDRM: return "Identifier removed";
         case ECHRNG: return "Channel number out of range";
