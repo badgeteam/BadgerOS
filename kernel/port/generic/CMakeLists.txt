@@ -9,8 +9,8 @@ set(cpu_riscv_enable_sbi_time true)
 set(cpu_riscv_enable_mmu true)
 
 set(port_src
-    ${CMAKE_CURRENT_LIST_DIR}/src/driver/ata/sata_ahci_pcie.c
-    ${CMAKE_CURRENT_LIST_DIR}/src/driver/ata/blkdev_ata.c
+    # ${CMAKE_CURRENT_LIST_DIR}/src/driver/ata/sata_ahci_pcie.c
+    # ${CMAKE_CURRENT_LIST_DIR}/src/driver/ata/blkdev_ata.c
     ${CMAKE_CURRENT_LIST_DIR}/src/driver/pcie.c
     # ${CMAKE_CURRENT_LIST_DIR}/src/memprotect.c
     # ${CMAKE_CURRENT_LIST_DIR}/src/port.c

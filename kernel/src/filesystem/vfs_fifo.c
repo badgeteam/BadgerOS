@@ -137,7 +137,7 @@ static void vfs_fifo_notify(vfs_fifo_obj_t *fifo, bool notify_readers) {
 }
 
 // Handle a file open for a FIFO.
-void vfs_fifo_open(badge_err_t *ec, vfs_fifo_obj_t *fifo, bool nonblock, bool read, bool write) {
+void vfs_fifo_open(vfs_fifo_obj_t *fifo, bool nonblock, bool read, bool write) {
     assert_dev_keep(irq_disable());
 
     // Open would never block if opened as O_RDWR.
@@ -167,7 +167,6 @@ void vfs_fifo_open(badge_err_t *ec, vfs_fifo_obj_t *fifo, bool nonblock, bool re
     vfs_fifo_notify(fifo, false);
 
     irq_enable();
-    badge_err_set_ok(ec);
 }
 
 // Handle a file close for a FIFO.
@@ -182,7 +181,7 @@ void vfs_fifo_close(vfs_fifo_obj_t *fifo, bool had_read, bool had_write) {
 
 // Handle a file read for a FIFO.
 // WARNING: May sporadically return 0 in a blocking multi-read scenario.
-fileoff_t vfs_fifo_read(badge_err_t *ec, vfs_fifo_obj_t *fifo, bool nonblock, uint8_t *readbuf, fileoff_t readlen) {
+fileoff_t vfs_fifo_read(vfs_fifo_obj_t *fifo, bool nonblock, uint8_t *readbuf, fileoff_t readlen) {
     assert_dev_keep(irq_disable());
     if (!nonblock) {
         vfs_fifo_block(fifo, true, false);
@@ -194,12 +193,10 @@ fileoff_t vfs_fifo_read(badge_err_t *ec, vfs_fifo_obj_t *fifo, bool nonblock, ui
     if (fifo->buffer) {
         count = fifo_recv_n(fifo->buffer, readbuf, readlen);
         if (!count && nonblock) {
-            badge_err_set(ec, ELOC_FILESYSTEM, ECAUSE_WOULDBLOCK);
-        } else {
-            badge_err_set_ok(ec);
+            count = -EWOULDBLOCK;
         }
     } else {
-        badge_err_set(ec, ELOC_FILESYSTEM, ECAUSE_WOULDBLOCK);
+        count = -EWOULDBLOCK;
     }
 
     spinlock_release_shared(&fifo->buffer_lock);
@@ -214,12 +211,11 @@ fileoff_t vfs_fifo_read(badge_err_t *ec, vfs_fifo_obj_t *fifo, bool nonblock, ui
 // Handle a file write for a FIFO.
 // Raises ECAUSE_PIPE_CLOSED if `enforce_open` is true and the read end is closed.
 fileoff_t vfs_fifo_write(
-    badge_err_t *ec, vfs_fifo_obj_t *fifo, bool nonblock, bool enforce_open, uint8_t const *writebuf, fileoff_t writelen
+    vfs_fifo_obj_t *fifo, bool nonblock, bool enforce_open, uint8_t const *writebuf, fileoff_t writelen
 ) {
     assert_dev_keep(irq_disable());
     if (enforce_open && !atomic_load(&fifo->read_count)) {
-        badge_err_set(ec, ELOC_FILESYSTEM, ECAUSE_PIPE_CLOSED);
-        return 0;
+        return -EPIPE;
     }
 
     if (!nonblock) {
@@ -232,12 +228,10 @@ fileoff_t vfs_fifo_write(
     if (fifo->buffer) {
         count = fifo_send_n(fifo->buffer, writebuf, writelen);
         if (!count && nonblock) {
-            badge_err_set(ec, ELOC_FILESYSTEM, ECAUSE_WOULDBLOCK);
-        } else {
-            badge_err_set_ok(ec);
+            count = -EWOULDBLOCK;
         }
     } else {
-        badge_err_set(ec, ELOC_FILESYSTEM, ECAUSE_WOULDBLOCK);
+        count = -EWOULDBLOCK;
     }
 
     spinlock_release_shared(&fifo->buffer_lock);

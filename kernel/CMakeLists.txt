@@ -63,7 +63,6 @@ set(common_compiler_flags
     -march=${CONFIG_KISA_SPEC}         # Selects the target CPU.
     -mabi=${CONFIG_KABI_SPEC}          # Selects target ABI
     -nodefaultlibs                     # Do not link any default libraries like libgcc or libc.
-    -O2                                # Optimize the code.
     -ggdb -gdwarf-2                    # Generate debug information in default extended format.
     -Werror=return-type                # Error when a function doesn't return a value, but declares to do so.
     -Werror=implicit-fallthrough
@@ -83,10 +82,12 @@ set(common_compiler_flags
     -fno-exceptions
     -Wno-unused-parameter
 )
-if("${CMAKE_BUILD_TYPE}" MATCHES "Release")
-message("Building in release mode")
+if(CMAKE_BUILD_TYPE STREQUAL "Release")
+    message("Building in release mode")
+    list(APPEND common_compiler_flags -O2)
 else()
-message("Building in debug mode")
+    message("Building in debug mode")
+    list(APPEND common_compiler_flags -O0)
 endif()
 
 # we must pass the same options to GCC and LD when using LTO, as the linker will actually do the codegen
@@ -120,9 +121,6 @@ set(kernel_src
     ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/set.c
     ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/spinlock.c
     
-    ${CMAKE_CURRENT_LIST_DIR}/src/blockdevice/blkdev_ram.c
-    ${CMAKE_CURRENT_LIST_DIR}/src/blockdevice/blockdevice.c
-    
     ${CMAKE_CURRENT_LIST_DIR}/src/bootp/${CONFIG_BOOT_PROTOCOL}.c
     
     ${CMAKE_CURRENT_LIST_DIR}/src/device/builtin_driver/pcie.c
@@ -135,8 +133,9 @@ set(kernel_src
     
     ${CMAKE_CURRENT_LIST_DIR}/src/filesystem/filesystem.c
     ${CMAKE_CURRENT_LIST_DIR}/src/filesystem/syscall_impl.c
-    ${CMAKE_CURRENT_LIST_DIR}/src/filesystem/fs_fat.c
+    # ${CMAKE_CURRENT_LIST_DIR}/src/filesystem/fs_fat.c
     ${CMAKE_CURRENT_LIST_DIR}/src/filesystem/fs_ramfs.c
+    ${CMAKE_CURRENT_LIST_DIR}/src/filesystem/media.c
     ${CMAKE_CURRENT_LIST_DIR}/src/filesystem/vfs_fifo.c
     ${CMAKE_CURRENT_LIST_DIR}/src/filesystem/vfs_internal.c
     ${CMAKE_CURRENT_LIST_DIR}/src/freestanding/int_routines.c

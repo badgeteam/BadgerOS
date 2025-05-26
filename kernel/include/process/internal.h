@@ -33,7 +33,7 @@ process_t *proc_get(pid_t pid);
 // Get the process' flags.
 uint32_t   proc_getflags_raw(process_t *process);
 // Get a handle to the current process, if any.
-process_t *proc_current();
+process_t *proc_current() __attribute__((const));
 
 // Load an executable and start a prepared process.
 void proc_start_raw(badge_err_t *ec, process_t *process);

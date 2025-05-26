@@ -13,9 +13,13 @@ char const *errno_get_name(int errno);
 // Get a brief description of an errno.
 char const *errno_get_desc(int errno);
 
+// Indicates that a function returns a boolean or an -errno.
+typedef int      errno_bool_t;
 // Indicates that a function returns an -errno.
 typedef int      errno_t;
-// Indicates that a function returns a size_t or -errno.
+// Indicates that a function returns an -errno.
+typedef int64_t  errno64_t;
+// Indicates that a function returns a size_t or an -errno.
 typedef intptr_t errno_size_t;
 // Indicates that a function returns a pointer or an -errno.
 typedef struct {

@@ -19,7 +19,18 @@ typedef struct devfile_vtable devfile_vtable_t;
 // Device special file data.
 typedef struct devfile        devfile_t;
 
-#include "blockdevice.h"
+// Indicates that a function returns either a `vfs_file_obj_t *` or an -errno.
+typedef struct {
+    int             errno;
+    vfs_file_obj_t *fobj;
+} errno_fobj_t;
+
+// Indicates that a function returns either a `vfs_file_desc_t *` or an -errno.
+typedef struct {
+    int              errno;
+    vfs_file_desc_t *fd;
+} errno_fd_t;
+
 #include "filesystem.h"
 #include "filesystem/vfs_vtable.h"
 #include "mutex.h"
@@ -42,7 +53,7 @@ struct vfs_file_obj {
     inode_t          inode;
     // Link count (how many names reference this inode).
     // When 0 and after the last file object is closed, the file is deleted.
-    blksize_t        links;
+    uint32_t         links;
     // Pointer to the VFS on which this file exists.
     vfs_t           *vfs;
     // Handle mutex for concurrency.
@@ -90,7 +101,7 @@ struct vfs {
     // Read-only flag.
     bool               readonly;
     // Associated block device.
-    blkdev_t          *media;
+    fs_media_t        *media;
     // Filesystem type.
     fs_driver_t const *driver;
     // Inode number given to the root directory.
@@ -106,8 +117,8 @@ struct vfs {
 };
 
 // Identify whether a block device contains a this filesystem.
-// Returns false on error.
-typedef bool (*vfs_detect_t)(badge_err_t *ec, blkdev_t *dev);
+// Returns 1 if detected, 0 if not, -errno on error.
+typedef errno_t (*vfs_detect_t)(fs_media_t *media);
 
 // Filesystem implementation info.
 struct fs_driver {
@@ -126,19 +137,17 @@ struct devfile_vtable {
     // File is seekable.
     bool seekable;
     // [optional] File descriptor opened.
-    void (*open_fd)(badge_err_t *ec, void *cookie, vfs_file_desc_t *desc);
+    errno_t (*open_fd)(void *cookie, vfs_file_desc_t *desc);
     // [optional] File descriptor closed.
-    void (*close_fd)(void *cookie, vfs_file_desc_t *desc);
+    errno_t (*close_fd)(void *cookie, vfs_file_desc_t *desc);
     // [optional] File object opened.
-    void (*open_obj)(badge_err_t *ec, void *cookie, vfs_file_obj_t *fobj);
+    errno_t (*open_obj)(void *cookie, vfs_file_obj_t *fobj);
     // [optional] File object opened.
-    void (*close_obj)(void *cookie, vfs_file_obj_t *fobj);
+    errno_t (*close_obj)(void *cookie, vfs_file_obj_t *fobj);
     // File read.
-    fileoff_t (*read)(badge_err_t *ec, void *cookie, vfs_file_obj_t *fobj, fileoff_t pos, fileoff_t len, void *data);
+    fileoff_t (*read)(void *cookie, vfs_file_obj_t *fobj, fileoff_t pos, fileoff_t len, void *data);
     // File write.
-    fileoff_t (*write)(
-        badge_err_t *ec, void *cookie, vfs_file_obj_t *fobj, fileoff_t pos, fileoff_t len, void const *data
-    );
+    fileoff_t (*write)(void *cookie, vfs_file_obj_t *fobj, fileoff_t pos, fileoff_t len, void const *data);
 };
 
 // Device special file data.

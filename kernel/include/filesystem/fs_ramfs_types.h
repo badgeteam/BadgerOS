@@ -75,8 +75,4 @@ typedef struct {
     bool             *inode_usage;
     // Number of allocated inodes.
     size_t            inode_list_len;
-    // THE RAMFS mutex.
-    // Acquired shared for all read-only operations.
-    // Acquired exclusive for any write operation.
-    mutex_t           mtx;
 } fs_ramfs_t;

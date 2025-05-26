@@ -3,7 +3,6 @@
 
 #include "assertions.h"
 #include "badge_strings.h"
-#include "blockdevice/blkdev_ram.h"
 #include "bootp.h"
 #include "cpulocal.h"
 #include "filesystem.h"
@@ -153,40 +152,41 @@ void dummy_print(int indent, void *ptr) {
 static void dumpdir(file_t at, char const *path, int indent) {
     if (cstr_equals(path, ".") || cstr_equals(path, ".."))
         return;
-    file_t fd = fs_dir_open(NULL, at, path, cstr_length(path), 0);
+    file_t fd = fs_dir_open(at, path, cstr_length(path), 0);
     for (int i = 0; i < indent; i++) rawprint("  ");
     rawprint(path);
     rawputc('\n');
     if (!fd)
         return;
-    dirent_list_t list = fs_dir_read(NULL, fd);
-    dirent_t     *ent  = list.mem;
-    for (size_t i = 0; i < list.ent_count; i++) {
-        dumpdir(at, ent->name, indent + 1);
-        ent = (dirent_t *)((size_t)ent + ent->record_len);
+    errno_dirent_list_t list = fs_dir_read(fd);
+    if (list.errno >= 0) {
+        dirent_t *ent = list.list.mem;
+        for (size_t i = 0; i < list.list.ent_count; i++) {
+            dumpdir(at, ent->name, indent + 1);
+            ent = (dirent_t *)((size_t)ent + ent->record_len);
+        }
+        free(list.list.mem);
     }
-    free(list.mem);
-    fs_dir_close(NULL, fd);
+    fs_dir_close(fd);
 }
 
 // After basic runtime initialization, the booting CPU core continues here.
 // This finishes the initialization of all kernel systems, resources and services.
 // When finished, the non-booting CPUs will be started (method and entrypoints to be determined).
 static void kernel_init() {
-    badge_err_t ec = {0};
-
     // Memory protection initialization.
     memprotect_init();
     // Full hardware initialization.
     bootp_full_init();
 
     // Temporary filesystem image.
-    fs_mount(&ec, "ramfs", NULL, FILE_NONE, "/", 1, 0);
-    badge_err_assert_always(&ec);
-    fs_mkdir(&ec, FILE_NONE, "/dev", 4);
-    badge_err_assert_always(&ec);
-    fs_mount(&ec, "devtmpfs", NULL, FILE_NONE, "/dev", 4, 0);
-    badge_err_assert_always(&ec);
+    errno_t res;
+    res = fs_mount("ramfs", NULL, FILE_NONE, "/", 1, 0);
+    assert_always(res >= 0);
+    res = fs_mkdir(FILE_NONE, "/dev", 4);
+    assert_always(res >= 0);
+    res = fs_mount("devtmpfs", NULL, FILE_NONE, "/dev", 4, 0);
+    assert_always(res >= 0);
     init_ramfs();
 
     dumpdir(-1, "/", 0);

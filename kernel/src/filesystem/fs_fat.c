@@ -150,7 +150,7 @@ static void fat_demangle_name(char const mangled[11], uint8_t attr2, char *out, 
 }
 
 // Read a FAT entry and translate into the 32-bit format.
-static uint32_t read_fat_ent(badge_err_t *ec, vfs_t *vfs, uint32_t index) {
+static uint32_t read_fat_ent(vfs_t *vfs, uint32_t index) {
     // Upper 4 bits are ignored as per FAT spec.
     index &= 0x0fffffff;
 
@@ -161,7 +161,7 @@ static uint32_t read_fat_ent(badge_err_t *ec, vfs_t *vfs, uint32_t index) {
             mutex_acquire_shared(&FATFS(vfs).fat12_mutex, TIMESTAMP_US_MAX);
             // Read FAT12 entry.
             uint8_t raw[2];
-            blkdev_read_bytes(ec, vfs->media, base + index * 3 / 2, raw, 2);
+            blkdev_read_bytes(vfs->media, base + index * 3 / 2, raw, 2);
             // Convert into number.
             uint32_t ent;
             if (!(index & 1)) {
@@ -180,7 +180,7 @@ static uint32_t read_fat_ent(badge_err_t *ec, vfs_t *vfs, uint32_t index) {
         case FAT16: {
             // Read FAT16 entry.
             uint8_t raw[2];
-            blkdev_read_bytes(ec, vfs->media, base + 2 * index, raw, 2);
+            blkdev_read_bytes(vfs->media, base + 2 * index, raw, 2);
             // Convert into number.
             uint32_t ent = raw[0] | (raw[1] << 8);
             // Adjust value.
@@ -193,7 +193,7 @@ static uint32_t read_fat_ent(badge_err_t *ec, vfs_t *vfs, uint32_t index) {
         case FAT32: {
             // Read FAT32 entry.
             uint8_t raw[4];
-            blkdev_read_bytes(ec, vfs->media, base + 4 * index, raw, 4);
+            blkdev_read_bytes(vfs->media, base + 4 * index, raw, 4);
             // Convert into number.
             uint32_t ent = raw[0] | (raw[1] << 8) | (raw[2] << 16) | (raw[3] << 24);
             return ent & 0x0fffffff;
@@ -204,11 +204,9 @@ static uint32_t read_fat_ent(badge_err_t *ec, vfs_t *vfs, uint32_t index) {
 }
 
 // Write a FAT entry and translate into the filesystem's format.
-static void write_fat_ent(badge_err_t *ec, vfs_t *vfs, uint32_t index, uint32_t entry) {
-    badge_err_t ec0  = {0};
-    ec               = ec ?: &ec0;
-    blksize_t base   = FATFS(vfs).fat_sector + FATFS(vfs).active_fat * FATFS(vfs).sectors_per_fat;
-    base            *= FATFS(vfs).bytes_per_sector;
+static void write_fat_ent(vfs_t *vfs, uint32_t index, uint32_t entry) {
+    blksize_t base  = FATFS(vfs).fat_sector + FATFS(vfs).active_fat * FATFS(vfs).sectors_per_fat;
+    base           *= FATFS(vfs).bytes_per_sector;
     switch (FATFS(vfs).type) {
         case FAT12: {
             mutex_acquire(&FATFS(vfs).fat12_mutex, TIMESTAMP_US_MAX);
@@ -218,7 +216,7 @@ static void write_fat_ent(badge_err_t *ec, vfs_t *vfs, uint32_t index, uint32_t 
 
             // Read existing data.
             uint8_t raw[2];
-            blkdev_read_bytes(ec, vfs->media, base + index * 3 / 2, raw, 2);
+            blkdev_read_bytes(vfs->media, base + index * 3 / 2, raw, 2);
             if (!badge_err_is_ok(ec)) {
                 mutex_release(&FATFS(vfs).fat12_mutex);
                 return;
@@ -234,7 +232,7 @@ static void write_fat_ent(badge_err_t *ec, vfs_t *vfs, uint32_t index, uint32_t 
             }
 
             // Write back.
-            blkdev_write_bytes(ec, vfs->media, base + index * 3 / 2, raw, 2);
+            blkdev_write_bytes(vfs->media, base + index * 3 / 2, raw, 2);
             mutex_release(&FATFS(vfs).fat12_mutex);
         } break;
 
@@ -247,13 +245,13 @@ static void write_fat_ent(badge_err_t *ec, vfs_t *vfs, uint32_t index, uint32_t 
             uint8_t raw[2] = {entry & 0xff, entry >> 8};
 
             // Write new entry.
-            blkdev_write_bytes(ec, vfs->media, base + 2 * index, raw, 2);
+            blkdev_write_bytes(vfs->media, base + 2 * index, raw, 2);
         } break;
 
         case FAT32: {
             // Convert to byte array.
             uint8_t raw[4];
-            blkdev_read_bytes(ec, vfs->media, base + 4 * index, raw, 1);
+            blkdev_read_bytes(vfs->media, base + 4 * index, raw, 1);
             if (!badge_err_is_ok(ec)) {
                 return;
             }
@@ -264,7 +262,7 @@ static void write_fat_ent(badge_err_t *ec, vfs_t *vfs, uint32_t index, uint32_t 
             raw[3] = (raw[3] & 0xf0) | ((entry >> 24) & 0x0f);
 
             // Write new entry.
-            blkdev_write_bytes(ec, vfs->media, base + 4 * index, raw, 4);
+            blkdev_write_bytes(vfs->media, base + 4 * index, raw, 4);
         } break;
 
         default: __builtin_unreachable();
@@ -321,28 +319,20 @@ static void free_cluster(vfs_t *vfs, uint32_t cluster) {
 
 // Find a directory entry by name.
 static bool find_fat_dirent(
-    badge_err_t    *ec,
-    vfs_t          *vfs,
-    vfs_file_obj_t *dir,
-    char const     *name,
-    size_t          name_len,
-    fat_dirent_t   *ent,
-    uint32_t       *ent_no_out
+    vfs_t *vfs, vfs_file_obj_t *dir, char const *name, size_t name_len, fat_dirent_t *ent, uint32_t *ent_no_out
 ) {
-    badge_err_t ec0  = {0};
-    ec               = ec ?: &ec0;
     fileoff_t offset = 0;
 
     // TODO: LFN support.
     char    mangled[11];
     uint8_t attr2 = 0;
     if (!fat_mangle_name(name, name_len, mangled, &attr2, false)) {
-        badge_err_set(ec, ELOC_FILESYSTEM, ECAUSE_PARAM);
+        badge_err_set(ELOC_FILESYSTEM, ECAUSE_PARAM);
         return false;
     }
 
     while (offset < dir->size) {
-        fs_fat_file_read(ec, vfs, dir, offset, (void *)ent, sizeof(fat_dirent_t));
+        fs_fat_file_read(vfs, dir, offset, (void *)ent, sizeof(fat_dirent_t));
         if (ent->name[0] == 0) {
             return false;
         }
@@ -357,7 +347,7 @@ static bool find_fat_dirent(
 }
 
 // Free a chain of clusters.
-static void free_cluster_chain(badge_err_t *ec, vfs_t *vfs, uint32_t cluster) {
+static void free_cluster_chain(vfs_t *vfs, uint32_t cluster) {
     badge_err_t ec0 = {0};
     ec              = ec ?: &ec0;
 
@@ -371,26 +361,26 @@ static void free_cluster_chain(badge_err_t *ec, vfs_t *vfs, uint32_t cluster) {
     while (cluster != FS_FAT_FAT_EOF) {
         if (cluster < 2 || cluster >= FATFS(vfs).cluster_count) {
             logkf(LOG_ERROR, "Cluster %{u32;d} out of range (2-%{u32;d})", cluster, FATFS(vfs).cluster_count);
-            badge_err_set(ec, ELOC_FILESYSTEM, ECAUSE_IOERR);
+            badge_err_set(ELOC_FILESYSTEM, ECAUSE_IOERR);
             return;
         }
 
         // Erase all blocks in the current cluster.
         for (uint32_t i = 0; i < blocks_per_cluster; i++) {
-            blkdev_erase(ec, vfs->media, data_block + (cluster - 2) * blocks_per_cluster + i);
+            blkdev_erase(vfs->media, data_block + (cluster - 2) * blocks_per_cluster + i);
             if (!badge_err_is_ok(ec)) {
                 return;
             }
         }
 
         // Get next cluster index.
-        uint32_t next = read_fat_ent(ec, vfs, cluster);
+        uint32_t next = read_fat_ent(vfs, cluster);
         if (!badge_err_is_ok(ec)) {
             return;
         }
 
         // Mark the cluster as free.
-        write_fat_ent(ec, vfs, cluster, 0);
+        write_fat_ent(vfs, cluster, 0);
         if (!badge_err_is_ok(ec)) {
             return;
         }
@@ -400,7 +390,7 @@ static void free_cluster_chain(badge_err_t *ec, vfs_t *vfs, uint32_t cluster) {
 }
 
 // Read the FAT starting at a certain cluster.
-static void read_cluster_chain(badge_err_t *ec, vfs_t *vfs, vfs_file_obj_t *file, uint32_t cluster) {
+static void read_cluster_chain(vfs_t *vfs, vfs_file_obj_t *file, uint32_t cluster) {
     badge_err_t ec0 = {0};
     ec              = ec ?: &ec0;
     while (true) {
@@ -418,12 +408,12 @@ static void read_cluster_chain(badge_err_t *ec, vfs_t *vfs, vfs_file_obj_t *file
             FATFILE(file).clusters     = NULL;
             FATFILE(file).clusters_len = 0;
             FATFILE(file).clusters_cap = 0;
-            badge_err_set(ec, ELOC_FILESYSTEM, ECAUSE_NOMEM);
+            badge_err_set(ELOC_FILESYSTEM, ECAUSE_NOMEM);
             return;
         }
 
         // Get the next cluster.
-        uint32_t next = read_fat_ent(ec, vfs, cluster);
+        uint32_t next = read_fat_ent(vfs, cluster);
         if (!badge_err_is_ok(ec) || FS_FAT_IS_FAT_EOF(next)) {
             return;
         }
@@ -432,7 +422,7 @@ static void read_cluster_chain(badge_err_t *ec, vfs_t *vfs, vfs_file_obj_t *file
         // TODO: This can probably be done faster.
         for (size_t i = 0; i < FATFILE(file).clusters_len; i++) {
             if (FATFILE(file).clusters[i] == next) {
-                badge_err_set(ec, ELOC_FILESYSTEM, ECAUSE_IOERR);
+                badge_err_set(ELOC_FILESYSTEM, ECAUSE_IOERR);
                 return;
             }
         }
@@ -446,30 +436,29 @@ static void read_cluster_chain(badge_err_t *ec, vfs_t *vfs, vfs_file_obj_t *file
 /* ==== VFS interface ==== */
 
 // Try to mount a FAT filesystem.
-bool fs_fat_mount(badge_err_t *ec, vfs_t *vfs) {
+bool fs_fat_mount(vfs_t *vfs) {
     // Do FAT filesystem sanity checks.
-    if (!fs_fat_detect(ec, vfs->media)) {
+    if (!fs_fat_detect(vfs->media)) {
         if (badge_err_is_ok(ec)) {
-            badge_err_set(ec, ELOC_FILESYSTEM, ECAUSE_FORMAT);
+            badge_err_set(ELOC_FILESYSTEM, ECAUSE_FORMAT);
         }
         return false;
     }
 
     vfs->cookie = calloc(1, sizeof(fs_fat_t));
     if (!vfs->cookie) {
-        badge_err_set(ec, ELOC_FILESYSTEM, ECAUSE_NOMEM);
+        badge_err_set(ELOC_FILESYSTEM, ECAUSE_NOMEM);
         return false;
     }
 
     fat_bpb_t bpb;
-    blkdev_read_partial(ec, vfs->media, 0, 0, (void *)&bpb, sizeof(fat_bpb_t));
+    blkdev_read_partial(vfs->media, 0, 0, (void *)&bpb, sizeof(fat_bpb_t));
     fat32_header_t hdr32;
     fat16_header_t hdr16;
 
     if (!bpb.sector_count_32) {
-        blkdev_read_partial(ec, vfs->media, 0, sizeof(fat_bpb_t), (void *)&hdr32, sizeof(fat32_header_t));
+        blkdev_read_partial(vfs->media, 0, sizeof(fat_bpb_t), (void *)&hdr32, sizeof(fat32_header_t));
         blkdev_read_partial(
-            ec,
             vfs->media,
             0,
             sizeof(fat_bpb_t) + sizeof(fat32_header_t),
@@ -478,7 +467,7 @@ bool fs_fat_mount(badge_err_t *ec, vfs_t *vfs) {
         );
         FATFS(vfs).fat32_root_cluster = hdr32.first_root_cluster;
     } else {
-        blkdev_read_partial(ec, vfs->media, 0, sizeof(fat_bpb_t), (void *)&hdr16, sizeof(fat16_header_t));
+        blkdev_read_partial(vfs->media, 0, sizeof(fat_bpb_t), (void *)&hdr16, sizeof(fat16_header_t));
     }
 
     // Calculate various sizes and positions.
@@ -510,7 +499,7 @@ bool fs_fat_mount(badge_err_t *ec, vfs_t *vfs) {
     size_t n_bitmap_ents   = (FATFS(vfs).cluster_count + sizeof(size_t) - 1) / sizeof(size_t);
     FATFS(vfs).free_bitmap = calloc(1, n_bitmap_ents * sizeof(size_t));
     for (uint32_t i = 0; i < FATFS(vfs).cluster_count; i++) {
-        if (FS_FAT_IS_FAT_FREE(read_fat_ent(ec, vfs, i))) {
+        if (FS_FAT_IS_FAT_FREE(read_fat_ent(vfs, i))) {
             size_t idx                   = i / sizeof(size_t);
             size_t bit                   = i % sizeof(size_t);
             FATFS(vfs).free_bitmap[idx] |= 1 << bit;
@@ -534,14 +523,14 @@ void fs_fat_umount(vfs_t *vfs) {
 
 // Identify whether a block device contains a FAT filesystem.
 // Returns false on error.
-bool fs_fat_detect(badge_err_t *ec, blkdev_t *dev) {
+bool fs_fat_detect(blkdev_t *dev) {
     badge_err_t ec0;
     if (!ec)
         ec = &ec0;
 
     // Read BPB.
     fat_bpb_t bpb;
-    blkdev_read_partial(ec, dev, 0, 0, (void *)&bpb, sizeof(fat_bpb_t));
+    blkdev_read_partial(dev, 0, 0, (void *)&bpb, sizeof(fat_bpb_t));
     if (!badge_err_is_ok(ec))
         return false;
 
@@ -556,7 +545,7 @@ bool fs_fat_detect(badge_err_t *ec, blkdev_t *dev) {
 
     // Checked signature #2: FAT BPB signature bytes.
     uint8_t tmp[2];
-    blkdev_read_partial(ec, dev, 0, 510, tmp, sizeof(tmp));
+    blkdev_read_partial(dev, 0, 510, tmp, sizeof(tmp));
     if (!badge_err_is_ok(ec))
         return false;
     if (tmp[0] != 0x55 || tmp[1] != 0xAA) {
@@ -571,14 +560,14 @@ bool fs_fat_detect(badge_err_t *ec, blkdev_t *dev) {
 
 // Allocate a dirent for file creation.
 // TODO: Allocate multiple for LFN support.
-static uint32_t alloc_dirent(badge_err_t *ec, vfs_t *vfs, vfs_file_obj_t *dir) {
+static uint32_t alloc_dirent(vfs_t *vfs, vfs_file_obj_t *dir) {
     badge_err_t ec0 = {0};
     ec              = ec ?: &ec0;
 
     // Find a free dirent.
     for (uint32_t i = 0; i < dir->size / sizeof(fat_dirent_t); i++) {
         uint8_t tmp;
-        fs_fat_file_read(ec, vfs, dir, i * sizeof(fat_dirent_t) + offsetof(fat_dirent_t, name), &tmp, 1);
+        fs_fat_file_read(vfs, dir, i * sizeof(fat_dirent_t) + offsetof(fat_dirent_t, name), &tmp, 1);
         if (tmp == 0 || tmp == 0xe5) {
             return i;
         }
@@ -586,14 +575,14 @@ static uint32_t alloc_dirent(badge_err_t *ec, vfs_t *vfs, vfs_file_obj_t *dir) {
 
     if (dir->is_vfs_root && FATFS(vfs).type != FAT32) {
         // FAT12 and FAT16 root dirs are not resizable.
-        badge_err_set(ec, ELOC_FILESYSTEM, ECAUSE_NOSPACE);
+        badge_err_set(ELOC_FILESYSTEM, ECAUSE_NOSPACE);
         return -1;
     }
 
     // Allocate an additional cluster for the directory.
     uint32_t cluster = alloc_cluster(vfs);
     if (!cluster) {
-        badge_err_set(ec, ELOC_FILESYSTEM, ECAUSE_NOSPACE);
+        badge_err_set(ELOC_FILESYSTEM, ECAUSE_NOSPACE);
         return -1;
     }
 
@@ -607,7 +596,7 @@ static uint32_t alloc_dirent(badge_err_t *ec, vfs_t *vfs, vfs_file_obj_t *dir) {
             FATFILE(dir).clusters_len
         )) {
         free_cluster(vfs, cluster);
-        badge_err_set(ec, ELOC_FILESYSTEM, ECAUSE_NOMEM);
+        badge_err_set(ELOC_FILESYSTEM, ECAUSE_NOMEM);
         return -1;
     }
 
@@ -615,7 +604,6 @@ static uint32_t alloc_dirent(badge_err_t *ec, vfs_t *vfs, vfs_file_obj_t *dir) {
     // Only the first byte needs to be cleared; the rest will then be ignored.
     uint8_t zero = 0;
     blkdev_write_bytes(
-        ec,
         vfs->media,
         (FATFS(vfs).data_sector + (cluster - 2) * FATFS(vfs).sectors_per_cluster) * FATFS(vfs).bytes_per_sector,
         &zero,
@@ -628,14 +616,14 @@ static uint32_t alloc_dirent(badge_err_t *ec, vfs_t *vfs, vfs_file_obj_t *dir) {
     }
 
     // Write the new FAT entries.
-    write_fat_ent(ec, vfs, FATFILE(dir).clusters[FATFILE(dir).clusters_len - 1], FS_FAT_FAT_EOF);
+    write_fat_ent(vfs, FATFILE(dir).clusters[FATFILE(dir).clusters_len - 1], FS_FAT_FAT_EOF);
     if (!badge_err_is_ok(ec)) {
         FATFILE(dir).clusters_len--;
         free_cluster(vfs, cluster);
         return -1;
     }
     if (FATFILE(dir).clusters_len > 1) {
-        write_fat_ent(ec, vfs, FATFILE(dir).clusters[FATFILE(dir).clusters_len - 2], cluster);
+        write_fat_ent(vfs, FATFILE(dir).clusters[FATFILE(dir).clusters_len - 2], cluster);
         if (!badge_err_is_ok(ec)) {
             FATFILE(dir).clusters_len--;
             free_cluster(vfs, cluster);
@@ -655,7 +643,6 @@ static uint32_t alloc_dirent(badge_err_t *ec, vfs_t *vfs, vfs_file_obj_t *dir) {
         };
 
         fs_fat_file_write(
-            ec,
             vfs,
             FATFILE(dir).parent,
             FATFILE(dir).dirent_no * sizeof(fat_dirent_t) + offsetof(fat_dirent_t, first_cluster_lo),
@@ -663,12 +650,11 @@ static uint32_t alloc_dirent(badge_err_t *ec, vfs_t *vfs, vfs_file_obj_t *dir) {
             2
         );
         if (!badge_err_is_ok(ec)) {
-            badge_err_set(ec, ELOC_FILESYSTEM, ECAUSE_IOERR);
+            badge_err_set(ELOC_FILESYSTEM, ECAUSE_IOERR);
             return -1;
         }
 
         fs_fat_file_write(
-            ec,
             vfs,
             FATFILE(dir).parent,
             FATFILE(dir).dirent_no * sizeof(fat_dirent_t) + offsetof(fat_dirent_t, first_cluster_hi),
@@ -676,7 +662,7 @@ static uint32_t alloc_dirent(badge_err_t *ec, vfs_t *vfs, vfs_file_obj_t *dir) {
             2
         );
         if (!badge_err_is_ok(ec)) {
-            badge_err_set(ec, ELOC_FILESYSTEM, ECAUSE_IOERR);
+            badge_err_set(ELOC_FILESYSTEM, ECAUSE_IOERR);
             return -1;
         }
     }
@@ -688,8 +674,7 @@ static uint32_t alloc_dirent(badge_err_t *ec, vfs_t *vfs, vfs_file_obj_t *dir) {
 }
 
 // Create a new file or directory.
-static void
-    create_file_impl(badge_err_t *ec, vfs_t *vfs, vfs_file_obj_t *dir, char const *name, size_t name_len, bool is_dir) {
+static void create_file_impl(vfs_t *vfs, vfs_file_obj_t *dir, char const *name, size_t name_len, bool is_dir) {
     badge_err_t ec0 = {0};
     ec              = ec ?: &ec0;
 
@@ -697,7 +682,7 @@ static void
     // TODO: BadgerOS doesn't have dates yet, so ctime cannot be set.
     fat_dirent_t ent = {0};
     if (!fat_mangle_name(name, name_len, ent.name, &ent.attr2, true)) {
-        badge_err_set(ec, ELOC_FILESYSTEM, ECAUSE_PARAM);
+        badge_err_set(ELOC_FILESYSTEM, ECAUSE_PARAM);
         return;
     }
     ent.attr = is_dir ? FAT_ATTR_DIRECTORY : 0;
@@ -707,7 +692,7 @@ static void
     if (is_dir) {
         cluster = alloc_cluster(vfs);
         if (cluster == (uint32_t)-1) {
-            badge_err_set(ec, ELOC_FILESYSTEM, ECAUSE_NOSPACE);
+            badge_err_set(ELOC_FILESYSTEM, ECAUSE_NOSPACE);
             return;
         }
         ent.first_cluster_lo = cluster;
@@ -715,25 +700,25 @@ static void
     }
 
     // Try to alloc space for this dirent.
-    uint32_t index = alloc_dirent(ec, vfs, dir);
+    uint32_t index = alloc_dirent(vfs, dir);
     if (index == (uint32_t)-1) {
         if (is_dir) {
             free_cluster(vfs, cluster);
         }
-        badge_err_set(ec, ELOC_FILESYSTEM, ECAUSE_NOSPACE);
+        badge_err_set(ELOC_FILESYSTEM, ECAUSE_NOSPACE);
         return;
     }
 
     // Write the new dirent.
     uint8_t cur;
-    fs_fat_file_read(ec, vfs, dir, index * sizeof(fat_dirent_t), &cur, 1);
+    fs_fat_file_read(vfs, dir, index * sizeof(fat_dirent_t), &cur, 1);
     if (!badge_err_is_ok(ec)) {
         if (is_dir) {
             free_cluster(vfs, cluster);
         }
         return;
     }
-    fs_fat_file_write(ec, vfs, dir, index * sizeof(fat_dirent_t), (void *)&ent, sizeof(fat_dirent_t));
+    fs_fat_file_write(vfs, dir, index * sizeof(fat_dirent_t), (void *)&ent, sizeof(fat_dirent_t));
     if (!badge_err_is_ok(ec)) {
         if (is_dir) {
             free_cluster(vfs, cluster);
@@ -744,14 +729,14 @@ static void
     // Preserve NULL terminating entry.
     uint8_t const zero = 0;
     if (cur == 0 && (fileoff_t)((index + 1) * sizeof(fat_dirent_t)) < dir->size) {
-        fs_fat_file_write(ec, vfs, dir, (index + 1) * sizeof(fat_dirent_t), &zero, 1);
+        fs_fat_file_write(vfs, dir, (index + 1) * sizeof(fat_dirent_t), &zero, 1);
         if (!badge_err_is_ok(ec)) {
             return;
         }
     }
 
     if (is_dir) {
-        write_fat_ent(ec, vfs, cluster, FS_FAT_FAT_EOF);
+        write_fat_ent(vfs, cluster, FS_FAT_FAT_EOF);
         if (!badge_err_is_ok(ec)) {
             return;
         }
@@ -765,13 +750,7 @@ static void
         ent2.attr             = FAT_ATTR_DIRECTORY;
         ent2.first_cluster_lo = cluster;
         ent2.first_cluster_hi = cluster >> 16;
-        blkdev_write_bytes(
-            ec,
-            vfs->media,
-            (cluster - 2) * bytes_per_clus + data_off,
-            (void *)&ent2,
-            sizeof(fat_dirent_t)
-        );
+        blkdev_write_bytes(vfs->media, (cluster - 2) * bytes_per_clus + data_off, (void *)&ent2, sizeof(fat_dirent_t));
         if (!badge_err_is_ok(ec)) {
             return;
         }
@@ -786,7 +765,6 @@ static void
         ent2.first_cluster_lo = parent_cluster;
         ent2.first_cluster_hi = parent_cluster >> 16;
         blkdev_write_bytes(
-            ec,
             vfs->media,
             (cluster - 2) * bytes_per_clus + data_off + sizeof(fat_dirent_t),
             (void *)&ent2,
@@ -797,28 +775,22 @@ static void
         }
 
         // Write the NULL terminating entry.
-        blkdev_write_bytes(
-            ec,
-            vfs->media,
-            (cluster - 2) * bytes_per_clus + data_off + 2 * sizeof(fat_dirent_t),
-            &zero,
-            1
-        );
+        blkdev_write_bytes(vfs->media, (cluster - 2) * bytes_per_clus + data_off + 2 * sizeof(fat_dirent_t), &zero, 1);
     }
 }
 
 // Insert a new file into the given directory.
-void fs_fat_create_file(badge_err_t *ec, vfs_t *vfs, vfs_file_obj_t *dir, char const *name, size_t name_len) {
-    create_file_impl(ec, vfs, dir, name, name_len, false);
+void fs_fat_create_file(vfs_t *vfs, vfs_file_obj_t *dir, char const *name, size_t name_len) {
+    create_file_impl(vfs, dir, name, name_len, false);
 }
 
 // Insert a new directory into the given directory.
-void fs_fat_create_dir(badge_err_t *ec, vfs_t *vfs, vfs_file_obj_t *dir, char const *name, size_t name_len) {
-    create_file_impl(ec, vfs, dir, name, name_len, true);
+void fs_fat_create_dir(vfs_t *vfs, vfs_file_obj_t *dir, char const *name, size_t name_len) {
+    create_file_impl(vfs, dir, name, name_len, true);
 }
 
 // Helper that checks the directory (except first two dirents) is empty.
-static bool is_dir_empty(badge_err_t *ec, vfs_t *vfs, uint32_t cluster) {
+static bool is_dir_empty(vfs_t *vfs, uint32_t cluster) {
     badge_err_t ec0         = {0};
     ec                      = ec ?: &ec0;
     uint32_t ent            = 2;
@@ -829,7 +801,7 @@ static bool is_dir_empty(badge_err_t *ec, vfs_t *vfs, uint32_t cluster) {
         // `ent` is not initialized in the loop so that, for the first cluster only, the first two dirents are skipped.
         for (; ent < ents_per_clus; ent++) {
             uint8_t data;
-            blkdev_read_bytes(ec, vfs->media, (cluster - 2) * bytes_per_clus + ent * sizeof(fat_dirent_t), &data, 1);
+            blkdev_read_bytes(vfs->media, (cluster - 2) * bytes_per_clus + ent * sizeof(fat_dirent_t), &data, 1);
             if (!badge_err_is_ok(ec)) {
                 return false;
             }
@@ -843,7 +815,7 @@ static bool is_dir_empty(badge_err_t *ec, vfs_t *vfs, uint32_t cluster) {
         ent = 0;
 
         // Go to the next cluster.
-        cluster = read_fat_ent(ec, vfs, cluster);
+        cluster = read_fat_ent(vfs, cluster);
         if (!badge_err_is_ok(ec)) {
             return false;
         }
@@ -854,13 +826,11 @@ static bool is_dir_empty(badge_err_t *ec, vfs_t *vfs, uint32_t cluster) {
 
 // Unlink a file from the given directory.
 // If the file is currently open, the file object for it is provided in `file`.
-void fs_fat_unlink(
-    badge_err_t *ec, vfs_t *vfs, vfs_file_obj_t *dir, char const *name, size_t name_len, vfs_file_obj_t *file
-) {
+void fs_fat_unlink(vfs_t *vfs, vfs_file_obj_t *dir, char const *name, size_t name_len, vfs_file_obj_t *file) {
     // Check for attempting to rmdir . or .. at the root directory.
     if ((name_len == 1 && name[0] == '.') || (name_len == 2 && name[0] == '.' && name[1] == '.')) {
         if (dir->is_vfs_root) {
-            badge_err_set(ec, ELOC_FILESYSTEM, ECAUSE_INUSE);
+            badge_err_set(ELOC_FILESYSTEM, ECAUSE_INUSE);
             return;
         }
     }
@@ -868,21 +838,21 @@ void fs_fat_unlink(
     // Find dirent to remove.
     fat_dirent_t ent;
     uint32_t     ent_no;
-    if (!find_fat_dirent(ec, vfs, dir, name, name_len, &ent, &ent_no)) {
+    if (!find_fat_dirent(vfs, dir, name, name_len, &ent, &ent_no)) {
         return;
     }
     uint32_t first_cluster = (ent.first_cluster_hi << 16) | ent.first_cluster_lo;
 
     // Check for attempting to rmdir the root directory from elsewhere.
     if ((ent.attr & FAT_ATTR_DIRECTORY) && first_cluster == 0) {
-        badge_err_set(ec, ELOC_FILESYSTEM, ECAUSE_INUSE);
+        badge_err_set(ELOC_FILESYSTEM, ECAUSE_INUSE);
         return;
     }
 
     // Assert the directory to be empty apart from the . and .. entries.
-    if ((ent.attr & FAT_ATTR_DIRECTORY) && !is_dir_empty(ec, vfs, first_cluster)) {
+    if ((ent.attr & FAT_ATTR_DIRECTORY) && !is_dir_empty(vfs, first_cluster)) {
         if (badge_err_is_ok(ec)) {
-            badge_err_set(ec, ELOC_FILESYSTEM, ECAUSE_NOTEMPTY);
+            badge_err_set(ELOC_FILESYSTEM, ECAUSE_NOTEMPTY);
         }
         return;
     }
@@ -891,32 +861,26 @@ void fs_fat_unlink(
     if (file) {
         file->links = 0;
     } else {
-        free_cluster_chain(ec, vfs, first_cluster);
+        free_cluster_chain(vfs, first_cluster);
     }
     uint8_t data = 0xe9;
-    fs_fat_file_write(ec, vfs, dir, sizeof(fat_dirent_t) * ent_no, &data, 1);
+    fs_fat_file_write(vfs, dir, sizeof(fat_dirent_t) * ent_no, &data, 1);
 }
 
 // FAT doesn't support this; raises ECAUSE_UNSUPPORTED.
 void fs_fat_link(
-    badge_err_t    *ec,
-    vfs_t          *vfs,
-    vfs_file_obj_t *old_obj,
-    vfs_file_obj_t *new_dir,
-    char const     *new_name,
-    size_t          new_name_len
+    vfs_t *vfs, vfs_file_obj_t *old_obj, vfs_file_obj_t *new_dir, char const *new_name, size_t new_name_len
 ) {
     (void)vfs;
     (void)old_obj;
     (void)new_dir;
     (void)new_name;
     (void)new_name_len;
-    badge_err_set(ec, ELOC_FILESYSTEM, ECAUSE_UNSUPPORTED);
+    badge_err_set(ELOC_FILESYSTEM, ECAUSE_UNSUPPORTED);
 }
 
 // FAT doesn't support this; raises ECAUSE_UNSUPPORTED.
 void fs_fat_symlink(
-    badge_err_t    *ec,
     vfs_t          *vfs,
     char const     *target_path,
     size_t          target_path_len,
@@ -930,16 +894,16 @@ void fs_fat_symlink(
     (void)link_dir;
     (void)link_name;
     (void)link_name_len;
-    badge_err_set(ec, ELOC_FILESYSTEM, ECAUSE_UNSUPPORTED);
+    badge_err_set(ELOC_FILESYSTEM, ECAUSE_UNSUPPORTED);
 }
 
 // FAT doesn't support this; raises ECAUSE_UNSUPPORTED.
-void fs_fat_mkfifo(badge_err_t *ec, vfs_t *vfs, vfs_file_obj_t *dir, char const *name, size_t name_len) {
+void fs_fat_mkfifo(vfs_t *vfs, vfs_file_obj_t *dir, char const *name, size_t name_len) {
     (void)vfs;
     (void)dir;
     (void)name;
     (void)name_len;
-    badge_err_set(ec, ELOC_FILESYSTEM, ECAUSE_UNSUPPORTED);
+    badge_err_set(ELOC_FILESYSTEM, ECAUSE_UNSUPPORTED);
 }
 
 
@@ -955,15 +919,13 @@ static void fat_dirent_conv(fat_dirent_t const *fat_ent, dirent_t *ent) {
 }
 
 // Read all entries from a directory.
-dirent_list_t fs_fat_dir_read(badge_err_t *ec, vfs_t *vfs, vfs_file_obj_t *dir) {
+dirent_list_t fs_fat_dir_read(vfs_t *vfs, vfs_file_obj_t *dir) {
     TODO();
 }
 
 // Read the directory entry with the matching name.
 // Returns true if the entry was found.
-bool fs_fat_dir_find_ent(
-    badge_err_t *ec, vfs_t *vfs, vfs_file_obj_t *dir, dirent_t *ent, char const *name, size_t name_len
-) {
+bool fs_fat_dir_find_ent(vfs_t *vfs, vfs_file_obj_t *dir, dirent_t *ent, char const *name, size_t name_len) {
     // Edge case: `..` at root.
     // `.` at any directory is handled by the VFS layer.
     // Due to how VFS caches file objects, this removes the need supporting `..` at root in fs_fat_file_open.
@@ -980,7 +942,7 @@ bool fs_fat_dir_find_ent(
     // Read FAT-specific directory entry.
     fat_dirent_t fat_ent;
     uint32_t     fat_ent_no;
-    if (!find_fat_dirent(ec, vfs, dir, name, name_len, &fat_ent, &fat_ent_no)) {
+    if (!find_fat_dirent(vfs, dir, name, name_len, &fat_ent, &fat_ent_no)) {
         return false;
     }
 
@@ -992,27 +954,27 @@ bool fs_fat_dir_find_ent(
 
 
 // Stat a file object.
-void fs_fat_stat(badge_err_t *ec, vfs_t *vfs, vfs_file_obj_t *file, stat_t *stat) {
+void fs_fat_stat(vfs_t *vfs, vfs_file_obj_t *file, stat_t *stat) {
     TODO();
 }
 
 
 
 // Open a file handle for the root directory.
-void fs_fat_root_open(badge_err_t *ec, vfs_t *vfs, vfs_file_obj_t *file) {
+void fs_fat_root_open(vfs_t *vfs, vfs_file_obj_t *file) {
     file->is_vfs_root = true;
     file->type        = FILETYPE_DIR;
     file->inode       = 1;
     file->is_vfs_root = true;
     file->cookie      = calloc(1, sizeof(fs_fat_file_t));
     if (!file->cookie) {
-        badge_err_set(ec, ELOC_FILESYSTEM, ECAUSE_NOMEM);
+        badge_err_set(ELOC_FILESYSTEM, ECAUSE_NOMEM);
         return;
     }
 
     if (FATFS(vfs).type == FAT32) {
         // FAT32 root dir length is determined by the length of the chain in the FAT.
-        read_cluster_chain(ec, vfs, file, FATFS(vfs).fat32_root_cluster);
+        read_cluster_chain(vfs, file, FATFS(vfs).fat32_root_cluster);
         file->size = FATFILE(file).clusters_len * FATFS(vfs).sectors_per_cluster * FATFS(vfs).bytes_per_sector;
     } else {
         // FAT16/FAT12 root dir length is determined by the BPB.
@@ -1022,24 +984,22 @@ void fs_fat_root_open(badge_err_t *ec, vfs_t *vfs, vfs_file_obj_t *file) {
 }
 
 // Open a file for reading and/or writing.
-void fs_fat_file_open(
-    badge_err_t *ec, vfs_t *vfs, vfs_file_obj_t *dir, vfs_file_obj_t *file, char const *name, size_t name_len
-) {
+void fs_fat_file_open(vfs_t *vfs, vfs_file_obj_t *dir, vfs_file_obj_t *file, char const *name, size_t name_len) {
     badge_err_t ec0 = {0};
     ec              = ec ?: &ec0;
 
     // Look up dirent.
     fat_dirent_t ent;
-    if (!find_fat_dirent(ec, vfs, dir, name, name_len, &ent, &FATFILE(file).dirent_no)) {
+    if (!find_fat_dirent(vfs, dir, name, name_len, &ent, &FATFILE(file).dirent_no)) {
         if (badge_err_is_ok(ec)) {
-            badge_err_set(ec, ELOC_FILESYSTEM, ECAUSE_NOTFOUND);
+            badge_err_set(ELOC_FILESYSTEM, ECAUSE_NOTFOUND);
         }
         return;
     }
 
     file->cookie = calloc(1, sizeof(fs_fat_file_t));
     if (!file->cookie) {
-        badge_err_set(ec, ELOC_FILESYSTEM, ECAUSE_NOMEM);
+        badge_err_set(ELOC_FILESYSTEM, ECAUSE_NOMEM);
         return;
     }
 
@@ -1063,9 +1023,9 @@ void fs_fat_file_open(
     file->links            = 1;
     uint32_t first_cluster = ent.first_cluster_lo | (ent.first_cluster_hi << 16);
     if (first_cluster) {
-        read_cluster_chain(ec, vfs, file, first_cluster);
+        read_cluster_chain(vfs, file, first_cluster);
     }
-    FATFILE(file).parent = vfs_file_dup(dir);
+    FATFILE(file).parent = vfs_file_push_ref(dir);
 
     // File size differs between files and directories.
     if (file->type == FILETYPE_DIR) {
@@ -1077,12 +1037,12 @@ void fs_fat_file_open(
 
 // Close a file opened by `fs_fat_file_open`.
 // Only raises an error if `file` is an invalid file descriptor.
-void fs_fat_file_close(badge_err_t *ec, vfs_t *vfs, vfs_file_obj_t *file) {
+void fs_fat_file_close(vfs_t *vfs, vfs_file_obj_t *file) {
     badge_err_t ec0 = {0};
     ec              = ec ?: &ec0;
 
     if (file->links == 0 && FATFILE(file).clusters_len) {
-        free_cluster_chain(ec, vfs, FATFILE(file).clusters[0]);
+        free_cluster_chain(vfs, FATFILE(file).clusters[0]);
     } else {
         badge_err_set_ok(ec);
     }
@@ -1091,19 +1051,16 @@ void fs_fat_file_close(badge_err_t *ec, vfs_t *vfs, vfs_file_obj_t *file) {
 }
 
 // Read bytes from a file.
-void fs_fat_file_read(
-    badge_err_t *ec, vfs_t *vfs, vfs_file_obj_t *file, fileoff_t offset, uint8_t *readbuf, fileoff_t readlen
-) {
+void fs_fat_file_read(vfs_t *vfs, vfs_file_obj_t *file, fileoff_t offset, uint8_t *readbuf, fileoff_t readlen) {
     // Bounds check.
     if (offset < 0 || readlen < 0 || offset + readlen > file->size) {
-        badge_err_set(ec, ELOC_FILESYSTEM, ECAUSE_RANGE);
+        badge_err_set(ELOC_FILESYSTEM, ECAUSE_RANGE);
         return;
     }
 
     if (file->is_vfs_root && FATFS(vfs).type != FAT32) {
         // Special case: FAT12/FAT16 root directory.
         blkdev_read_bytes(
-            ec,
             vfs->media,
             FATFS(vfs).legacy_root_sector * FATFS(vfs).bytes_per_sector + offset,
             readbuf,
@@ -1120,7 +1077,7 @@ void fs_fat_file_read(
         uint32_t cluster_offset = offset / bytes_per_cluster;
         if (cluster_offset >= FATFILE(file).clusters_len) {
             // Error: File should have more clusters.
-            badge_err_set(ec, ELOC_FILESYSTEM, ECAUSE_IOERR);
+            badge_err_set(ELOC_FILESYSTEM, ECAUSE_IOERR);
             return;
         }
         uint32_t cluster = FATFILE(file).clusters[cluster_offset] & 0x0fffffff;
@@ -1131,7 +1088,6 @@ void fs_fat_file_read(
             max = readlen;
         }
         blkdev_read_bytes(
-            ec,
             vfs->media,
             FATFS(vfs).data_sector * FATFS(vfs).bytes_per_sector + (cluster - 2) * bytes_per_cluster +
                 offset % bytes_per_cluster,
@@ -1148,12 +1104,11 @@ void fs_fat_file_read(
 
 // Write without bounds check.
 static void fs_fat_file_write_unsafe(
-    badge_err_t *ec, vfs_t *vfs, vfs_file_obj_t *file, fileoff_t offset, uint8_t const *writebuf, fileoff_t writelen
+    vfs_t *vfs, vfs_file_obj_t *file, fileoff_t offset, uint8_t const *writebuf, fileoff_t writelen
 ) {
     if (file->is_vfs_root && FATFS(vfs).type != FAT32) {
         // Special case: FAT12/FAT16 root directory.
         blkdev_write_bytes(
-            ec,
             vfs->media,
             FATFS(vfs).legacy_root_sector * FATFS(vfs).bytes_per_sector + offset,
             writebuf,
@@ -1170,7 +1125,7 @@ static void fs_fat_file_write_unsafe(
         uint32_t cluster_offset = offset / bytes_per_cluster;
         if (cluster_offset >= FATFILE(file).clusters_len) {
             // Error: File should have more clusters.
-            badge_err_set(ec, ELOC_FILESYSTEM, ECAUSE_IOERR);
+            badge_err_set(ELOC_FILESYSTEM, ECAUSE_IOERR);
             return;
         }
         uint32_t cluster = FATFILE(file).clusters[cluster_offset] & 0x0fffffff;
@@ -1181,7 +1136,6 @@ static void fs_fat_file_write_unsafe(
             max = writelen;
         }
         blkdev_write_bytes(
-            ec,
             vfs->media,
             FATFS(vfs).data_sector * FATFS(vfs).bytes_per_sector + (cluster - 2) * bytes_per_cluster +
                 offset % bytes_per_cluster,
@@ -1198,24 +1152,24 @@ static void fs_fat_file_write_unsafe(
 
 // Write bytes from a file.
 void fs_fat_file_write(
-    badge_err_t *ec, vfs_t *vfs, vfs_file_obj_t *file, fileoff_t offset, uint8_t const *writebuf, fileoff_t writelen
+    vfs_t *vfs, vfs_file_obj_t *file, fileoff_t offset, uint8_t const *writebuf, fileoff_t writelen
 ) {
     // Bounds check.
     if (offset < 0 || writelen < 0 || offset + writelen > file->size) {
-        badge_err_set(ec, ELOC_FILESYSTEM, ECAUSE_RANGE);
+        badge_err_set(ELOC_FILESYSTEM, ECAUSE_RANGE);
         return;
     }
-    fs_fat_file_write_unsafe(ec, vfs, file, offset, writebuf, writelen);
+    fs_fat_file_write_unsafe(vfs, file, offset, writebuf, writelen);
 }
 
 // Change the length of a file opened by `fs_fat_file_open`.
-void fs_fat_file_resize(badge_err_t *ec, vfs_t *vfs, vfs_file_obj_t *file, fileoff_t new_size) {
+void fs_fat_file_resize(vfs_t *vfs, vfs_file_obj_t *file, fileoff_t new_size) {
     badge_err_t ec0 = {0};
     ec              = ec ?: &ec0;
 
     // Bounds check.
     if (new_size < 0) {
-        badge_err_set(ec, ELOC_FILESYSTEM, ECAUSE_RANGE);
+        badge_err_set(ELOC_FILESYSTEM, ECAUSE_RANGE);
         return;
     }
 
@@ -1230,7 +1184,7 @@ void fs_fat_file_resize(badge_err_t *ec, vfs_t *vfs, vfs_file_obj_t *file, fileo
             uint32_t cluster = alloc_cluster(vfs);
             if (!cluster) {
                 // Allocation failed.
-                badge_err_set(ec, ELOC_FILESYSTEM, ECAUSE_NOSPACE);
+                badge_err_set(ELOC_FILESYSTEM, ECAUSE_NOSPACE);
                 return;
             }
 
@@ -1244,22 +1198,22 @@ void fs_fat_file_resize(badge_err_t *ec, vfs_t *vfs, vfs_file_obj_t *file, fileo
                 )) {
                 // Out of memory.
                 free_cluster(vfs, cluster);
-                badge_err_set(ec, ELOC_FILESYSTEM, ECAUSE_NOMEM);
+                badge_err_set(ELOC_FILESYSTEM, ECAUSE_NOMEM);
                 return;
             }
 
             // Update prev. FAT entry to point to current.
             if (i) {
-                write_fat_ent(ec, vfs, FATFILE(file).clusters[i - 1], cluster);
+                write_fat_ent(vfs, FATFILE(file).clusters[i - 1], cluster);
             }
         }
     } else if (new_clusters < FATFILE(file).clusters_len) {
         // Free excess clusters.
         for (uint32_t i = new_clusters; i < FATFILE(file).clusters_len; i++) {
             // Mark as free on disk.
-            write_fat_ent(ec, vfs, FATFILE(file).clusters[i], 0);
+            write_fat_ent(vfs, FATFILE(file).clusters[i], 0);
             if (!badge_err_is_ok(ec)) {
-                badge_err_set(ec, ELOC_FILESYSTEM, ECAUSE_IOERR);
+                badge_err_set(ELOC_FILESYSTEM, ECAUSE_IOERR);
                 return;
             }
 
@@ -1275,7 +1229,7 @@ void fs_fat_file_resize(badge_err_t *ec, vfs_t *vfs, vfs_file_obj_t *file, fileo
         void     *zeroes     = calloc(1, zeroes_len);
         while (pos < new_size) {
             fileoff_t max = pos + zeroes_len > new_size ? new_size - pos : zeroes_len;
-            fs_fat_file_write_unsafe(ec, vfs, file, pos, zeroes, max);
+            fs_fat_file_write_unsafe(vfs, file, pos, zeroes, max);
             if (!badge_err_is_ok(ec)) {
                 free(zeroes);
                 return;
@@ -1287,9 +1241,9 @@ void fs_fat_file_resize(badge_err_t *ec, vfs_t *vfs, vfs_file_obj_t *file, fileo
 
     if (new_clusters != old_clusters) {
         // Update last FAT entry.
-        write_fat_ent(ec, vfs, FATFILE(file).clusters[new_clusters - 1], FS_FAT_FAT_EOF);
+        write_fat_ent(vfs, FATFILE(file).clusters[new_clusters - 1], FS_FAT_FAT_EOF);
         if (!badge_err_is_ok(ec)) {
-            badge_err_set(ec, ELOC_FILESYSTEM, ECAUSE_IOERR);
+            badge_err_set(ELOC_FILESYSTEM, ECAUSE_IOERR);
             return;
         }
     }
@@ -1297,7 +1251,6 @@ void fs_fat_file_resize(badge_err_t *ec, vfs_t *vfs, vfs_file_obj_t *file, fileo
     // Update dirent.
     uint8_t buf[4] = {new_size, new_size >> 8, new_size >> 16, new_size >> 24};
     fs_fat_file_write(
-        ec,
         vfs,
         FATFILE(file).parent,
         FATFILE(file).dirent_no * sizeof(fat_dirent_t) + offsetof(fat_dirent_t, size),
@@ -1305,7 +1258,7 @@ void fs_fat_file_resize(badge_err_t *ec, vfs_t *vfs, vfs_file_obj_t *file, fileo
         4
     );
     if (!badge_err_is_ok(ec)) {
-        badge_err_set(ec, ELOC_FILESYSTEM, ECAUSE_IOERR);
+        badge_err_set(ELOC_FILESYSTEM, ECAUSE_IOERR);
         return;
     }
 
@@ -1324,7 +1277,6 @@ void fs_fat_file_resize(badge_err_t *ec, vfs_t *vfs, vfs_file_obj_t *file, fileo
     if ((file->links && !new_clusters && old_clusters) || (!old_clusters && new_clusters)) {
         // Update first cluster field unless the file is unlinked (it would have no dirent).
         fs_fat_file_write(
-            ec,
             vfs,
             FATFILE(file).parent,
             FATFILE(file).dirent_no * sizeof(fat_dirent_t) + offsetof(fat_dirent_t, first_cluster_lo),
@@ -1332,12 +1284,11 @@ void fs_fat_file_resize(badge_err_t *ec, vfs_t *vfs, vfs_file_obj_t *file, fileo
             2
         );
         if (!badge_err_is_ok(ec)) {
-            badge_err_set(ec, ELOC_FILESYSTEM, ECAUSE_IOERR);
+            badge_err_set(ELOC_FILESYSTEM, ECAUSE_IOERR);
             return;
         }
 
         fs_fat_file_write(
-            ec,
             vfs,
             FATFILE(file).parent,
             FATFILE(file).dirent_no * sizeof(fat_dirent_t) + offsetof(fat_dirent_t, first_cluster_hi),
@@ -1345,7 +1296,7 @@ void fs_fat_file_resize(badge_err_t *ec, vfs_t *vfs, vfs_file_obj_t *file, fileo
             2
         );
         if (!badge_err_is_ok(ec)) {
-            badge_err_set(ec, ELOC_FILESYSTEM, ECAUSE_IOERR);
+            badge_err_set(ELOC_FILESYSTEM, ECAUSE_IOERR);
             return;
         }
     }
@@ -1359,7 +1310,7 @@ void fs_fat_file_resize(badge_err_t *ec, vfs_t *vfs, vfs_file_obj_t *file, fileo
 
 // Commit all pending writes to disk.
 // The filesystem, if it does caching, must always sync everything to disk at once.
-void fs_fat_flush(badge_err_t *ec, vfs_t *vfs) {
+void fs_fat_flush(vfs_t *vfs) {
     TODO();
 }
 

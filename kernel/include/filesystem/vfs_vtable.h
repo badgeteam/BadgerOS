@@ -8,41 +8,35 @@
 
 
 // Try to mount a ramfs filesystem.
-typedef bool (*vfs_mount_t)(badge_err_t *ec, vfs_t *vfs);
+typedef errno_t (*vfs_mount_t)(vfs_t *vfs);
 // Unmount a ramfs filesystem.
 typedef void (*vfs_umount_t)(vfs_t *vfs);
 
 // Insert a new file into the given directory.
 // If the file already exists, does nothing.
-typedef void (*vfs_create_file_t)(badge_err_t *ec, vfs_t *vfs, vfs_file_obj_t *dir, char const *name, size_t name_len);
+typedef errno_t (*vfs_create_file_t)(vfs_t *vfs, vfs_file_obj_t *dir, char const *name, size_t name_len);
 // Insert a new directory into the given directory.
 // If the file already exists, does nothing.
-typedef void (*vfs_create_dir_t)(badge_err_t *ec, vfs_t *vfs, vfs_file_obj_t *dir, char const *name, size_t name_len);
+typedef errno_t (*vfs_create_dir_t)(vfs_t *vfs, vfs_file_obj_t *dir, char const *name, size_t name_len);
 // Unlink a file from the given directory.
 // If the file is currently open, the file object for it is provided in `file`.
 // If this is the last reference to an inode, the inode is deleted.
-typedef void (*vfs_unlink_t)(
-    badge_err_t *ec, vfs_t *vfs, vfs_file_obj_t *dir, char const *name, size_t name_len, vfs_file_obj_t *file
+typedef errno_t (*vfs_unlink_t)(
+    vfs_t *vfs, vfs_file_obj_t *dir, char const *name, size_t name_len, vfs_file_obj_t *file
 );
 // Remove a directory if it is empty.
 // If the directory is currently open, the file object for it is provided in `file`.
 // If this is the last reference to an inode, the inode is deleted.
-typedef void (*vfs_rmdir_t)(
-    badge_err_t *ec, vfs_t *vfs, vfs_file_obj_t *dir, char const *name, size_t name_len, vfs_file_obj_t *file
+typedef errno_t (*vfs_rmdir_t)(
+    vfs_t *vfs, vfs_file_obj_t *dir, char const *name, size_t name_len, vfs_file_obj_t *file
 );
 // Create a new hard link from one path to another relative to their respective dirs.
 // Fails if `old_path` names a directory.
-typedef void (*vfs_link_t)(
-    badge_err_t    *ec,
-    vfs_t          *vfs,
-    vfs_file_obj_t *old_obj,
-    vfs_file_obj_t *new_dir,
-    char const     *new_name,
-    size_t          new_name_len
+typedef errno_t (*vfs_link_t)(
+    vfs_t *vfs, vfs_file_obj_t *old_obj, vfs_file_obj_t *new_dir, char const *new_name, size_t new_name_len
 );
 // Create a new symbolic link from one path to another, the latter relative to a dir handle.
-typedef void (*vfs_symlink_t)(
-    badge_err_t    *ec,
+typedef errno_t (*vfs_symlink_t)(
     vfs_t          *vfs,
     char const     *target_path,
     size_t          target_path_len,
@@ -51,50 +45,47 @@ typedef void (*vfs_symlink_t)(
     size_t          link_name_len
 );
 // Create a new named FIFO at a path relative to a dir handle.
-typedef void (*vfs_mkfifo_t)(badge_err_t *ec, vfs_t *vfs, vfs_file_obj_t *dir, char const *name, size_t name_len);
+typedef errno_t (*vfs_mkfifo_t)(vfs_t *vfs, vfs_file_obj_t *dir, char const *name, size_t name_len);
 // Make a device special file; only works on certain filesystem types.
-typedef void (*vfs_mkdevfile_t)(
-    badge_err_t *ec, vfs_file_obj_t *dir, char const *name, size_t name_len, devfile_t devfile
-);
+typedef errno_t (*vfs_mkdevfile_t)(vfs_file_obj_t *dir, char const *name, size_t name_len, devfile_t devfile);
 
 // Atomically read all directory entries and cache them into the directory handle.
 // Refer to `dirent_t` for the structure of the cache.
-typedef dirent_list_t (*vfs_dir_read_t)(badge_err_t *ec, vfs_t *vfs, vfs_file_obj_t *dir);
+typedef errno_dirent_list_t (*vfs_dir_read_t)(vfs_t *vfs, vfs_file_obj_t *dir);
 // Atomically read the directory entry with the matching name.
-// Returns true if the entry was found.
-typedef bool (*vfs_dir_find_ent_t)(
-    badge_err_t *ec, vfs_t *vfs, vfs_file_obj_t *dir, dirent_t *ent, char const *name, size_t name_len
+// Returns 1 if the entry was found, 0 if not, -errno on error.
+typedef errno_t (*vfs_dir_find_ent_t)(
+    vfs_t *vfs, vfs_file_obj_t *dir, dirent_t *ent, char const *name, size_t name_len
 );
 
 // Stat a file object.
-typedef void (*vfs_stat_t)(badge_err_t *ec, vfs_t *vfs, vfs_file_obj_t *file, stat_t *stat);
+typedef errno_t (*vfs_stat_t)(vfs_t *vfs, vfs_file_obj_t *file, stat_t *stat);
 
 // Open a file handle for the root directory.
-typedef void (*vfs_root_open_t)(badge_err_t *ec, vfs_t *vfs, vfs_file_obj_t *file);
+typedef errno_t (*vfs_root_open_t)(vfs_t *vfs, vfs_file_obj_t *file);
 // Open a file for reading and/or writing.
-typedef void (*vfs_file_open_t)(
-    badge_err_t *ec, vfs_t *vfs, vfs_file_obj_t *dir, vfs_file_obj_t *file, char const *name, size_t name_len
+typedef errno_t (*vfs_file_open_t)(
+    vfs_t *vfs, vfs_file_obj_t *dir, vfs_file_obj_t *file, char const *name, size_t name_len
 );
 // Close a file opened by `vfs_ramfs_file_open`.
-// Only raises an error if `file` is an invalid file descriptor.
-typedef void (*vfs_file_close_t)(badge_err_t *ec, vfs_t *vfs, vfs_file_obj_t *file);
+typedef void (*vfs_file_close_t)(vfs_t *vfs, vfs_file_obj_t *file);
 // Read bytes from a file.
-typedef void (*vfs_file_read_t)(
-    badge_err_t *ec, vfs_t *vfs, vfs_file_obj_t *file, fileoff_t offset, uint8_t *readbuf, fileoff_t readlen
+typedef errno_t (*vfs_file_read_t)(
+    vfs_t *vfs, vfs_file_obj_t *file, fileoff_t offset, uint8_t *readbuf, fileoff_t readlen
 );
 // Write bytes from a file.
-typedef void (*vfs_file_write_t)(
-    badge_err_t *ec, vfs_t *vfs, vfs_file_obj_t *file, fileoff_t offset, uint8_t const *writebuf, fileoff_t writelen
+typedef errno_t (*vfs_file_write_t)(
+    vfs_t *vfs, vfs_file_obj_t *file, fileoff_t offset, uint8_t const *writebuf, fileoff_t writelen
 );
 // Change the length of a file opened by `vfs_ramfs_file_open`.
-typedef void (*vfs_file_resize_t)(badge_err_t *ec, vfs_t *vfs, vfs_file_obj_t *file, fileoff_t new_size);
+typedef errno_t (*vfs_file_resize_t)(vfs_t *vfs, vfs_file_obj_t *file, fileoff_t new_size);
 
 // Commit all pending writes on a file to disk.
 // The filesystem, if it does caching, must always sync everything to disk at once.
-typedef void (*vfs_file_flush_t)(badge_err_t *ec, vfs_t *vfs, vfs_file_obj_t *file);
+typedef errno_t (*vfs_file_flush_t)(vfs_t *vfs, vfs_file_obj_t *file);
 // Commit all pending writes to disk.
 // The filesystem, if it does caching, must always sync everything to disk at once.
-typedef void (*vfs_flush_t)(badge_err_t *ec, vfs_t *vfs);
+typedef errno_t (*vfs_flush_t)(vfs_t *vfs);
 
 
 

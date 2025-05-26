@@ -1,313 +1,210 @@
 
 // SPDX-License-Identifier: MIT
 
-#include "filesystem/syscall_impl.h"
-
+#include "cpu/mmu.h"
 #include "filesystem.h"
 #include "process/internal.h"
+#include "syscall.h"
 #include "syscall_util.h"
 #include "usercopy.h"
-#if !CONFIG_NOMMU
-#include "cpu/mmu.h"
-#endif
+
+#define GET_REAL_AT(u_at, at)                                                                                          \
+    file_t at = -1;                                                                                                    \
+    if (u_at != -1) {                                                                                                  \
+        at = proc_find_fd_raw(NULL, proc_current(), u_at);                                                             \
+        if (at < 0) {                                                                                                  \
+            return -EBADF;                                                                                             \
+        }                                                                                                              \
+    }
+
+#define GET_REAL_FD(u_fd, fd)                                                                                          \
+    file_t fd = proc_find_fd_raw(NULL, proc_current(), u_fd);                                                          \
+    if (fd < 0) {                                                                                                      \
+        return -EBADF;                                                                                                 \
+    }
 
 // Open a file, optionally relative to a directory.
-// Returns <= -1 on error, file descriptor number of success.
-file_t syscall_fs_open(file_t dirfd, char const *path, size_t path_len, int oflags) {
-    sysutil_memassert(path, path_len, MEMPROTECT_FLAG_R);
-
-    if (path_len > FILESYSTEM_PATH_MAX) {
-        return -ECAUSE_TOOLONG;
-    } else if (oflags & KOFLAGS_MASK) {
-        return -ECAUSE_PARAM;
+// If `at` is -1, `path` is relative to the working directory.
+// Returns -errno on error, file descriptor number on success.
+long syscall_fs_open(long u_at, char const *path, size_t path_len, int oflags) {
+    sysutil_memassert_r(path, path_len);
+    GET_REAL_AT(u_at, at);
+    char pathbuf[FILESYSTEM_PATH_MAX];
+    copy_from_user_raw(proc_current(), pathbuf, (size_t)path, path_len);
+    file_t fd   = fs_open(at, pathbuf, path_len, oflags);
+    long   u_fd = proc_add_fd_raw(NULL, proc_current(), fd);
+    if (u_fd < 0) {
+        u_fd = -ENOMEM;
+        fs_close(fd);
     }
-    process_t *const proc = proc_current();
-
-#if !CONFIG_NOMMU
-    // Safely copy the path from user memory to the kernel stack.
-    char k_path[FILESYSTEM_PATH_MAX + 1];
-    copy_from_user_raw(proc_current(), k_path, (size_t)path, path_len);
-#else
-    // No MMU so it's not necessary to copy this path.
-    char const *k_path = path;
-#endif
-
-    // Actually open the file.
-    file_t fd   = fs_open(NULL, dirfd, k_path, path_len, oflags);
-    file_t u_fd = -1;
-
-    if (fd >= 0) {
-        badge_err_t ec;
-        // If successful, try to add this file descriptor to the process.
-        u_fd = proc_add_fd_raw(&ec, proc, fd);
-        if (!badge_err_is_ok(&ec)) {
-            fs_close(NULL, fd);
-            u_fd = -ec.cause;
-        }
-    }
-
     return u_fd;
 }
 
 // Flush and close a file.
-int syscall_fs_close(file_t u_fd) {
-    process_t *const proc = proc_current();
-    badge_err_t      ec;
-    file_t           fd = proc_find_fd_raw(NULL, proc_current(), u_fd);
-    proc_remove_fd_raw(&ec, proc, u_fd);
-    if (!badge_err_is_ok(&ec)) {
-        return -ec.cause;
-    } else {
-        fs_close(NULL, fd);
-        return 0;
-    }
+int syscall_fs_close(long u_fd) {
+    GET_REAL_FD(u_fd, fd);
+    return fs_close(fd);
 }
 
 // Read bytes from a file.
-// Returns -1 on EOF, <= -2 on error, read count on success.
-long syscall_fs_read(file_t u_fd, void *read_buf, long read_len) {
-    sysutil_memassert(read_buf, read_len, MEMPROTECT_FLAG_W);
-
-    badge_err_t ec;
-    file_t      fd = proc_find_fd_raw(&ec, proc_current(), u_fd);
-    if (fd != -1) {
+// Returns 0 on EOF, -errno on error, read count on success.
+long syscall_fs_read(long u_fd, void *read_buf, long read_len) {
+    sysutil_memassert_rw(read_buf, read_len);
+    GET_REAL_FD(u_fd, fd);
 #if !CONFIG_NOMMU
-        mmu_enable_sum();
+    mmu_enable_sum();
 #endif
-        fileoff_t read = fs_read(&ec, fd, read_buf, read_len);
+    long res = fs_read(fd, read_buf, read_len);
 #if !CONFIG_NOMMU
-        mmu_disable_sum();
+    mmu_disable_sum();
 #endif
-        if (read <= 0) {
-            return -ec.cause;
-        }
-        return read;
-    }
-    return -ec.cause;
+    return res;
 }
 
 // Write bytes to a file.
-// Returns <= -1 on error, write count on success.
-long syscall_fs_write(file_t u_fd, void const *write_buf, long write_len) {
-    sysutil_memassert(write_buf, write_len, MEMPROTECT_FLAG_R);
-
-    badge_err_t ec;
-    file_t      fd = proc_find_fd_raw(&ec, proc_current(), u_fd);
-    if (fd != -1) {
+// Returns -errno on error, write count on success.
+long syscall_fs_write(long u_fd, void const *write_buf, long write_len) {
+    sysutil_memassert_r(write_buf, write_len);
+    GET_REAL_FD(u_fd, fd);
 #if !CONFIG_NOMMU
-        mmu_enable_sum();
+    mmu_enable_sum();
 #endif
-        fileoff_t written = fs_write(&ec, fd, write_buf, write_len);
+    long res = fs_write(fd, write_buf, write_len);
 #if !CONFIG_NOMMU
-        mmu_disable_sum();
+    mmu_disable_sum();
 #endif
-        if (written <= 0) {
-            return -ec.cause;
-        }
-        return written;
-    }
-    return -ec.cause;
+    return res;
 }
 
 // Read directory entries from a directory handle.
 // See `dirent_t` for the format.
-// Returns <= -1 on error, read count on success.
-long syscall_fs_getdents(file_t u_fd, void *read_buf, long read_len) {
-    sysutil_memassert(read_buf, read_len, MEMPROTECT_FLAG_W);
-    file_t fd = proc_find_fd_raw(NULL, proc_current(), u_fd);
-    fs_seek(NULL, fd, 0, SEEK_ABS);
-    return fs_read(NULL, fd, read_buf, read_len);
+// Returns -errno on error, read count on success.
+long syscall_fs_getdents(long u_fd, void *read_buf, long read_len) {
+    sysutil_memassert_rw(read_buf, read_len);
+    GET_REAL_FD(u_fd, fd);
+    errno_dirent_list_t res = fs_dir_read(fd);
+    if (res.errno < 0) {
+        return res.errno;
+    }
+    long actual_len = read_len < res.list.size ? read_len : res.list.size;
+    copy_to_user_raw(proc_current(), (size_t)read_buf, res.list.mem, actual_len);
+    return actual_len;
 }
+
+// // Rename and/or move a file to another path, optionally relative to one or two directories.
+// SYSCALL_DEF_V(21, SYSCALL_FS_RENAME, syscall_fs_rename)
 
 // Get file status given file handler or path, optionally following the final symlink.
 // If `path` is specified, it is interpreted as relative to the working directory.
 // If both `path` and `fd` are specified, `path` is relative to the directory that `fd` describes.
 // If only `fd` is specified, the inode referenced by `fd` is stat'ed.
 // If `follow_link` is false, the last symlink in the path is not followed.
-int syscall_fs_stat(file_t fd, char const *path, size_t path_len, bool follow_link, stat_t *stat_out) {
-    sysutil_memassert(path, path_len, MEMPROTECT_FLAG_R);
-    sysutil_memassert(stat_out, sizeof(stat_t), MEMPROTECT_FLAG_W);
-    if (path_len > FILESYSTEM_PATH_MAX) {
-        return -ECAUSE_TOOLONG;
-    }
-
-    badge_err_t ec;
-
-#if !CONFIG_NOMMU
-    // Safely copy the path from user memory to the kernel stack.
-    char k_path[FILESYSTEM_PATH_MAX + 1];
-    copy_from_user_raw(proc_current(), k_path, (size_t)path, path_len);
-
-    stat_t stat_tmp;
-    fs_stat(&ec, fd, k_path, path_len, follow_link, &stat_tmp);
-    copy_to_user_raw(proc_current(), (size_t)stat_out, &stat_tmp, sizeof(stat_t));
-#else
-    fs_stat(&ec, fd, path, path_len, follow_link, stat_out);
-#endif
-
-    return -ec.cause;
+int syscall_fs_stat(long u_fd, char const *path, size_t path_len, bool follow_link, stat_t *stat_out) {
+    sysutil_memassert_r(path, path_len);
+    sysutil_memassert_rw(stat_out, sizeof(stat_t));
+    GET_REAL_FD(u_fd, fd);
+    char pathbuf[FILESYSTEM_PATH_MAX];
+    copy_from_user_raw(proc_current(), pathbuf, (size_t)path, path_len);
+    stat_t  statbuf;
+    errno_t res = fs_stat(fd, pathbuf, path_len, follow_link, &statbuf);
+    copy_to_user_raw(proc_current(), (size_t)stat_out, &statbuf, sizeof(stat_t));
+    return res;
 }
 
 // Create a new directory.
 // If `at` is -1, `path` is relative to the working directory.
-// Returns <= -1 on error, file 0 on success.
-int syscall_fs_mkdir(file_t at, char const *path, size_t path_len) {
-    sysutil_memassert(path, path_len, MEMPROTECT_FLAG_R);
-    if (path_len > FILESYSTEM_PATH_MAX) {
-        return -ECAUSE_TOOLONG;
-    }
-
-    badge_err_t ec;
-
-#if !CONFIG_NOMMU
-    // Safely copy the path from user memory to the kernel stack.
-    char k_path[FILESYSTEM_PATH_MAX + 1];
-    copy_from_user_raw(proc_current(), k_path, (size_t)path, path_len);
-
-    fs_mkdir(&ec, at, k_path, path_len);
-#else
-    fs_mkdir(&ec, fd, path, path_len);
-#endif
-
-    return -ec.cause;
+// Returns -errno on error, file 0 on success.
+int syscall_fs_mkdir(long u_at, char const *path, size_t path_len) {
+    sysutil_memassert_r(path, path_len);
+    GET_REAL_AT(u_at, at);
+    char pathbuf[FILESYSTEM_PATH_MAX];
+    copy_from_user_raw(proc_current(), pathbuf, (size_t)path, path_len);
+    return fs_mkdir(at, pathbuf, path_len);
 }
 
 // Delete a directory if it is empty.
 // If `at` is -1, `path` is relative to the working directory.
-// Returns <= -1 on error, file 0 on success.
-int syscall_fs_rmdir(file_t at, char const *path, size_t path_len) {
-    sysutil_memassert(path, path_len, MEMPROTECT_FLAG_R);
-    if (path_len > FILESYSTEM_PATH_MAX) {
-        return -ECAUSE_TOOLONG;
-    }
-
-    badge_err_t ec;
-
-#if !CONFIG_NOMMU
-    // Safely copy the path from user memory to the kernel stack.
-    char k_path[FILESYSTEM_PATH_MAX + 1];
-    copy_from_user_raw(proc_current(), k_path, (size_t)path, path_len);
-
-    fs_rmdir(&ec, at, k_path, path_len);
-#else
-    fs_rmdir(&ec, fd, path, path_len);
-#endif
-
-    return -ec.cause;
+// Returns -errno on error, file 0 on success.
+int syscall_fs_rmdir(long u_at, char const *path, size_t path_len) {
+    sysutil_memassert_r(path, path_len);
+    GET_REAL_AT(u_at, at);
+    char pathbuf[FILESYSTEM_PATH_MAX];
+    copy_from_user_raw(proc_current(), pathbuf, (size_t)path, path_len);
+    return fs_rmdir(at, pathbuf, path_len);
 }
 
 // Create a new link to an existing inode.
 // If `*_at` is -1, the respective `*_path` is relative to the working directory.
-// Returns <= -1 on error, file 0 on success.
+// Returns -errno on error, file 0 on success.
 int syscall_fs_link(
-    file_t old_at, char const *old_path, size_t old_path_len, file_t new_at, char const *new_path, size_t new_path_len
+    long u_old_at, char const *old_path, size_t old_path_len, long u_new_at, char const *new_path, size_t new_path_len
 ) {
-    sysutil_memassert(old_path, old_path_len, MEMPROTECT_FLAG_R);
-    sysutil_memassert(new_path, new_path_len, MEMPROTECT_FLAG_R);
-    if (old_path_len > FILESYSTEM_PATH_MAX || new_path_len > FILESYSTEM_PATH_MAX) {
-        return -ECAUSE_TOOLONG;
-    }
-
-    badge_err_t ec;
-
-#if !CONFIG_NOMMU
-    char k_old_path[FILESYSTEM_PATH_MAX + 1];
-    copy_from_user_raw(proc_current(), k_old_path, (size_t)old_path, old_path_len);
-
-    char k_new_path[FILESYSTEM_PATH_MAX + 1];
-    copy_from_user_raw(proc_current(), k_new_path, (size_t)new_path, new_path_len);
-
-    fs_link(&ec, old_at, k_old_path, old_path_len, new_at, k_new_path, new_path_len);
-#else
-    fs_link(&ec, old_at, old_path, old_path_len, new_at, new_path, new_path_len);
-#endif
-
-    return -ec.cause;
+    sysutil_memassert_r(old_path, old_path_len);
+    sysutil_memassert_r(new_path, new_path_len);
+    GET_REAL_AT(u_old_at, old_at);
+    GET_REAL_AT(u_new_at, new_at);
+    char new_pathbuf[FILESYSTEM_PATH_MAX];
+    copy_from_user_raw(proc_current(), new_pathbuf, (size_t)new_path, new_path_len);
+    char old_pathbuf[FILESYSTEM_PATH_MAX];
+    copy_from_user_raw(proc_current(), old_pathbuf, (size_t)old_path, old_path_len);
+    return fs_link(old_at, old_pathbuf, old_path_len, new_at, new_pathbuf, new_path_len);
 }
 
 // Remove a link to an inode. If it is the last link, the file is deleted.
 // If `at` is -1, `path` is relative to the working directory.
-// Returns <= -1 on error, file 0 on success.
-int syscall_fs_unlink(file_t at, char const *path, size_t path_len) {
-    sysutil_memassert(path, path_len, MEMPROTECT_FLAG_R);
-    if (path_len > FILESYSTEM_PATH_MAX) {
-        return -ECAUSE_TOOLONG;
-    }
-
-    badge_err_t ec;
-
-#if !CONFIG_NOMMU
-    // Safely copy the path from user memory to the kernel stack.
-    char k_path[FILESYSTEM_PATH_MAX + 1];
-    copy_from_user_raw(proc_current(), k_path, (size_t)path, path_len);
-
-    fs_unlink(&ec, at, k_path, path_len);
-#else
-    fs_unlink(&ec, fd, path, path_len);
-#endif
-
-    return -ec.cause;
+// Returns -errno on error, file 0 on success.
+int syscall_fs_unlink(long u_at, char const *path, size_t path_len) {
+    sysutil_memassert_r(path, path_len);
+    GET_REAL_AT(u_at, at);
+    char pathbuf[FILESYSTEM_PATH_MAX];
+    copy_from_user_raw(proc_current(), pathbuf, (size_t)path, path_len);
+    return fs_unlink(at, pathbuf, path_len);
 }
 
 // Create a new FIFO / named pipe.
 // If `at` is -1, `path` is relative to the working directory.
-// Returns <= -1 on error, file 0 on success.
-int syscall_fs_mkfifo(file_t at, char const *path, size_t path_len) {
-    sysutil_memassert(path, path_len, MEMPROTECT_FLAG_R);
-    if (path_len > FILESYSTEM_PATH_MAX) {
-        return -ECAUSE_TOOLONG;
-    }
-
-    badge_err_t ec;
-
-#if !CONFIG_NOMMU
-    // Safely copy the path from user memory to the kernel stack.
-    char k_path[FILESYSTEM_PATH_MAX + 1];
-    copy_from_user_raw(proc_current(), k_path, (size_t)path, path_len);
-
-    fs_mkfifo(&ec, at, k_path, path_len);
-#else
-    fs_mkfifo(&ec, fd, path, path_len);
-#endif
-
-    return -ec.cause;
+// Returns -errno on error, file 0 on success.
+int syscall_fs_mkfifo(long u_at, char const *path, size_t path_len) {
+    sysutil_memassert_r(path, path_len);
+    GET_REAL_AT(u_at, at);
+    char pathbuf[FILESYSTEM_PATH_MAX];
+    copy_from_user_raw(proc_current(), pathbuf, (size_t)path, path_len);
+    return fs_mkfifo(at, pathbuf, path_len);
 }
 
 // Create a new pipe.
 // `fds[0]` will be written with the pointer to the read end, `fds[1]` the write end.
-// Returns <= -1 on error, file 0 on success.
-int syscall_fs_pipe(long fds[2], int flags) {
-    sysutil_memassert(fds, 2 * sizeof(long), MEMPROTECT_FLAG_R);
-
-    if (flags & KOFLAGS_MASK) {
-        return -ECAUSE_PARAM;
+// Returns -errno on error, file 0 on success.
+int syscall_fs_pipe(long u_fds_out[2], int flags) {
+    sysutil_memassert_rw(u_fds_out, 2 * sizeof(long));
+    fs_pipe_t res = fs_pipe(flags);
+    if (res.errno < 0) {
+        return res.errno;
     }
 
-    // Create the pipe.
-    badge_err_t ec;
-    fs_pipe_t   pipes = fs_pipe(&ec, flags);
-
-    // Add the FDs to the process.
-    long u_reader = proc_add_fd_raw(NULL, proc_current(), pipes.reader);
-    if (u_reader < 0) {
-        fs_close(NULL, pipes.reader);
-        fs_close(NULL, pipes.writer);
-        return -ECAUSE_NOMEM;
+    long u_reader = proc_add_fd_raw(NULL, proc_current(), res.reader);
+    if (u_reader == -1) {
+        fs_close(res.reader);
+        fs_close(res.writer);
+        return -ENOMEM;
     }
 
-    long u_writer = proc_add_fd_raw(NULL, proc_current(), pipes.writer);
-    if (u_writer < 0) {
+    long u_writer = proc_add_fd_raw(NULL, proc_current(), res.writer);
+    if (u_writer == -1) {
         proc_remove_fd_raw(NULL, proc_current(), u_reader);
-        fs_close(NULL, pipes.reader);
-        fs_close(NULL, pipes.writer);
-        return -ECAUSE_NOMEM;
+        fs_close(res.reader);
+        fs_close(res.writer);
+        return -ENOMEM;
     }
 
-    // Everything succeeded, copy the FDs to the user memory.
+#if !CONFIG_NOMMU
     mmu_enable_sum();
-    fds[0] = u_reader;
-    fds[1] = u_writer;
+#endif
+    u_fds_out[0] = u_reader;
+    u_fds_out[1] = u_writer;
+#if !CONFIG_NOMMU
     mmu_disable_sum();
+#endif
 
-    return -ec.cause;
+    return 0;
 }
