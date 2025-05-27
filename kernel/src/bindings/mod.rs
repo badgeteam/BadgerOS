@@ -5,6 +5,7 @@ pub mod log;
 pub mod error;
 pub mod irq;
 pub mod mutex;
+pub mod process;
 pub mod raw;
 pub mod semaphore;
 pub mod thread;

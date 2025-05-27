@@ -56,8 +56,12 @@ impl Thread {
     pub fn detach(self) {
         unsafe { raw::thread_detach(self.handle) };
     }
-}
 
-pub fn sleep_us(delay: timestamp_us_t) {
-    unsafe { raw::thread_sleep(delay) }
+    pub fn sleep_us(delay: timestamp_us_t) {
+        unsafe { raw::thread_sleep(delay) }
+    }
+
+    pub unsafe fn exit(code: i32) -> ! {
+        unsafe { raw::thread_exit(code) }
+    }
 }

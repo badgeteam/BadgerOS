@@ -7,6 +7,7 @@
 #![feature(unsafe_cell_access)]
 #![feature(error_generic_member_access)]
 #![feature(str_from_raw_parts)]
+#![feature(negative_impls)]
 
 extern crate alloc;
 
@@ -18,10 +19,7 @@ pub mod bindings;
 use core::{alloc::GlobalAlloc, ffi::c_void, panic::PanicInfo};
 
 use alloc::boxed::Box;
-use bindings::{
-    log::*,
-    thread::{Thread, sleep_us},
-};
+use bindings::{log::*, thread::Thread};
 
 #[global_allocator]
 pub static BADGEROS_RUST_MALLOC: BadgerOSMalloc = BadgerOSMalloc {};
@@ -66,7 +64,7 @@ pub extern "C" fn rust_test_func() -> i32 {
     let test = Box::new(1u8);
     Thread::new(
         move || {
-            sleep_us(2000000);
+            Thread::sleep_us(2000000);
             logkf!(LogLevel::Debug, "My box contains {}", *test);
             0
         },
