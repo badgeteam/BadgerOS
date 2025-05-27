@@ -320,7 +320,7 @@ errno_t proc_start_raw(process_t *process) {
     }
     port_fencei();
     atomic_store(&process->flags, PROC_RUNNING);
-    thread_resume(NULL, thread);
+    assert_dev_keep(thread_resume(thread) >= 0);
     mutex_release(&process->mtx);
     kbelf_dyn_destroy(dyn);
     logkf(LOG_INFO, "Process %{d} started", process->pid);
@@ -340,9 +340,9 @@ tid_t proc_create_thread_raw(process_t *process, size_t entry_point, size_t arg,
     process->threads = mem;
 
     // Create a thread.
-    tid_t tid = thread_new_user(NULL, NULL, process, entry_point, arg, priority);
-    if (!tid) {
-        return -ENOMEM;
+    tid_t tid = thread_new_user(NULL, process, entry_point, arg, priority);
+    if (tid < 0) {
+        return tid;
     }
     sched_thread_t *thread = sched_get_thread(tid);
 
@@ -469,7 +469,7 @@ void proc_suspend(process_t *process, tid_t current) {
     mutex_acquire(&process->mtx, TIMESTAMP_US_MAX);
     for (size_t i = 0; i < process->threads_len; i++) {
         if (process->threads[i] != current) {
-            thread_suspend(NULL, process->threads[i], false);
+            thread_suspend(process->threads[i], false);
         }
     }
     mutex_release(&process->mtx);
@@ -479,7 +479,7 @@ void proc_suspend(process_t *process, tid_t current) {
 void proc_resume(process_t *process) {
     mutex_acquire(&process->mtx, TIMESTAMP_US_MAX);
     for (size_t i = 0; i < process->threads_len; i++) {
-        thread_resume(NULL, process->threads[i]);
+        thread_resume(process->threads[i]);
     }
     mutex_release(&process->mtx);
 }

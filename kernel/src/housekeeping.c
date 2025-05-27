@@ -86,11 +86,9 @@ int hk_thread_func(void *ignored) {
 
 // Initialize the housekeeping system.
 void hk_init() {
-    badge_err_t ec;
-    hk_thread = thread_new_kernel(&ec, "housekeeping", hk_thread_func, NULL, SCHED_PRIO_NORMAL);
-    badge_err_assert_always(&ec);
-    thread_resume(&ec, hk_thread);
-    badge_err_assert_always(&ec);
+    hk_thread = thread_new_kernel("housekeeping", hk_thread_func, NULL, SCHED_PRIO_NORMAL);
+    assert_always(hk_thread > 0);
+    assert_always(thread_resume(hk_thread) >= 0);
 }
 
 

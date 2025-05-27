@@ -4,6 +4,7 @@
 #pragma once
 
 #include "attributes.h"
+#include "errno.h"
 #include "time.h"
 
 #include <stdatomic.h>
@@ -41,8 +42,6 @@ typedef struct {
 // will be scheduled with bigger time slices than normal
 #define SCHED_PRIO_HIGH   20
 
-#include "badge_err.h"
-
 
 
 // Global scheduler initialization.
@@ -68,14 +67,12 @@ sched_thread_t *sched_get_thread(tid_t thread);
 
 // Create a new suspended userland thread.
 // If `kernel_stack_bottom` is NULL, the scheduler will allocate a stack.
-tid_t thread_new_user(
-    badge_err_t *ec, char const *name, process_t *process, size_t user_entrypoint, size_t user_arg, int priority
-);
+tid_t   thread_new_user(char const *name, process_t *process, size_t user_entrypoint, size_t user_arg, int priority);
 // Create new suspended kernel thread.
 // If `stack_bottom` is NULL, the scheduler will allocate a stack.
-tid_t thread_new_kernel(badge_err_t *ec, char const *name, sched_entry_t entry_point, void *arg, int priority);
+tid_t   thread_new_kernel(char const *name, sched_entry_t entry_point, void *arg, int priority);
 // Do not wait for thread to be joined; clean up immediately.
-void  thread_detach(badge_err_t *ec, tid_t thread);
+errno_t thread_detach(tid_t thread);
 
 // Explicitly yield to the scheduler; the scheduler may run other threads without waiting for preemption.
 // Use this function to reduce the CPU time used by a thread.
@@ -85,19 +82,19 @@ void thread_sleep(timestamp_us_t delay);
 
 // Pauses execution of a thread.
 // If `suspend_kernel` is false, the thread won't be suspended until it enters user mode.
-void thread_suspend(badge_err_t *ec, tid_t thread, bool suspend_kernel);
+errno_t      thread_suspend(tid_t thread, bool suspend_kernel);
 // Resumes a previously suspended thread or starts it.
-void thread_resume(badge_err_t *ec, tid_t thread);
+errno_t      thread_resume(tid_t thread);
 // Resumes a previously suspended thread or starts it.
 // Immediately schedules the thread instead of putting it in the queue first.
-void thread_resume_now(badge_err_t *ec, tid_t thread);
+errno_t      thread_resume_now(tid_t thread);
 // Resumes a previously suspended thread or starts it from an ISR.
-void thread_resume_from_isr(badge_err_t *ec, tid_t thread);
+errno_t      thread_resume_from_isr(tid_t thread);
 // Resumes a previously suspended thread or starts it from an ISR.
 // Immediately schedules the thread instead of putting it in the queue first.
-void thread_resume_now_from_isr(badge_err_t *ec, tid_t thread);
+errno_t      thread_resume_now_from_isr(tid_t thread);
 // Returns whether a thread is running; it is neither suspended nor has it exited.
-bool thread_is_running(badge_err_t *ec, tid_t thread);
+errno_bool_t thread_is_running(tid_t thread);
 
 // Exits the current thread.
 // If the thread is detached, resources will be cleaned up.

@@ -59,10 +59,9 @@ static cpulocal_t bsp_cpulocal = {0};
 // This sets up the basics of everything needed by the other systems of the kernel.
 // When finished, the booting CPU will perform kernel initialization.
 void basic_runtime_init() {
-    badge_err_t ec      = {0};
-    isr_ctx_t   tmp_ctx = {0};
-    tmp_ctx.flags       = ISR_CTX_FLAG_KERNEL;
-    tmp_ctx.cpulocal    = &bsp_cpulocal;
+    isr_ctx_t tmp_ctx = {0};
+    tmp_ctx.flags     = ISR_CTX_FLAG_KERNEL;
+    tmp_ctx.cpulocal  = &bsp_cpulocal;
 
     // ISR initialization.
     irq_init(&tmp_ctx);
@@ -87,10 +86,9 @@ void basic_runtime_init() {
     // Housekeeping thread initialization.
     hk_init();
     // Add the remainder of the kernel lifetime as a new thread.
-    tid_t thread = thread_new_kernel(&ec, "main", (void *)kernel_lifetime_func, NULL, SCHED_PRIO_NORMAL);
-    badge_err_assert_always(&ec);
-    thread_resume(&ec, thread);
-    badge_err_assert_always(&ec);
+    tid_t thread = thread_new_kernel("main", (void *)kernel_lifetime_func, NULL, SCHED_PRIO_NORMAL);
+    assert_always(thread > 0);
+    assert_always(thread_resume(thread) >= 0);
 
     // Start the scheduler and enter the next phase in the kernel's lifetime.
     sched_exec();

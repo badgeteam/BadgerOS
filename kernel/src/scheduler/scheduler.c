@@ -449,9 +449,9 @@ NORETURN void sched_exec() {
     // Get CPU-local scheduler data.
     sched_cpulocal_t *info         = cpu_ctx[cpu];
     isr_ctx_get()->cpulocal->sched = info;
-    tid_t tid = thread_new_kernel(NULL, NULL, sched_up_reporter, (void *)(size_t)cpu, SCHED_PRIO_NORMAL);
-    thread_resume_now(NULL, tid);
-    thread_detach(NULL, tid);
+    tid_t tid                      = thread_new_kernel(NULL, sched_up_reporter, (void *)(size_t)cpu, SCHED_PRIO_NORMAL);
+    thread_resume_now(tid);
+    thread_detach(tid);
 
     // Set next timestamp to measure load average.
     info->load_average      = 0;
@@ -497,22 +497,18 @@ sched_thread_t *sched_get_thread(tid_t tid) {
 
 
 // Create a new suspended userland thread.
-tid_t thread_new_user(
-    badge_err_t *ec, char const *name, process_t *process, size_t user_entrypoint, size_t user_arg, int priority
-) {
+tid_t thread_new_user(char const *name, process_t *process, size_t user_entrypoint, size_t user_arg, int priority) {
     // Allocate thread.
     sched_thread_t *thread = malloc(sizeof(sched_thread_t));
     if (!thread) {
-        badge_err_set(ec, ELOC_THREADS, ECAUSE_NOMEM);
-        return 0;
+        return -ENOMEM;
     }
     mem_set(thread, 0, sizeof(sched_thread_t));
 
     thread->kernel_stack_bottom = (size_t)malloc(CONFIG_STACK_SIZE);
     if (!thread->kernel_stack_bottom) {
         free(thread);
-        badge_err_set(ec, ELOC_THREADS, ECAUSE_NOMEM);
-        return 0;
+        return -ENOMEM;
     }
 
     if (name) {
@@ -521,8 +517,7 @@ tid_t thread_new_user(
         if (!thread->name) {
             free((void *)thread->kernel_stack_bottom);
             free(thread);
-            badge_err_set(ec, ELOC_THREADS, ECAUSE_NOMEM);
-            return 0;
+            return -ENOMEM;
         }
         cstr_copy(thread->name, name_len + 1, name);
     }
@@ -549,28 +544,25 @@ tid_t thread_new_user(
         }
         free((void *)thread->kernel_stack_bottom);
         free(thread);
-        badge_err_set(ec, ELOC_THREADS, ECAUSE_NOMEM);
-        return 0;
+        return -ENOMEM;
     }
 
     return thread->id;
 }
 
 // Create new suspended kernel thread.
-tid_t thread_new_kernel(badge_err_t *ec, char const *name, sched_entry_t entrypoint, void *arg, int priority) {
+tid_t thread_new_kernel(char const *name, sched_entry_t entrypoint, void *arg, int priority) {
     // Allocate thread.
     sched_thread_t *thread = malloc(sizeof(sched_thread_t));
     if (!thread) {
-        badge_err_set(ec, ELOC_THREADS, ECAUSE_NOMEM);
-        return 0;
+        return -ENOMEM;
     }
     mem_set(thread, 0, sizeof(sched_thread_t));
 
     thread->kernel_stack_bottom = (size_t)malloc(CONFIG_STACK_SIZE);
     if (!thread->kernel_stack_bottom) {
         free(thread);
-        badge_err_set(ec, ELOC_THREADS, ECAUSE_NOMEM);
-        return 0;
+        return -ENOMEM;
     }
 
     if (name) {
@@ -579,8 +571,7 @@ tid_t thread_new_kernel(badge_err_t *ec, char const *name, sched_entry_t entrypo
         if (!thread->name) {
             free((void *)thread->kernel_stack_bottom);
             free(thread);
-            badge_err_set(ec, ELOC_THREADS, ECAUSE_NOMEM);
-            return 0;
+            return -ENOMEM;
         }
         cstr_copy(thread->name, name_len + 1, name);
     }
@@ -605,29 +596,29 @@ tid_t thread_new_kernel(badge_err_t *ec, char const *name, sched_entry_t entrypo
         }
         free((void *)thread->kernel_stack_bottom);
         free(thread);
-        badge_err_set(ec, ELOC_THREADS, ECAUSE_NOMEM);
-        return 0;
+        return -ENOMEM;
     }
 
     // logkf(LOG_DEBUG, "Kernel thread #%{d} '%{cs}' @0x%{size;x} created", thread->id, thread->name, thread);
 
-    badge_err_set_ok(ec);
     return thread->id;
 }
 
 // Do not wait for thread to be joined; clean up immediately.
-void thread_detach(badge_err_t *ec, tid_t tid) {
+errno_t thread_detach(tid_t tid) {
     bool ie = irq_disable();
     spinlock_take_shared(&threads_lock);
     sched_thread_t *thread = find_thread(tid);
+    errno_t         res;
     if (thread) {
         atomic_fetch_or(&thread->flags, THREAD_DETACHED);
-        badge_err_set_ok(ec);
+        res = 0;
     } else {
-        badge_err_set(ec, ELOC_THREADS, ECAUSE_NOTFOUND);
+        res = -ENOENT;
     }
     spinlock_release_shared(&threads_lock);
     irq_enable_if(ie);
+    return res;
 }
 
 
@@ -723,7 +714,7 @@ bool thread_unblock(tid_t tid, uint64_t ticket) {
 
 // Pauses execution of a thread.
 // If `suspend_kernel` is false, the thread won't be suspended until it enters user mode.
-void thread_suspend(badge_err_t *ec, tid_t tid, bool suspend_kernel) {
+errno_t thread_suspend(tid_t tid, bool suspend_kernel) {
     sched_thread_t *self = sched_current_thread();
     sched_thread_t *thread;
 
@@ -737,9 +728,10 @@ void thread_suspend(badge_err_t *ec, tid_t tid, bool suspend_kernel) {
         thread = find_thread(tid);
     }
 
+    errno_t res;
     if (thread) {
         if ((thread->flags & THREAD_KERNEL) && !suspend_kernel) {
-            badge_err_set(ec, ELOC_THREADS, ECAUSE_ILLEGAL);
+            res = -EINVAL;
         } else {
             int setfl = THREAD_SUSPENDING + suspend_kernel * THREAD_KSUSPEND;
             int exp   = atomic_load(&thread->flags);
@@ -748,10 +740,10 @@ void thread_suspend(badge_err_t *ec, tid_t tid, bool suspend_kernel) {
                     break;
                 }
             } while (!atomic_compare_exchange_strong(&thread->flags, &exp, exp | setfl));
-            badge_err_set_ok(ec);
+            res = 0;
         }
     } else {
-        badge_err_set(ec, ELOC_THREADS, ECAUSE_NOTFOUND);
+        res = -ENOENT;
     }
 
     if (tid == self->id) {
@@ -767,6 +759,8 @@ void thread_suspend(badge_err_t *ec, tid_t tid, bool suspend_kernel) {
         spinlock_release_shared(&threads_lock);
         irq_enable();
     }
+
+    return res;
 }
 
 // Try to mark a thread as running if a thread is allowed to be resumed.
@@ -786,57 +780,58 @@ static bool thread_try_mark_running(sched_thread_t *thread, bool now) {
 }
 
 // Resumes a previously suspended thread or starts it.
-static void thread_resume_impl(badge_err_t *ec, tid_t tid, bool now) {
+static errno_t thread_resume_impl(tid_t tid, bool now) {
     bool ie = irq_disable();
     spinlock_take_shared(&threads_lock);
     sched_thread_t *thread = find_thread(tid);
+    errno_t         res;
     if (thread) {
         if (thread_try_mark_running(thread, now)) {
             thread_handoff(thread, smp_cur_cpu());
         }
-        badge_err_set_ok(ec);
+        res = 0;
     } else {
-        badge_err_set(ec, ELOC_THREADS, ECAUSE_NOTFOUND);
+        res = -ENOENT;
     }
     spinlock_release_shared(&threads_lock);
     irq_enable_if(ie);
+    return res;
 }
 
 // Resumes a previously suspended thread or starts it.
-void thread_resume(badge_err_t *ec, tid_t tid) {
-    thread_resume_impl(ec, tid, false);
+errno_t thread_resume(tid_t tid) {
+    return thread_resume_impl(tid, false);
 }
 
 // Resumes a previously suspended thread or starts it.
 // Immediately schedules the thread instead of putting it in the queue first.
-void thread_resume_now(badge_err_t *ec, tid_t tid) {
-    thread_resume_impl(ec, tid, true);
+errno_t thread_resume_now(tid_t tid) {
+    return thread_resume_impl(tid, true);
 }
 
 // Resumes a previously suspended thread or starts it from an ISR.
-void thread_resume_from_isr(badge_err_t *ec, tid_t tid) {
+errno_t thread_resume_from_isr(tid_t tid) {
     assert_dev_drop(!irq_is_enabled());
-    thread_resume_impl(ec, tid, false);
+    return thread_resume_impl(tid, false);
 }
 
 // Resumes a previously suspended thread or starts it from an ISR.
 // Immediately schedules the thread instead of putting it in the queue first.
-void thread_resume_now_from_isr(badge_err_t *ec, tid_t tid) {
+errno_t thread_resume_now_from_isr(tid_t tid) {
     assert_dev_drop(!irq_is_enabled());
-    thread_resume_impl(ec, tid, true);
+    return thread_resume_impl(tid, true);
 }
 
 // Returns whether a thread is running; it is neither suspended nor has it exited.
-bool thread_is_running(badge_err_t *ec, tid_t tid) {
+errno_bool_t thread_is_running(tid_t tid) {
     irq_disable();
     spinlock_take_shared(&threads_lock);
     sched_thread_t *thread = find_thread(tid);
-    bool            res    = false;
+    errno_bool_t    res    = false;
     if (thread) {
         res = !!(atomic_load(&thread->flags) & THREAD_RUNNING);
-        badge_err_set_ok(ec);
     } else {
-        badge_err_set(ec, ELOC_THREADS, ECAUSE_NOTFOUND);
+        res = -ENOENT;
     }
     spinlock_release_shared(&threads_lock);
     irq_enable();

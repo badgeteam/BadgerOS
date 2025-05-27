@@ -4,7 +4,6 @@
 #pragma once
 
 #include "attributes.h"
-#include "badge_err.h"
 #include "scheduler/scheduler.h"
 #include "scheduler/types.h"
 

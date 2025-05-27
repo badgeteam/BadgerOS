@@ -4,7 +4,6 @@
 #include "filesystem/fs_fat.h"
 
 #include "arrays.h"
-#include "badge_err.h"
 #include "filesystem.h"
 #include "filesystem/fs_fat_types.h"
 #include "filesystem/media.h"
