@@ -13,7 +13,7 @@
 
 // Processs struct.
 typedef struct process_t    process_t;
-// Globally unique thread ID.
+// Globally unique thread ID; 1 to INT_MAX.
 typedef int                 tid_t;
 // Thread struct.
 typedef struct sched_thread sched_thread_t;

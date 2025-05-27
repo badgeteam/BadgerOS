@@ -12,21 +12,15 @@
 #include "log.h"
 #include "malloc.h"
 #include "memprotect.h"
-#include "page_alloc.h"
 #include "panic.h"
 #include "port/port.h"
 #include "process/internal.h"
 #include "process/sighandler.h"
 #include "process/types.h"
 #include "scheduler/cpu.h"
-#include "scheduler/types.h"
-#include "static-buddy.h"
 #include "sys/wait.h"
+#include "todo.h"
 #include "usercopy.h"
-
-#if !CONFIG_NOMMU
-#include "cpu/mmu.h"
-#endif
 
 #include <stdatomic.h>
 
@@ -50,7 +44,7 @@ static bool        allow_proc1_death() {
 
 // Set arguments for a process.
 // If omitted, argc will be 0 and argv will be NULL.
-static bool proc_setargs_raw_unsafe(badge_err_t *ec, process_t *process, int argc, char const *const *argv);
+static bool proc_setargs_raw_unsafe(process_t *process, int argc, char const *const *argv);
 
 
 
@@ -60,7 +54,7 @@ void proc_signal_all(int signal) {
     for (size_t i = 0; i < procs_len; i++) {
         if (procs[i]->pid == 1)
             continue;
-        proc_raise_signal_raw(NULL, procs[i], signal);
+        proc_raise_signal_raw(procs[i], signal);
     }
     mutex_release_shared(&proc_mtx);
 }
@@ -109,7 +103,7 @@ static void clean_up_from_housekeeping(int taskno, void *arg) {
     } else {
         // Signal parent process.
         atomic_fetch_or(&proc->flags, PROC_STATECHG);
-        proc_raise_signal_raw(NULL, proc->parent, SIGCHLD);
+        proc_raise_signal_raw(proc->parent, SIGCHLD);
         mutex_release_shared(&proc_mtx);
     }
 }
@@ -138,7 +132,7 @@ int proc_sort_pid_cmp(void const *a, void const *b) {
 }
 
 // Create a new, empty process.
-process_t *proc_create_raw(badge_err_t *ec, pid_t parentpid, char const *binary, int argc, char const *const *argv) {
+errno_procptr_t proc_create_raw(pid_t parentpid, char const *binary, int argc, char const *const *argv) {
     // Get a new PID.
     mutex_acquire(&proc_mtx, TIMESTAMP_US_MAX);
     process_t *parent = proc_get_unsafe(parentpid);
@@ -146,16 +140,14 @@ process_t *proc_create_raw(badge_err_t *ec, pid_t parentpid, char const *binary,
         assert_dev_drop(parentpid <= 0);
     } else if (!parent) {
         mutex_release(&proc_mtx);
-        badge_err_set(ec, ELOC_PROCESS, ECAUSE_NOTFOUND);
-        return NULL;
+        return (errno_procptr_t){-ENOENT, NULL};
     }
 
     // Allocate a process entry.
     process_t *handle = malloc(sizeof(process_t));
     if (!handle) {
         mutex_release(&proc_mtx);
-        badge_err_set(ec, ELOC_PROCESS, ECAUSE_NOMEM);
-        return NULL;
+        return (errno_procptr_t){-ENOMEM, NULL};
     }
 
     // Install default values.
@@ -191,11 +183,10 @@ process_t *proc_create_raw(badge_err_t *ec, pid_t parentpid, char const *binary,
     }
 
     // Install arguments.
-    if (!proc_setargs_raw_unsafe(ec, handle, argc, argv)) {
+    if (!proc_setargs_raw_unsafe(handle, argc, argv)) {
         free(handle);
         mutex_release(&proc_mtx);
-        badge_err_set(ec, ELOC_PROCESS, ECAUSE_NOMEM);
-        return NULL;
+        return (errno_procptr_t){-ENOMEM, NULL};
     }
 
     // Insert the entry into the list.
@@ -204,8 +195,7 @@ process_t *proc_create_raw(badge_err_t *ec, pid_t parentpid, char const *binary,
         free(handle->argv);
         free(handle);
         mutex_release(&proc_mtx);
-        badge_err_set(ec, ELOC_PROCESS, ECAUSE_NOMEM);
-        return NULL;
+        return (errno_procptr_t){-ENOMEM, NULL};
     }
     procs[res.index] = handle;
     pid_counter++;
@@ -221,8 +211,7 @@ process_t *proc_create_raw(badge_err_t *ec, pid_t parentpid, char const *binary,
     memprotect_create(&handle->memmap.mpu_ctx);
 
     mutex_release(&proc_mtx);
-    badge_err_set_ok(ec);
-    return handle;
+    return (errno_procptr_t){0, handle};
 }
 
 // Get a process handle by ID.
@@ -259,7 +248,7 @@ pid_t proc_current_pid() {
 
 // Set arguments for a process.
 // If omitted, argc will be 0 and argv will be NULL.
-static bool proc_setargs_raw_unsafe(badge_err_t *ec, process_t *process, int argc, char const *const *argv) {
+static bool proc_setargs_raw_unsafe(process_t *process, int argc, char const *const *argv) {
     // Measure required memory for argv.
     size_t required = sizeof(size_t) * ((size_t)argc + 1);
     for (size_t i = 0; i < (size_t)argc; i++) {
@@ -269,7 +258,6 @@ static bool proc_setargs_raw_unsafe(badge_err_t *ec, process_t *process, int arg
     // Allocate memory for the argv.
     char *mem = realloc(process->argv, required);
     if (!mem) {
-        badge_err_set(ec, ELOC_PROCESS, ECAUSE_NOMEM);
         return false;
     }
 
@@ -290,16 +278,14 @@ static bool proc_setargs_raw_unsafe(badge_err_t *ec, process_t *process, int arg
     process->argv_size                      = required;
     process->argv                           = (char **)mem;
 
-    badge_err_set_ok(ec);
     return true;
 }
 
 // Load an executable and start a prepared process.
-void proc_start_raw(badge_err_t *ec, process_t *process) {
+errno_t proc_start_raw(process_t *process) {
     // Claim the process for starting.
     if (!(atomic_fetch_and(&process->flags, ~PROC_PRESTART) & PROC_PRESTART)) {
-        badge_err_set(ec, ELOC_PROCESS, ECAUSE_STATE);
-        return;
+        return -EINVAL;
     }
 
     mutex_acquire(&process->mtx, TIMESTAMP_US_MAX);
@@ -309,56 +295,54 @@ void proc_start_raw(badge_err_t *ec, process_t *process) {
     if (!dyn) {
         logkf(LOG_ERROR, "Out of memory to start %{cs}", process->binary);
         mutex_release(&process->mtx);
-        badge_err_set(ec, ELOC_PROCESS, ECAUSE_NOMEM);
-        return;
+        return -EINVAL;
     }
     if (!kbelf_dyn_set_exec(dyn, process->binary, NULL)) {
         logkf(LOG_ERROR, "Failed to open %{cs}", process->binary);
         kbelf_dyn_destroy(dyn);
         mutex_release(&process->mtx);
-        badge_err_set(ec, ELOC_PROCESS, ECAUSE_NOTFOUND);
-        return;
+        return -ENOENT;
     }
     if (!kbelf_dyn_load(dyn)) {
         kbelf_dyn_destroy(dyn);
         logkf(LOG_ERROR, "Failed to load %{cs}", process->binary);
         mutex_release(&process->mtx);
-        badge_err_set(ec, ELOC_PROCESS, ECAUSE_FORMAT);
-        return;
+        return -ENOEXEC;
     }
 
     // Create the process' main thread.
-    tid_t thread = proc_create_thread_raw(ec, process, (size_t)kbelf_dyn_entrypoint(dyn), 0, SCHED_PRIO_NORMAL);
+    tid_t thread = proc_create_thread_raw(process, (size_t)kbelf_dyn_entrypoint(dyn), 0, SCHED_PRIO_NORMAL);
     if (!thread) {
         kbelf_dyn_unload(dyn);
         kbelf_dyn_destroy(dyn);
         mutex_release(&process->mtx);
-        return;
+        return -ENOMEM;
     }
     port_fencei();
     atomic_store(&process->flags, PROC_RUNNING);
-    thread_resume(ec, thread);
+    thread_resume(NULL, thread);
     mutex_release(&process->mtx);
     kbelf_dyn_destroy(dyn);
     logkf(LOG_INFO, "Process %{d} started", process->pid);
+
+    return 0;
 }
 
 
 // Create a new thread in a process.
 // Returns created thread handle.
-tid_t proc_create_thread_raw(badge_err_t *ec, process_t *process, size_t entry_point, size_t arg, int priority) {
+tid_t proc_create_thread_raw(process_t *process, size_t entry_point, size_t arg, int priority) {
     // Create an entry for a new thread.
     void *mem = realloc(process->threads, sizeof(tid_t) * (process->threads_len + 1));
     if (!mem) {
-        badge_err_set(ec, ELOC_PROCESS, ECAUSE_NOMEM);
-        return 0;
+        return -ENOMEM;
     }
     process->threads = mem;
 
     // Create a thread.
-    tid_t tid = thread_new_user(ec, NULL, process, entry_point, arg, priority);
+    tid_t tid = thread_new_user(NULL, NULL, process, entry_point, arg, priority);
     if (!tid) {
-        return 0;
+        return -ENOMEM;
     }
     sched_thread_t *thread = sched_get_thread(tid);
 
@@ -375,11 +359,10 @@ tid_t proc_create_thread_raw(badge_err_t *ec, process_t *process, size_t entry_p
 
 
 // Delete a thread in a process.
-void proc_delete_thread_raw_unsafe(badge_err_t *ec, process_t *process, sched_thread_t *thread) {
-    (void)ec;
+errno_t proc_delete_thread_raw_unsafe(process_t *process, sched_thread_t *thread) {
     (void)process;
     (void)thread;
-    __builtin_trap();
+    TODO();
 }
 
 // Compares two `proc_fd_t` by user FD.
@@ -396,7 +379,7 @@ static int proc_fd_cmp_u(void const *a_ptr, void const *b_ptr) {
 }
 
 // Add a file to the process file handle list.
-long proc_add_fd_raw(badge_err_t *ec, process_t *process, file_t k_fd) {
+long proc_add_fd_raw(process_t *process, file_t k_fd) {
     proc_fd_t fd = {.k_fd = k_fd, .u_fd = 0};
     for (size_t i = 0; i < process->fds_len; i++) {
         if (process->fds[i].u_fd == fd.u_fd) {
@@ -406,36 +389,31 @@ long proc_add_fd_raw(badge_err_t *ec, process_t *process, file_t k_fd) {
         }
     }
     if (array_len_sorted_insert(&process->fds, sizeof(proc_fd_t), &process->fds_len, &fd, proc_fd_cmp_u)) {
-        badge_err_set_ok(ec);
         return fd.u_fd;
     } else {
-        badge_err_set(ec, ELOC_PROCESS, ECAUSE_NOMEM);
-        return -1;
+        return -ENOMEM;
     }
 }
 
 // Find a file in the process file handle list.
-file_t proc_find_fd_raw(badge_err_t *ec, process_t *process, long u_fd) {
+file_t proc_find_fd_raw(process_t *process, long u_fd) {
     for (size_t i = 0; i < process->fds_len; i++) {
         if (process->fds[i].u_fd == u_fd) {
-            badge_err_set_ok(ec);
             return process->fds[i].k_fd;
         }
     }
-    badge_err_set(ec, ELOC_PROCESS, ECAUSE_BAD_FD);
-    return -1;
+    return -EBADF;
 }
 
 // Remove a file from the process file handle list.
-void proc_remove_fd_raw(badge_err_t *ec, process_t *process, long u_fd) {
+errno_t proc_remove_fd_raw(process_t *process, long u_fd) {
     for (size_t i = 0; i < process->fds_len; i++) {
         if (process->fds[i].u_fd == u_fd) {
             array_len_remove(&process->fds, sizeof(proc_fd_t), &process->fds_len, NULL, i);
-            badge_err_set_ok(ec);
-            return;
+            return 0;
         }
     }
-    badge_err_set(ec, ELOC_PROCESS, ECAUSE_BAD_FD);
+    return -EBADF;
 }
 
 
@@ -466,22 +444,22 @@ static void proc_raise_sigkill_raw(process_t *process) {
 }
 
 // Raise a signal to a process' main thread or a specified thread, while suspending it's other threads.
-void proc_raise_signal_raw(badge_err_t *ec, process_t *process, int signum) {
+errno_t proc_raise_signal_raw(process_t *process, int signum) {
     if (signum == SIGKILL) {
         proc_raise_sigkill_raw(process);
-        badge_err_set_ok(ec);
-        return;
+        return 0;
     }
     mutex_acquire(&process->mtx, TIMESTAMP_US_MAX);
     sigpending_t *node = malloc(sizeof(sigpending_t));
     if (!node) {
-        badge_err_set(ec, ELOC_PROCESS, ECAUSE_NOMEM);
+        return -ENOMEM;
     } else {
         node->signum = signum;
         dlist_append(&process->sigpending, &node->node);
         atomic_fetch_or(&process->flags, PROC_SIGPEND);
     }
     mutex_release(&process->mtx);
+    return 0;
 }
 
 
@@ -549,9 +527,9 @@ void proc_delete_runtime_raw(process_t *process) {
     // Unmap all memory regions.
     while (process->memmap.regions_len) {
 #if !CONFIG_NOMMU
-        proc_unmap_raw(NULL, process, process->memmap.regions[0].vaddr, process->memmap.regions[0].size);
+        proc_unmap_raw(process, process->memmap.regions[0].vaddr, process->memmap.regions[0].size);
 #else
-        proc_unmap_raw(NULL, process, process->memmap.regions[0].paddr, process->memmap.regions[0].size);
+        proc_unmap_raw(process, process->memmap.regions[0].paddr, process->memmap.regions[0].size);
 #endif
     }
 
@@ -567,9 +545,9 @@ void proc_delete_runtime_raw(process_t *process) {
 
 
 // Create a new, empty process.
-pid_t proc_create(badge_err_t *ec, pid_t parent, char const *binary, int argc, char const *const *argv) {
-    process_t *process = proc_create_raw(ec, parent, binary, argc, argv);
-    return process ? process->pid : -1;
+pid_t proc_create(pid_t parent, char const *binary, int argc, char const *const *argv) {
+    errno_procptr_t process = proc_create_raw(parent, binary, argc, argv);
+    return process.errno < 0 ? process.errno : process.proc->pid;
 }
 
 // Delete a process and release any resources it had.
@@ -612,26 +590,24 @@ static bool proc_delete_impl(pid_t pid, bool only_prestart) {
 }
 
 // Delete a process only if it hasn't been started yet.
-bool proc_delete_prestart(pid_t pid) {
+errno_t proc_delete_prestart(pid_t pid) {
     return proc_delete_impl(pid, true);
 }
 
 // Delete a process and release any resources it had.
-void proc_delete(pid_t pid) {
-    proc_delete_impl(pid, false);
+errno_t proc_delete(pid_t pid) {
+    return proc_delete_impl(pid, false);
 }
 
 // Get the process' flags.
-uint32_t proc_getflags(badge_err_t *ec, pid_t pid) {
+errno64_t proc_getflags(pid_t pid) {
     mutex_acquire_shared(&proc_mtx, TIMESTAMP_US_MAX);
     process_t *proc = proc_get(pid);
     uint32_t   flags;
     if (proc) {
         flags = atomic_load(&proc->flags);
-        badge_err_set_ok(ec);
     } else {
-        flags = 0;
-        badge_err_set(ec, ELOC_PROCESS, ECAUSE_NOTFOUND);
+        flags = -ENOENT;
     }
     mutex_release_shared(&proc_mtx);
     return flags;
@@ -639,37 +615,46 @@ uint32_t proc_getflags(badge_err_t *ec, pid_t pid) {
 
 
 // Load an executable and start a prepared process.
-void proc_start(badge_err_t *ec, pid_t pid) {
+errno_t proc_start(pid_t pid) {
     mutex_acquire_shared(&proc_mtx, TIMESTAMP_US_MAX);
     process_t *proc = proc_get_unsafe(pid);
+    errno_t    res;
     if (proc) {
-        proc_start_raw(ec, proc);
+        res = proc_start_raw(proc);
     } else {
-        badge_err_set(ec, ELOC_PROCESS, ECAUSE_NOTFOUND);
+        res = -ENOENT;
     }
     mutex_release_shared(&proc_mtx);
+    return res;
 }
 
 // Check whether a process is a parent to another.
-bool proc_is_parent(pid_t parent, pid_t child) {
+errno_bool_t proc_is_parent(pid_t parent, pid_t child) {
     mutex_acquire_shared(&proc_mtx, TIMESTAMP_US_MAX);
-    process_t *parent_proc = proc_get_unsafe(parent);
-    process_t *child_proc  = proc_get_unsafe(child);
-    bool       eq          = child_proc && child_proc->parent == parent_proc;
+    process_t   *parent_proc = proc_get_unsafe(parent);
+    process_t   *child_proc  = proc_get_unsafe(child);
+    errno_bool_t res;
+    if (!child_proc || !parent_proc) {
+        res = -ENOENT;
+    } else {
+        res = child_proc->parent == parent_proc;
+    }
     mutex_release_shared(&proc_mtx);
-    return eq;
+    return res;
 }
 
 // Raise a signal to a process' main thread, while suspending it's other threads.
-void proc_raise_signal(badge_err_t *ec, pid_t pid, int signum) {
+errno_t proc_raise_signal(pid_t pid, int signum) {
     mutex_acquire_shared(&proc_mtx, TIMESTAMP_US_MAX);
-    process_t *proc = proc_get(pid);
+    process_t   *proc = proc_get(pid);
+    errno_bool_t res;
     if (proc) {
-        proc_raise_signal_raw(ec, proc, signum);
+        res = proc_raise_signal_raw(proc, signum);
     } else {
-        badge_err_set(ec, ELOC_PROCESS, ECAUSE_NOTFOUND);
+        res = -ENOENT;
     }
     mutex_release_shared(&proc_mtx);
+    return res;
 }
 
 

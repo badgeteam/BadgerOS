@@ -108,3 +108,9 @@ typedef struct process_t {
     // Total time usage.
     timeusage_t   timeusage;
 } process_t;
+
+// Indicates that a function returns a process or an -errno.
+typedef struct {
+    int        errno;
+    process_t *proc;
+} errno_procptr_t;

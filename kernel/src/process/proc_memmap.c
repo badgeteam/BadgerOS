@@ -60,9 +60,7 @@ static int proc_memmap_search(void const *a, void const *_b) {
 #if !CONFIG_NOMMU
 // Allocate more memory to a process.
 // Returns actual virtual address on success, 0 on failure.
-size_t proc_map_raw(
-    badge_err_t *ec, process_t *proc, size_t vaddr_req, size_t min_size, size_t min_align, uint32_t flags
-) {
+errno_size_t proc_map_raw(process_t *proc, size_t vaddr_req, size_t min_size, size_t min_align, uint32_t flags) {
     proc_memmap_t *map = &proc->memmap;
 
     // Correct virtual address.
@@ -88,8 +86,7 @@ size_t proc_map_raw(
         }
         if (vaddr_req < 65536 || vaddr_req < CONFIG_PAGE_SIZE) {
             logk(LOG_WARN, "Impossible vmem request");
-            badge_err_set(ec, ELOC_PROCESS, ECAUSE_NOMEM);
-            return 0;
+            return -ENOMEM;
         }
     }
 
@@ -97,8 +94,7 @@ size_t proc_map_raw(
     uint32_t existing = proc_map_contains_raw(proc, vaddr_req, min_size);
     if (existing) {
         logk(LOG_WARN, "Overlapping virtual address requested");
-        badge_err_set(ec, ELOC_PROCESS, ECAUSE_NOMEM);
-        return 0;
+        return -ENOMEM;
     }
 
     // Convert to page numbers.
@@ -114,8 +110,7 @@ size_t proc_map_raw(
             }
         }
         if (!alloc) {
-            badge_err_set(ec, ELOC_PROCESS, ECAUSE_NOMEM);
-            goto error;
+            goto nomem;
         }
         proc_memmap_ent_t new_ent = {
             .paddr = ppn * CONFIG_PAGE_SIZE,
@@ -132,9 +127,8 @@ size_t proc_map_raw(
                 &new_ent,
                 proc_memmap_cmp
             )) {
-            badge_err_set(ec, ELOC_PROCESS, ECAUSE_NOMEM);
             phys_page_free(ppn);
-            goto error;
+            goto nomem;
         }
         if (!memprotect_u(
                 &proc->memmap.mpu_ctx,
@@ -143,19 +137,17 @@ size_t proc_map_raw(
                 alloc * CONFIG_PAGE_SIZE,
                 flags
             )) {
-            badge_err_set(ec, ELOC_PROCESS, ECAUSE_NOMEM);
-            goto error;
+            goto nomem;
         }
         logkf(LOG_INFO, "Mapped %{size;d} bytes at %{size;x} to process %{d}", new_ent.size, new_ent.vaddr, proc->pid);
         i += alloc;
     }
 
     memprotect_commit(&proc->memmap.mpu_ctx);
-    badge_err_set_ok(ec);
     return vaddr_req;
-error:
+nomem:
     logk(LOG_WARN, "TODO: Cleanup when proc_map_raw partially fails");
-    return 0;
+    return -ENOMEM;
 }
 
 // Split the memory map until `vaddr` to `vaddr+len` is an unique range.
@@ -196,9 +188,11 @@ static inline size_t split_regions(proc_memmap_t *map, size_t index, size_t vadd
 
 // Release memory allocated to a process from `vaddr` to `vaddr+len`.
 // The given span should not fall outside an area mapped with `proc_map_raw`.
-void proc_unmap_raw(badge_err_t *ec, process_t *proc, size_t vaddr, size_t len) {
+errno_t proc_unmap_raw(process_t *proc, size_t vaddr, size_t len) {
     proc_memmap_t *map = &proc->memmap;
-    assert_dev_drop(proc_map_contains_raw(proc, vaddr, len));
+    if (!(proc_map_contains_raw(proc, vaddr, len) & 8)) {
+        return -EINVAL;
+    }
 
     // Align `vaddr` and `len` to page sizes.
     if (vaddr % CONFIG_PAGE_SIZE) {
@@ -268,6 +262,8 @@ void proc_unmap_raw(badge_err_t *ec, process_t *proc, size_t vaddr, size_t len) 
         phys_page_free(to_free[i]);
     }
     free(to_free);
+
+    return 0;
 }
 
 // Whether the process owns this range of virtual memory.
@@ -278,14 +274,18 @@ int proc_map_contains_raw(process_t *proc, size_t vaddr, size_t size) {
     }
     int flags = MEMPROTECT_FLAG_RWX;
     while (true) {
-        virt2phys_t info  = memprotect_virt2phys(&proc->memmap.mpu_ctx, vaddr);
-        flags            &= (int)info.flags;
-        if (!flags) {
+        virt2phys_t info = memprotect_virt2phys(&proc->memmap.mpu_ctx, vaddr);
+        if (info.flags & MEMPROTECT_FLAG_RWX) {
+            flags &= (int)info.flags;
+        } else {
             return 0;
+        }
+        if (!flags) {
+            return 8;
         }
         size_t inc = info.page_size - (vaddr & (info.page_size - 1));
         if (inc >= size) {
-            return flags;
+            return 8 | flags;
         }
         size  -= inc;
         vaddr += inc;
@@ -295,137 +295,19 @@ int proc_map_contains_raw(process_t *proc, size_t vaddr, size_t size) {
 #else
 
 // Allocate more memory to a process.
-size_t proc_map_raw(
-    badge_err_t *ec, process_t *proc, size_t vaddr_req, size_t min_size, size_t min_align, uint32_t flags
-) {
-    if (min_align & (min_align - 1)) {
-        logkf(LOG_WARN, "min_align=%{size;d} ignored because it is not a power of 2", min_align);
-    } else if (min_align > CONFIG_PAGE_SIZE) {
-        logkf(
-            LOG_WARN,
-            "min_align=%{size;d} not satisfiable because it is more than page size (%{size;d})",
-            min_align,
-            CONFIG_PAGE_SIZE
-        );
-        return 0;
-    }
-    proc_memmap_t *map = &proc->memmap;
-
-#ifdef PROC_MEMMAP_MAX_REGIONS
-    if (map->regions_len >= PROC_MEMMAP_MAX_REGIONS) {
-        logk(LOG_WARN, "Out of regions");
-        badge_err_set(ec, ELOC_PROCESS, ECAUSE_NOMEM);
-        return 0;
-    }
-#endif
-
-    // Allocate memory to the process.
-    min_size    = min_size ? (min_size - 1) / CONFIG_PAGE_SIZE + 1 : 1;
-    size_t base = phys_page_alloc(min_size, true) * CONFIG_PAGE_SIZE;
-    if (!base) {
-        logk(LOG_WARN, "Out of memory");
-        badge_err_set(ec, ELOC_PROCESS, ECAUSE_NOMEM);
-        return 0;
-    }
-    size_t size = phys_page_size(base / CONFIG_PAGE_SIZE) * CONFIG_PAGE_SIZE;
-    mem_set((void *)base, 0, size);
-    vaddr_req = (size_t)base;
-
-    // Account the process's memory.
-    proc_memmap_ent_t new_ent = {
-        .paddr = base,
-        .size  = size,
-        .write = true,
-        .exec  = true,
-    };
-#ifdef PROC_MEMMAP_MAX_REGIONS
-    array_sorted_insert(map->regions, sizeof(proc_memmap_ent_t), map->regions_len, &new_ent, proc_memmap_cmp);
-    map->regions_len++;
-#else
-    array_lencap_sorted_insert(
-        &map->regions,
-        sizeof(proc_memmap_ent_t),
-        &map->regions_len,
-        &map->regions_cap,
-        &new_ent,
-        proc_memmap_cmp
-    );
-#endif
-
-    // Update memory protection.
-    if (!memprotect_u(&map->mpu_ctx, (size_t)base, vaddr_req, size, flags & MEMPROTECT_FLAG_RWX)) {
-        for (size_t i = 0; i < map->regions_len; i++) {
-            if (map->regions[i].paddr == (size_t)base) {
-                array_remove(&map->regions[0], sizeof(map->regions[0]), map->regions_len, NULL, i);
-                break;
-            }
-        }
-        map->regions_len--;
-        phys_page_free(base / CONFIG_PAGE_SIZE);
-        badge_err_set(ec, ELOC_PROCESS, ECAUSE_NOMEM);
-        return 0;
-    }
-    memprotect_commit(&map->mpu_ctx);
-
-    logkf(LOG_INFO, "Mapped %{size;d} bytes at %{size;x} to process %{d}", size, base, proc->pid);
-    badge_err_set_ok(ec);
-    return vaddr_req;
+errno_size_t proc_map_raw(process_t *proc, size_t vaddr_req, size_t min_size, size_t min_align, uint32_t flags) {
+    TODO();
 }
 
 // Release memory allocated to a process.
-void proc_unmap_raw(badge_err_t *ec, process_t *proc, size_t base) {
-    proc_memmap_t *map = &proc->memmap;
-    for (size_t i = 0; i < map->regions_len; i++) {
-        if (map->regions[i].paddr == base) {
-            proc_memmap_ent_t region = map->regions[i];
-            array_remove(&map->regions[0], sizeof(map->regions[0]), map->regions_len, NULL, i);
-            map->regions_len--;
-            assert_dev_keep(memprotect_u(&map->mpu_ctx, base, base, region.size, 0));
-            memprotect_commit(&map->mpu_ctx);
-            phys_page_free(base / CONFIG_PAGE_SIZE);
-            badge_err_set_ok(ec);
-            logkf(LOG_INFO, "Unmapped %{size;d} bytes at %{size;x} from process %{d}", region.size, base, proc->pid);
-            return;
-        }
-    }
-    badge_err_set(ec, ELOC_PROCESS, ECAUSE_NOTFOUND);
+errno_t proc_unmap_raw(process_t *proc, size_t base) {
+    TODO();
 }
 
 // Whether the process owns this range of virtual memory.
 // Returns the lowest common denominator of the access bits.
 int proc_map_contains_raw(process_t *proc, size_t vaddr, size_t size) {
-    // Align to whole pages.
-    if (vaddr % CONFIG_PAGE_SIZE) {
-        size  += vaddr % CONFIG_PAGE_SIZE;
-        vaddr -= vaddr % CONFIG_PAGE_SIZE;
-    }
-    if (size % CONFIG_PAGE_SIZE) {
-        size += CONFIG_PAGE_SIZE - size % CONFIG_PAGE_SIZE;
-    }
-
-    int access = 7;
-    while (size) {
-        size_t i;
-        for (i = 0; i < proc->memmap.regions_len; i++) {
-            if (vaddr >= proc->memmap.regions[i].paddr &&
-                vaddr < proc->memmap.regions[i].paddr + proc->memmap.regions[i].size) {
-                goto found;
-            }
-        }
-
-        // This page is not in the region map.
-        return 0;
-
-    found:
-        // This page is in the region map.
-        if (proc->memmap.regions[i].size > size) {
-            // All pages found.
-            break;
-        }
-        vaddr += proc->memmap.regions[i].size;
-        size  += proc->memmap.regions[i].size;
-    }
-    return access;
+    TODO();
 }
 #endif
 
@@ -433,14 +315,14 @@ int proc_map_contains_raw(process_t *proc, size_t vaddr, size_t size) {
 
 // Allocate more memory to a process.
 // Returns actual virtual address on success, 0 on failure.
-size_t proc_map(badge_err_t *ec, pid_t pid, size_t vaddr_req, size_t min_size, size_t min_align, int flags) {
+errno_size_t proc_map(pid_t pid, size_t vaddr_req, size_t min_size, size_t min_align, int flags) {
     mutex_acquire(&proc_mtx, TIMESTAMP_US_MAX);
-    process_t *proc = proc_get(pid);
-    size_t     res  = 0;
+    process_t   *proc = proc_get(pid);
+    errno_size_t res;
     if (proc) {
-        res = proc_map_raw(ec, proc, vaddr_req, min_size, min_align, flags);
+        res = proc_map_raw(proc, vaddr_req, min_size, min_align, flags);
     } else {
-        badge_err_set(ec, ELOC_PROCESS, ECAUSE_NOTFOUND);
+        res = -ENOENT;
     }
     mutex_release(&proc_mtx);
     return res;
@@ -448,29 +330,31 @@ size_t proc_map(badge_err_t *ec, pid_t pid, size_t vaddr_req, size_t min_size, s
 
 // Release memory allocated to a process.
 // The given span should not fall outside an area mapped with `proc_map_raw`.
-void proc_unmap(badge_err_t *ec, pid_t pid, size_t vaddr, size_t len) {
+errno_t proc_unmap(pid_t pid, size_t vaddr, size_t len) {
     mutex_acquire(&proc_mtx, TIMESTAMP_US_MAX);
     process_t *proc = proc_get(pid);
+    errno_t    res;
     if (proc) {
-        proc_unmap_raw(ec, proc, vaddr, len);
+        res = proc_unmap_raw(proc, vaddr, len);
     } else {
-        badge_err_set(ec, ELOC_PROCESS, ECAUSE_NOTFOUND);
+        res = -ENOENT;
     }
     mutex_release(&proc_mtx);
+    return res;
 }
 
 // Whether the process owns this range of memory.
 // Returns the lowest common denominator of the access bits bitwise or 8.
-int proc_map_contains(badge_err_t *ec, pid_t pid, size_t base, size_t size) {
+// Returns -errno on error.
+errno_t proc_map_contains(pid_t pid, size_t base, size_t size) {
     mutex_acquire_shared(&proc_mtx, TIMESTAMP_US_MAX);
     process_t *proc = proc_get(pid);
-    int        ret  = 0;
+    errno_t    res;
     if (proc) {
-        ret = proc_map_contains_raw(proc, base, size);
-        badge_err_set_ok(ec);
+        res = proc_map_contains_raw(proc, base, size);
     } else {
-        badge_err_set(ec, ELOC_PROCESS, ECAUSE_NOTFOUND);
+        res = -ENOENT;
     }
     mutex_release_shared(&proc_mtx);
-    return ret;
+    return res;
 }

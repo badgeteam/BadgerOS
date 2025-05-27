@@ -27,42 +27,42 @@ void proc_resume(process_t *process);
 void proc_delete_runtime_raw(process_t *process);
 
 // Create a new, empty process.
-process_t *proc_create_raw(badge_err_t *ec, pid_t parent, char const *binary, int argc, char const *const *argv);
+errno_procptr_t proc_create_raw(pid_t parent, char const *binary, int argc, char const *const *argv);
 // Get a process handle by ID.
-process_t *proc_get(pid_t pid);
+process_t      *proc_get(pid_t pid);
 // Get the process' flags.
-uint32_t   proc_getflags_raw(process_t *process);
+uint32_t        proc_getflags_raw(process_t *process);
 // Get a handle to the current process, if any.
-process_t *proc_current() __attribute__((const));
+process_t      *proc_current() __attribute__((const));
 
 // Load an executable and start a prepared process.
-void proc_start_raw(badge_err_t *ec, process_t *process);
+errno_t proc_start_raw(process_t *process);
 
 // Create a new thread in a process.
 // Returns created thread handle.
-tid_t  proc_create_thread_raw(badge_err_t *ec, process_t *process, size_t entry_point, size_t arg, int priority);
+tid_t        proc_create_thread_raw(process_t *process, size_t entry_point, size_t arg, int priority);
 // Delete a thread in a process.
-void   proc_delete_thread_raw_unsafe(badge_err_t *ec, process_t *process, sched_thread_t *thread);
+errno_t      proc_delete_thread_raw_unsafe(process_t *process, sched_thread_t *thread);
 // Allocate more memory to a process.
 // Returns actual virtual address on success, 0 on failure.
-size_t proc_map_raw(badge_err_t *ec, process_t *process, size_t vaddr, size_t size, size_t align, uint32_t flags);
+errno_size_t proc_map_raw(process_t *process, size_t vaddr, size_t size, size_t align, uint32_t flags);
 // Release memory allocated to a process from `vaddr` to `vaddr+len`.
 // The given span should not fall outside an area mapped with `proc_map_raw`.
-void   proc_unmap_raw(badge_err_t *ec, process_t *process, size_t vaddr, size_t len);
+errno_t      proc_unmap_raw(process_t *process, size_t vaddr, size_t len);
 // Whether the process owns this range of memory.
 // Returns the lowest common denominator of the access bits.
-int    proc_map_contains_raw(process_t *proc, size_t vaddr, size_t size);
+int          proc_map_contains_raw(process_t *proc, size_t vaddr, size_t size);
 // Add a file to the process file handle list.
-long   proc_add_fd_raw(badge_err_t *ec, process_t *process, file_t k_fd);
+long         proc_add_fd_raw(process_t *process, file_t k_fd);
 // Find a file in the process file handle list.
-file_t proc_find_fd_raw(badge_err_t *ec, process_t *process, long u_fd);
+file_t       proc_find_fd_raw(process_t *process, long u_fd);
 // Remove a file from the process file handle list.
-void   proc_remove_fd_raw(badge_err_t *ec, process_t *process, long u_fd);
+errno_t      proc_remove_fd_raw(process_t *process, long u_fd);
 
 // Perform a pre-resume check for a user thread.
 // Used to implement asynchronous events.
-void proc_pre_resume_cb(sched_thread_t *thread);
+void    proc_pre_resume_cb(sched_thread_t *thread);
 // Atomically whether signals are pending.
-bool proc_signals_pending_raw(process_t *process);
+bool    proc_signals_pending_raw(process_t *process);
 // Raise a signal to a process' main thread or a specified thread, while suspending it's other threads.
-void proc_raise_signal_raw(badge_err_t *ec, process_t *process, int signum);
+errno_t proc_raise_signal_raw(process_t *process, int signum);

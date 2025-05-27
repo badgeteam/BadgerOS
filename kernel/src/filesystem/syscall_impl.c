@@ -11,16 +11,16 @@
 #define GET_REAL_AT(u_at, at)                                                                                          \
     file_t at = -1;                                                                                                    \
     if (u_at != -1) {                                                                                                  \
-        at = proc_find_fd_raw(NULL, proc_current(), u_at);                                                             \
+        at = proc_find_fd_raw(proc_current(), u_at);                                                                   \
         if (at < 0) {                                                                                                  \
-            return -EBADF;                                                                                             \
+            return at;                                                                                                 \
         }                                                                                                              \
     }
 
 #define GET_REAL_FD(u_fd, fd)                                                                                          \
-    file_t fd = proc_find_fd_raw(NULL, proc_current(), u_fd);                                                          \
+    file_t fd = proc_find_fd_raw(proc_current(), u_fd);                                                                \
     if (fd < 0) {                                                                                                      \
-        return -EBADF;                                                                                                 \
+        return fd;                                                                                                     \
     }
 
 // Open a file, optionally relative to a directory.
@@ -32,9 +32,8 @@ long syscall_fs_open(long u_at, char const *path, size_t path_len, int oflags) {
     char pathbuf[FILESYSTEM_PATH_MAX];
     copy_from_user_raw(proc_current(), pathbuf, (size_t)path, path_len);
     file_t fd   = fs_open(at, pathbuf, path_len, oflags);
-    long   u_fd = proc_add_fd_raw(NULL, proc_current(), fd);
+    long   u_fd = proc_add_fd_raw(proc_current(), fd);
     if (u_fd < 0) {
-        u_fd = -ENOMEM;
         fs_close(fd);
     }
     return u_fd;
@@ -182,19 +181,19 @@ int syscall_fs_pipe(long u_fds_out[2], int flags) {
         return res.errno;
     }
 
-    long u_reader = proc_add_fd_raw(NULL, proc_current(), res.reader);
-    if (u_reader == -1) {
+    long u_reader = proc_add_fd_raw(proc_current(), res.reader);
+    if (u_reader < 0) {
         fs_close(res.reader);
         fs_close(res.writer);
-        return -ENOMEM;
+        return u_reader;
     }
 
-    long u_writer = proc_add_fd_raw(NULL, proc_current(), res.writer);
-    if (u_writer == -1) {
-        proc_remove_fd_raw(NULL, proc_current(), u_reader);
+    long u_writer = proc_add_fd_raw(proc_current(), res.writer);
+    if (u_writer < 0) {
+        proc_remove_fd_raw(proc_current(), u_reader);
         fs_close(res.reader);
         fs_close(res.writer);
-        return -ENOMEM;
+        return u_writer;
     }
 
 #if !CONFIG_NOMMU

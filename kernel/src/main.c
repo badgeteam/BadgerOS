@@ -198,16 +198,13 @@ static void kernel_init() {
 // This starts up the `init` process while other CPU cores wait for processes to be scheduled for them.
 // When finished, this function returns and the thread should wait for a shutdown event.
 static void userland_init() {
-    badge_err_t ec = {0};
     logk(LOG_INFO, "Kernel initialized");
     logk(LOG_INFO, "Starting init process");
 
     char const *initbin = "/sbin/init";
-    pid_t       pid     = proc_create(&ec, -1, "/sbin/init", 1, &initbin);
-    badge_err_assert_always(&ec);
-    assert_dev_drop(pid == 1);
-    proc_start(&ec, pid);
-    badge_err_assert_always(&ec);
+    pid_t       pid     = proc_create(-1, "/sbin/init", 1, &initbin);
+    assert_always(pid == 1);
+    assert_always(proc_start(pid) >= 0);
 }
 
 
@@ -233,11 +230,12 @@ static void userland_shutdown() {
 
     // Tell init it's now time to stop.
     logk(LOG_INFO, "Sending SIGHUP to init");
-    proc_raise_signal(NULL, 1, SIGHUP);
+    proc_raise_signal(1, SIGHUP);
     // Wait for a couple seconds to give it time.
     timestamp_us_t lim = time_us() + 5000000;
     while (time_us() < lim) {
-        if (!(proc_getflags(NULL, 1) & PROC_RUNNING)) {
+        errno64_t flags = proc_getflags(1);
+        if (flags == -ENOENT || (flags > 0 && !(flags & PROC_RUNNING))) {
             // When the init process stops, userland has successfully been shut down.
             return;
         }

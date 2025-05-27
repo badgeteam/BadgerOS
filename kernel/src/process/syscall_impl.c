@@ -27,15 +27,13 @@
 // This may round up to a multiple of the page size.
 // Alignment may be less than `align` if the kernel doesn't support it.
 void *syscall_mem_map(void *vaddr_req, size_t min_size, size_t min_align, int flags) {
-    return (void *)proc_map_raw(NULL, proc_current(), (size_t)vaddr_req, min_size, min_align, flags);
+    return (void *)proc_map_raw(proc_current(), (size_t)vaddr_req, min_size, min_align, flags);
 }
 
 // Unmap a range of memory previously allocated with `SYSCALL_MEM_ALLOC`.
 // Returns whether a range of memory was unmapped.
 bool syscall_mem_unmap(void *address, size_t len) {
-    badge_err_t *ec = {0};
-    proc_unmap_raw(ec, proc_current(), (size_t)address, len);
-    return badge_err_is_ok(ec);
+    return proc_unmap_raw(proc_current(), (size_t)address, len);
 }
 
 
@@ -87,7 +85,14 @@ int syscall_proc_pcreate(char const *binary, int argc, char const *const *argv) 
     }
 
     // The pointers are safe; create a process from them.
-    return proc_create(NULL, proc->pid, binary, argc, argv);
+#if !CONFIG_NOMMU
+    mmu_enable_sum();
+#endif
+    int res = proc_create(proc->pid, binary, argc, argv);
+#if !CONFIG_NOMMU
+    mmu_disable_sum();
+#endif
+    return res;
 }
 
 // Destroy a "pre-start" child process.
@@ -102,13 +107,10 @@ bool syscall_proc_pdestroy(int child) {
 // Starts a "pre-start" child process, thereby converting it into a running child process.
 bool syscall_proc_pstart(int child) {
     // Start a process.
-    if (!proc_is_parent(proc_current()->pid, child)) {
+    if (proc_is_parent(proc_current()->pid, child) != 1) {
         return false;
     }
-    badge_err_t ec;
-    proc_start(&ec, child);
-    badge_err_log_warn(&ec);
-    return badge_err_is_ok(&ec);
+    return proc_start(child);
 }
 
 // Set the signal handler for a specific signal number.
