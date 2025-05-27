@@ -61,11 +61,11 @@ errno_t fs_fat_symlink(
 errno_t fs_fat_mkfifo(vfs_t *vfs, vfs_file_obj_t *dir, char const *name, size_t name_len);
 
 // Read all entries from a directory.
-dirent_list_t fs_fat_dir_read(vfs_t *vfs, vfs_file_obj_t *dir);
+errno_dirent_list_t fs_fat_dir_read(vfs_t *vfs, vfs_file_obj_t *dir);
 
 // Read the directory entry with the matching name.
 // Returns true if the entry was found.
-bool fs_fat_dir_find_ent(vfs_t *vfs, vfs_file_obj_t *dir, dirent_t *ent, char const *name, size_t name_len);
+errno_bool_t fs_fat_dir_find_ent(vfs_t *vfs, vfs_file_obj_t *dir, dirent_t *ent, char const *name, size_t name_len);
 
 // Stat a file object.
 errno_t fs_fat_stat(vfs_t *vfs, vfs_file_obj_t *file, stat_t *stat);

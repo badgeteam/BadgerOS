@@ -5,7 +5,6 @@
 
 #include "arrays.h"
 #include "assertions.h"
-#include "badge_err.h"
 #include "filesystem.h"
 #include "filesystem/vfs_fifo.h"
 #include "filesystem/vfs_types.h"
@@ -23,6 +22,16 @@ static size_t           objs_len, objs_cap;
 // Array of existing file objects.
 static vfs_file_obj_t **objs;
 
+#define CHECK_EIO(vfs, value)                                                                                          \
+    ({                                                                                                                 \
+        errno_t errno = (value);                                                                                       \
+        if (errno == -EIO) {                                                                                           \
+            logkf(LOG_ERROR, "I/O error (in %{cs}); remounting %{cs} as read-only", __FUNCTION__, (vfs)->mountpoint);  \
+            (vfs)->readonly = true;                                                                                    \
+        }                                                                                                              \
+        errno;                                                                                                         \
+    })
+
 
 
 // Open the root directory of the filesystem.
@@ -39,7 +48,7 @@ static errno_fobj_t create_root_fobj(vfs_t *vfs) {
     obj->refcount = 1;
 
     // Call FS-specific open root.
-    errno_t res = vfs->vtable.root_open(vfs, obj);
+    errno_t res = CHECK_EIO(vfs, vfs->vtable.root_open(vfs, obj));
     if (res < 0) {
         free(obj);
         return (errno_fobj_t){res, NULL};
@@ -117,11 +126,14 @@ errno_fobj_t vfs_root_open(vfs_t *vfs) {
 
 // Create a new empty file.
 errno_fobj_t vfs_mkfile(vfs_file_obj_t *dir, char const *name, size_t name_len) {
+    if (dir->vfs->readonly) {
+        return (errno_fobj_t){-EROFS, NULL};
+    }
     if (dir->type != FILETYPE_DIR) {
         return (errno_fobj_t){-ENOTDIR, NULL};
     }
 
-    errno_t res = dir->vfs->vtable.create_file(dir->vfs, dir, name, name_len);
+    errno_t res = CHECK_EIO(dir->vfs, dir->vfs->vtable.create_file(dir->vfs, dir, name, name_len));
     if (res < 0) {
         return (errno_fobj_t){res, NULL};
     }
@@ -130,15 +142,21 @@ errno_fobj_t vfs_mkfile(vfs_file_obj_t *dir, char const *name, size_t name_len) 
 
 // Insert a new directory into the given directory.
 errno_t vfs_mkdir(vfs_file_obj_t *dir, char const *name, size_t name_len) {
+    if (dir->vfs->readonly) {
+        return -EROFS;
+    }
     if (dir->type != FILETYPE_DIR) {
         return -ENOTDIR;
     }
-    return dir->vfs->vtable.create_dir(dir->vfs, dir, name, name_len);
+    return CHECK_EIO(dir->vfs, dir->vfs->vtable.create_dir(dir->vfs, dir, name, name_len));
 }
 
 // Unlink a file from the given directory.
 // If this is the last reference to an inode, the inode is deleted.
 errno_t vfs_unlink(vfs_file_obj_t *dir, char const *name, size_t name_len) {
+    if (dir->vfs->readonly) {
+        return -EROFS;
+    }
     if (dir->type != FILETYPE_DIR) {
         return -ENOTDIR;
     }
@@ -153,13 +171,19 @@ errno_t vfs_unlink(vfs_file_obj_t *dir, char const *name, size_t name_len) {
         return -EISDIR;
     }
 
-    return dir->vfs->vtable.unlink(dir->vfs, dir, name, name_len, open_existing(dir->vfs, ent.inode));
+    return CHECK_EIO(
+        dir->vfs,
+        dir->vfs->vtable.unlink(dir->vfs, dir, name, name_len, open_existing(dir->vfs, ent.inode))
+    );
 }
 
 // Create a new hard link from one path to another relative to their respective dirs.
 // Fails if `old_path` names a directory.
 errno_t vfs_link(vfs_file_obj_t *old_obj, vfs_file_obj_t *new_dir, char const *new_name, size_t new_name_len) {
     // No need to check for pipes at `old_obj` because BadgerOS doesn't allow linking nameless files.
+    if (new_dir->vfs->readonly) {
+        return -EROFS;
+    }
     if (new_dir->type != FILETYPE_DIR) {
         return -ENOTDIR;
     }
@@ -170,7 +194,7 @@ errno_t vfs_link(vfs_file_obj_t *old_obj, vfs_file_obj_t *new_dir, char const *n
         return -EXDEV;
     }
 
-    return old_obj->vfs->vtable.link(old_obj->vfs, old_obj, new_dir, new_name, new_name_len);
+    return CHECK_EIO(new_dir->vfs, old_obj->vfs->vtable.link(old_obj->vfs, old_obj, new_dir, new_name, new_name_len));
 }
 
 // Create a new symbolic link from one path to another, the latter relative to a dir handle.
@@ -181,15 +205,23 @@ errno_t vfs_symlink(
     char const     *link_name,
     size_t          link_name_len
 ) {
+    if (link_dir->vfs->readonly) {
+        return -EROFS;
+    }
     if (link_dir->type != FILETYPE_DIR) {
         return -ENOTDIR;
     }
-    return link_dir->vfs->vtable
-        .symlink(link_dir->vfs, target_path, target_path_len, link_dir, link_name, link_name_len);
+    return CHECK_EIO(
+        link_dir->vfs,
+        link_dir->vfs->vtable.symlink(link_dir->vfs, target_path, target_path_len, link_dir, link_name, link_name_len)
+    );
 }
 
 // Create a new named FIFO at a path relative to a dir handle.
 errno_t vfs_mkfifo(vfs_file_obj_t *dir, char const *name, size_t name_len) {
+    if (dir->vfs->readonly) {
+        return -EROFS;
+    }
     if (dir->type != FILETYPE_DIR) {
         return -ENOTDIR;
     }
@@ -198,6 +230,9 @@ errno_t vfs_mkfifo(vfs_file_obj_t *dir, char const *name, size_t name_len) {
 
 // Make a device special file; only works on certain filesystem types.
 errno_t vfs_mkdevfile(vfs_file_obj_t *dir, char const *name, size_t name_len, devfile_t devfile) {
+    if (dir->vfs->readonly) {
+        return -EROFS;
+    }
     if (dir->type != FILETYPE_DIR) {
         return -ENOTDIR;
     }
@@ -205,7 +240,7 @@ errno_t vfs_mkdevfile(vfs_file_obj_t *dir, char const *name, size_t name_len, de
         logkf(LOG_ERROR, "%{cs} does not support device special files", dir->vfs->driver->id);
         return -ENOTSUP;
     }
-    return dir->vfs->vtable.mkdevfile(dir, name, name_len, devfile);
+    return CHECK_EIO(dir->vfs, dir->vfs->vtable.mkdevfile(dir, name, name_len, devfile));
 }
 
 // Remove a directory if it is empty.
@@ -216,7 +251,7 @@ errno_t vfs_rmdir(vfs_file_obj_t *dir, char const *name, size_t name_len) {
 
     // Find the dirent.
     dirent_t ent;
-    errno_t  res = dir->vfs->vtable.dir_find_ent(dir->vfs, dir, &ent, name, name_len);
+    errno_t  res = CHECK_EIO(dir->vfs, dir->vfs->vtable.dir_find_ent(dir->vfs, dir, &ent, name, name_len));
     if (res < 1) {
         return res ?: -ENOENT;
     }
@@ -231,7 +266,7 @@ errno_t vfs_rmdir(vfs_file_obj_t *dir, char const *name, size_t name_len) {
         return -EBUSY;
     }
 
-    return dir->vfs->vtable.rmdir(dir->vfs, dir, name, name_len, existing);
+    return CHECK_EIO(dir->vfs, dir->vfs->vtable.rmdir(dir->vfs, dir, name, name_len, existing));
 }
 
 
@@ -243,7 +278,9 @@ errno_dirent_list_t vfs_dir_read(vfs_file_obj_t *dir) {
     if (dir->mounted_fs) {
         dir = dir->mounted_fs->root_dir_obj;
     }
-    return dir->vfs->vtable.dir_read(dir->vfs, dir);
+    errno_dirent_list_t res = dir->vfs->vtable.dir_read(dir->vfs, dir);
+    CHECK_EIO(dir->vfs, res.errno);
+    return res;
 }
 
 // Read the directory entry with the matching name.
@@ -255,7 +292,7 @@ errno_bool_t vfs_dir_find_ent(vfs_file_obj_t *dir, dirent_t *ent, char const *na
     if (dir->mounted_fs) {
         dir = dir->mounted_fs->root_dir_obj;
     }
-    return dir->vfs->vtable.dir_find_ent(dir->vfs, dir, ent, name, name_len);
+    return CHECK_EIO(dir->vfs, dir->vfs->vtable.dir_find_ent(dir->vfs, dir, ent, name, name_len));
 }
 
 
@@ -266,7 +303,7 @@ errno_t vfs_stat(vfs_file_obj_t *file, stat_t *stat_out) {
         mem_set(stat_out, 0, sizeof(stat_t));
         return 0;
     }
-    return file->vfs->vtable.stat(file->vfs, file, stat_out);
+    return CHECK_EIO(file->vfs, file->vfs->vtable.stat(file->vfs, file, stat_out));
 }
 
 
@@ -308,7 +345,7 @@ errno_fobj_t vfs_file_open(vfs_file_obj_t *dir, char const *name, size_t name_le
 
     // Find the dirent.
     dirent_t ent;
-    errno_t  res = dir->vfs->vtable.dir_find_ent(dir->vfs, dir, &ent, name, name_len);
+    errno_t  res = CHECK_EIO(dir->vfs, dir->vfs->vtable.dir_find_ent(dir->vfs, dir, &ent, name, name_len));
     if (res < 1) {
         return (errno_fobj_t){res ?: -ENOENT, NULL};
     }
@@ -338,7 +375,7 @@ errno_fobj_t vfs_file_open(vfs_file_obj_t *dir, char const *name, size_t name_le
     mutex_init(&fobj->mutex, true);
 
     // Open new file object.
-    res = dir->vfs->vtable.file_open(dir->vfs, dir, fobj, name, name_len);
+    res = CHECK_EIO(dir->vfs, dir->vfs->vtable.file_open(dir->vfs, dir, fobj, name, name_len));
     if (res < 0) {
         goto err1;
     }
@@ -429,36 +466,43 @@ void vfs_file_pop_ref(vfs_file_obj_t *fobj) {
         // Special case: An unnamed pipe does not have a filesystem; skip closing there.
         return;
     }
-    fobj->vfs->vtable.file_close(fobj->vfs, fobj);
+
+    CHECK_EIO(fobj->vfs, fobj->vfs->vtable.file_close(fobj->vfs, fobj));
 }
 
 // Read bytes from a file.
 // The entire read succeeds or the entire read fails, never partial read.
 errno_t vfs_file_read(vfs_file_obj_t *file, fileoff_t offset, uint8_t *readbuf, fileoff_t readlen) {
-    return file->vfs->vtable.file_read(file->vfs, file, offset, readbuf, readlen);
+    return CHECK_EIO(file->vfs, file->vfs->vtable.file_read(file->vfs, file, offset, readbuf, readlen));
 }
 
 // Write bytes to a file.
 // If the file is not large enough, it fails.
 // The entire write succeeds or the entire write fails, never partial write.
 errno_t vfs_file_write(vfs_file_obj_t *file, fileoff_t offset, uint8_t const *writebuf, fileoff_t writelen) {
-    return file->vfs->vtable.file_write(file->vfs, file, offset, writebuf, writelen);
+    if (file->vfs->readonly) {
+        return -EROFS;
+    }
+    return CHECK_EIO(file->vfs, file->vfs->vtable.file_write(file->vfs, file, offset, writebuf, writelen));
 }
 
 // Change the length of a file opened by `vfs_file_open`.
 errno_t vfs_file_resize(vfs_file_obj_t *file, fileoff_t new_size) {
-    return file->vfs->vtable.file_resize(file->vfs, file, new_size);
+    if (file->vfs->readonly) {
+        return -EROFS;
+    }
+    return CHECK_EIO(file->vfs, file->vfs->vtable.file_resize(file->vfs, file, new_size));
 }
 
 
 // Commit all pending writes on a file to disk.
 // The filesystem, if it does caching, must always sync everything to disk at once.
 errno_t vfs_file_flush(vfs_file_obj_t *file) {
-    return file->vfs->vtable.file_flush(file->vfs, file);
+    return CHECK_EIO(file->vfs, file->vfs->vtable.file_flush(file->vfs, file));
 }
 
 // Commit all pending writes to disk.
 // The filesystem, if it does caching, must always sync everything to disk at once.
 errno_t vfs_flush(vfs_t *vfs) {
-    return vfs->vtable.flush(vfs);
+    return CHECK_EIO(vfs, vfs->vtable.flush(vfs));
 }

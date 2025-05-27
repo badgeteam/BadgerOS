@@ -118,7 +118,7 @@ struct vfs {
 
 // Identify whether a block device contains a this filesystem.
 // Returns 1 if detected, 0 if not, -errno on error.
-typedef errno_t (*vfs_detect_t)(fs_media_t *media);
+typedef errno_bool_t (*vfs_detect_t)(fs_media_t *media);
 
 // Filesystem implementation info.
 struct fs_driver {

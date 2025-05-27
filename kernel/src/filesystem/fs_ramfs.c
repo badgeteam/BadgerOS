@@ -646,12 +646,13 @@ errno_t fs_ramfs_file_open(vfs_t *vfs, vfs_file_obj_t *dir, vfs_file_obj_t *file
 }
 
 // Close a file opened by `fs_ramfs_file_open`.
-void fs_ramfs_file_close(vfs_t *vfs, vfs_file_obj_t *file) {
+errno_t fs_ramfs_file_close(vfs_t *vfs, vfs_file_obj_t *file) {
     fs_ramfs_inode_t *inode = RAMFILE(file);
     if (inode->links == 0) {
         free(inode->buf);
         RAMFS(vfs).inode_usage[inode->inode] = false;
     }
+    return 0;
 }
 
 // Read bytes from a file.

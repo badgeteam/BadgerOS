@@ -39,9 +39,9 @@ struct fs_media {
 
 
 // Read bytes from the media.
-errno_t fs_media_read(fs_media_t const *media, uint64_t offset, size_t len, void *readbuf);
+errno_t fs_media_read(fs_media_t const *media, uint64_t offset, void *readbuf, size_t len);
 // Write bytes to the media.
-errno_t fs_media_write(fs_media_t const *media, uint64_t offset, size_t len, void const *writebuf);
+errno_t fs_media_write(fs_media_t const *media, uint64_t offset, void const *writebuf, size_t len);
 // Mark bytes on the media as erased.
 errno_t fs_media_erase(fs_media_t const *media, uint64_t offset, size_t len);
 // Sync bytes on the media to disk if cached.

@@ -5,6 +5,9 @@
 
 #include "assertions.h"
 #include "attributes.h"
+#include "filesystem/vfs_types.h"
+
+#include <stdatomic.h>
 
 /*
     FAT filesystems are divided into 4 main regions:
@@ -218,7 +221,7 @@ typedef struct {
 
     /* ==== Dynamic information ==== */
     // Bitmap of free clusters in the FAT.
-    size_t              *free_bitmap;
+    atomic_size_t       *free_bitmap;
     // Number of free clusters.
     atomic_uint_fast32_t free_clusters;
 } fs_fat_t;

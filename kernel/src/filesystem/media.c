@@ -17,7 +17,7 @@
 
 
 // Read bytes from the media.
-errno_t fs_media_read(fs_media_t const *media, uint64_t offset, size_t len, void *readbuf) {
+errno_t fs_media_read(fs_media_t const *media, uint64_t offset, void *readbuf, size_t len) {
     prelude(read);
     switch (media->type) {
         case FS_MEDIA_BLKDEV: return device_block_read_bytes(media->blkdev, offset, len, readbuf);
@@ -27,7 +27,7 @@ errno_t fs_media_read(fs_media_t const *media, uint64_t offset, size_t len, void
 }
 
 // Write bytes to the media.
-errno_t fs_media_write(fs_media_t const *media, uint64_t offset, size_t len, void const *writebuf) {
+errno_t fs_media_write(fs_media_t const *media, uint64_t offset, void const *writebuf, size_t len) {
     prelude(write);
     switch (media->type) {
         case FS_MEDIA_BLKDEV: return device_block_write_bytes(media->blkdev, offset, len, writebuf);

@@ -68,7 +68,7 @@ typedef errno_t (*vfs_file_open_t)(
     vfs_t *vfs, vfs_file_obj_t *dir, vfs_file_obj_t *file, char const *name, size_t name_len
 );
 // Close a file opened by `vfs_ramfs_file_open`.
-typedef void (*vfs_file_close_t)(vfs_t *vfs, vfs_file_obj_t *file);
+typedef errno_t (*vfs_file_close_t)(vfs_t *vfs, vfs_file_obj_t *file);
 // Read bytes from a file.
 typedef errno_t (*vfs_file_read_t)(
     vfs_t *vfs, vfs_file_obj_t *file, fileoff_t offset, uint8_t *readbuf, fileoff_t readlen

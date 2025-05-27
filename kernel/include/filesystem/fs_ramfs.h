@@ -61,7 +61,7 @@ errno_t fs_ramfs_root_open(vfs_t *vfs, vfs_file_obj_t *file);
 errno_t fs_ramfs_file_open(vfs_t *vfs, vfs_file_obj_t *dir, vfs_file_obj_t *file, char const *name, size_t name_len);
 // Close a file opened by `fs_ramfs_file_open`.
 // Only raises an error if `file` is an invalid file descriptor.
-void    fs_ramfs_file_close(vfs_t *vfs, vfs_file_obj_t *file);
+errno_t fs_ramfs_file_close(vfs_t *vfs, vfs_file_obj_t *file);
 // Read bytes from a file.
 errno_t fs_ramfs_file_read(vfs_t *vfs, vfs_file_obj_t *file, fileoff_t offset, uint8_t *readbuf, fileoff_t readlen);
 // Write bytes from a file.

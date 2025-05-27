@@ -133,7 +133,7 @@ set(kernel_src
     
     ${CMAKE_CURRENT_LIST_DIR}/src/filesystem/filesystem.c
     ${CMAKE_CURRENT_LIST_DIR}/src/filesystem/syscall_impl.c
-    # ${CMAKE_CURRENT_LIST_DIR}/src/filesystem/fs_fat.c
+    ${CMAKE_CURRENT_LIST_DIR}/src/filesystem/fs_fat.c
     ${CMAKE_CURRENT_LIST_DIR}/src/filesystem/fs_ramfs.c
     ${CMAKE_CURRENT_LIST_DIR}/src/filesystem/media.c
     ${CMAKE_CURRENT_LIST_DIR}/src/filesystem/vfs_fifo.c
