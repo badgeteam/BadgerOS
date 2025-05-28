@@ -12,6 +12,7 @@
 #include "log.h"
 #include "malloc.h"
 #include "memprotect.h"
+#include "mutex.h"
 #include "panic.h"
 #include "port/port.h"
 #include "process/internal.h"
@@ -19,6 +20,7 @@
 #include "process/types.h"
 #include "scheduler/cpu.h"
 #include "sys/wait.h"
+#include "time.h"
 #include "todo.h"
 #include "usercopy.h"
 
@@ -330,8 +332,8 @@ errno_t proc_start_raw(process_t *process) {
 
 
 // Create a new thread in a process.
-// Returns created thread handle.
-tid_t proc_create_thread_raw(process_t *process, size_t entry_point, size_t arg, int priority) {
+// Returns created user thread handle or -errno.
+long proc_create_thread_raw(process_t *process, size_t entry_point, size_t arg, int priority) {
     // Create an entry for a new thread.
     void *mem = realloc(process->threads, sizeof(tid_t) * (process->threads_len + 1));
     if (!mem) {
@@ -339,31 +341,37 @@ tid_t proc_create_thread_raw(process_t *process, size_t entry_point, size_t arg,
     }
     process->threads = mem;
 
+    mutex_acquire(&process->mtx, TIMESTAMP_US_MAX);
+
     // Create a thread.
-    tid_t tid = thread_new_user(NULL, process, entry_point, arg, priority);
-    if (tid < 0) {
-        return tid;
+    tid_t k_tid = thread_new_user(NULL, process, entry_point, arg, priority);
+    if (k_tid < 0) {
+        mutex_release(&process->mtx);
+        return k_tid;
     }
-    sched_thread_t *thread = sched_get_thread(tid);
+    sched_thread_t *thread = sched_get_thread(k_tid);
 
     thread->user_isr_ctx.mpu_ctx   = &process->memmap.mpu_ctx;
     thread->kernel_isr_ctx.mpu_ctx = &process->memmap.mpu_ctx;
 
+    long   u_tid = 0;
+    size_t i;
+    for (i = 0; i < process->threads_len; i++) {
+        if (u_tid == process->threads[i].u_tid) {
+            u_tid++;
+        }
+    }
+
     // Add the thread to the list.
-    array_insert(process->threads, sizeof(tid_t), process->threads_len, &tid, process->threads_len);
+    proc_tid_t ent = {u_tid, k_tid};
+    array_len_insert(&process->threads, sizeof(proc_tid_t), &process->threads_len, &ent, i);
     process->threads_len++;
-    // logkf(LOG_DEBUG, "Creating user thread, PC: 0x%{size;x}", entry_point);
 
-    return tid;
+    mutex_release(&process->mtx);
+
+    return u_tid;
 }
 
-
-// Delete a thread in a process.
-errno_t proc_delete_thread_raw_unsafe(process_t *process, sched_thread_t *thread) {
-    (void)process;
-    (void)thread;
-    TODO();
-}
 
 // Compares two `proc_fd_t` by user FD.
 static int proc_fd_cmp_u(void const *a_ptr, void const *b_ptr) {
@@ -468,8 +476,8 @@ errno_t proc_raise_signal_raw(process_t *process, int signum) {
 void proc_suspend(process_t *process, tid_t current) {
     mutex_acquire(&process->mtx, TIMESTAMP_US_MAX);
     for (size_t i = 0; i < process->threads_len; i++) {
-        if (process->threads[i] != current) {
-            thread_suspend(process->threads[i], false);
+        if (process->threads[i].k_tid != current) {
+            thread_suspend(process->threads[i].k_tid, false);
         }
     }
     mutex_release(&process->mtx);
@@ -479,7 +487,7 @@ void proc_suspend(process_t *process, tid_t current) {
 void proc_resume(process_t *process) {
     mutex_acquire(&process->mtx, TIMESTAMP_US_MAX);
     for (size_t i = 0; i < process->threads_len; i++) {
-        thread_resume(process->threads[i]);
+        thread_resume(process->threads[i].k_tid);
     }
     mutex_release(&process->mtx);
 }
@@ -489,7 +497,7 @@ void proc_resume(process_t *process) {
 void proc_delete_runtime_raw(process_t *process) {
     // This may not be run from one of the process' threads because it kills all of them.
     for (size_t i = 0; i < process->threads_len; i++) {
-        assert_dev_drop(sched_current_tid() != process->threads[i]);
+        assert_dev_drop(sched_current_tid() != process->threads[i].k_tid);
     }
 
     if (process->pid == 1 && !allow_proc1_death()) {
@@ -512,7 +520,7 @@ void proc_delete_runtime_raw(process_t *process) {
 
     // Destroy all threads.
     for (size_t i = 0; i < process->threads_len; i++) {
-        thread_join(process->threads[i]);
+        thread_join(process->threads[i].k_tid);
     }
     process->threads_len = 0;
     free(process->threads);
@@ -533,7 +541,12 @@ void proc_delete_runtime_raw(process_t *process) {
 #endif
     }
 
-    // TODO: Close pipes and files.
+    // Close pipes and files.
+    for (size_t i = 0; i < process->fds_len; i++) {
+        fs_close(process->fds[i].k_fd);
+    }
+    process->fds_len = 0;
+    free(process->fds);
 
     // Mark the process as exited.
     atomic_fetch_or(&process->flags, PROC_EXITED);

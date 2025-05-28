@@ -55,6 +55,12 @@ typedef struct {
     file_t k_fd;
 } proc_fd_t;
 
+// Process thread handle.
+typedef struct {
+    long  u_tid;
+    tid_t k_tid;
+} proc_tid_t;
+
 // Pending signal entry.
 typedef struct {
     // Doubly-linked list node.
@@ -87,7 +93,7 @@ typedef struct process_t {
     // Number of threads.
     size_t        threads_len;
     // Thread handles.
-    tid_t        *threads;
+    proc_tid_t   *threads;
     // Process ID.
     pid_t         pid;
     // Memory map information.

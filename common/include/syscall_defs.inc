@@ -35,22 +35,19 @@
 SYSCALL_DEF_V(1, SYSCALL_THREAD_YIELD, syscall_thread_yield)
 
 // // Create a new thread.
-// SYSCALL_DEF(2, SYSCALL_THREAD_CREATE, syscall_thread_create, bool, void *entry, void *arg, int priority)
-
-// // Suspend a thread; it will not run again until resumed.
-// SYSCALL_DEF(3, SYSCALL_THREAD_SUSPEND, syscall_thread_suspend, bool, tid_t thread)
-
-// // Resume a thread; this does nothing if it is already running.
-// SYSCALL_DEF(4, SYSCALL_THREAD_RESUME, syscall_thread_resume, bool, tid_t thread)
+// // Returns thread ID or -errno.
+// SYSCALL_DEF(2, SYSCALL_THREAD_CREATE, syscall_thread_create, tid_t, void *entry, void *arg, int priority)
 
 // // Detach a thread; the thread will be destroyed as soon as it exits.
-// SYSCALL_DEF(5, SYSCALL_THREAD_DETACH, syscall_thread_detach, bool, tid_t thread)
+// // Returns 0 or -errno.
+// SYSCALL_DEF(3, SYSCALL_THREAD_DETACH, syscall_thread_detach, int, tid_t thread)
 
-// // Destroy a thread; it will be stopped and its resources released.
-// SYSCALL_DEF(6, SYSCALL_THREAD_DESTROY, syscall_thread_destroy, bool, tid_t thread)
+// // Wait for a thread to stop and return its exit code.
+// // Returns the exit code of that thread or -errno.
+// SYSCALL_DEF(4, SYSCALL_THREAD_JOIN, syscall_thread_join, int, tid_t thread)
 
 // // Exit the current thread; exit code can be read unless destroyed or detached.
-// SYSCALL_DEF_V(7, SYSCALL_THREAD_EXIT, syscall_thread_exit, int code)
+// SYSCALL_DEF_V(5, SYSCALL_THREAD_EXIT, syscall_thread_exit, int code)
 
 
 
