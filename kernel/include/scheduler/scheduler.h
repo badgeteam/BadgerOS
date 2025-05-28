@@ -100,7 +100,7 @@ errno_bool_t thread_is_running(tid_t thread);
 // If the thread is detached, resources will be cleaned up.
 void thread_exit(int code) NORETURN;
 // Wait for another thread to exit.
-void thread_join(tid_t thread);
+int  thread_join(tid_t thread);
 
 // Dump scheduler state for debug purposes.
 void sched_debug_print();

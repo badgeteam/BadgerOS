@@ -34,20 +34,23 @@
 // Yield to other threads.
 SYSCALL_DEF_V(1, SYSCALL_THREAD_YIELD, syscall_thread_yield)
 
-// // Create a new thread.
-// // Returns thread ID or -errno.
-// SYSCALL_DEF(2, SYSCALL_THREAD_CREATE, syscall_thread_create, tid_t, void *entry, void *arg, int priority)
+// Sleep for a certain amount of time.
+SYSCALL_DEF_V(2, SYSCALL_THREAD_SLEEP, syscall_thread_sleep, int64_t delay)
 
-// // Detach a thread; the thread will be destroyed as soon as it exits.
-// // Returns 0 or -errno.
-// SYSCALL_DEF(3, SYSCALL_THREAD_DETACH, syscall_thread_detach, int, tid_t thread)
+// Create a new thread.
+// Returns thread ID or -errno.
+SYSCALL_DEF(2, SYSCALL_THREAD_CREATE, syscall_thread_create, long, void *entry, void *arg, int priority)
 
-// // Wait for a thread to stop and return its exit code.
-// // Returns the exit code of that thread or -errno.
-// SYSCALL_DEF(4, SYSCALL_THREAD_JOIN, syscall_thread_join, int, tid_t thread)
+// Detach a thread; the thread will be destroyed as soon as it exits.
+// Returns 0 or -errno.
+SYSCALL_DEF(3, SYSCALL_THREAD_DETACH, syscall_thread_detach, int, long thread)
 
-// // Exit the current thread; exit code can be read unless destroyed or detached.
-// SYSCALL_DEF_V(5, SYSCALL_THREAD_EXIT, syscall_thread_exit, int code)
+// Wait for a thread to stop and return its exit code.
+// Returns the exit code of that thread or -errno.
+SYSCALL_DEF(4, SYSCALL_THREAD_JOIN, syscall_thread_join, int, long thread)
+
+// Exit the current thread; exit code can be read unless destroyed or detached.
+SYSCALL_DEF_V(5, SYSCALL_THREAD_EXIT, syscall_thread_exit, int code)
 
 
 

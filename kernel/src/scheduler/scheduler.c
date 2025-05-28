@@ -658,16 +658,6 @@ void thread_sleep(timestamp_us_t delay) {
     thread_yield();
 }
 
-// Implementation of thread yield system call.
-void syscall_thread_yield() {
-    thread_yield();
-}
-
-// Implementation of usleep system call.
-void syscall_thread_sleep(timestamp_us_t delay) {
-    thread_sleep(delay);
-}
-
 // Block this thread and return a blocking ticket.
 uint64_t thread_block() {
     assert_dev_drop(!irq_is_enabled());
@@ -852,7 +842,7 @@ void thread_exit(int code) {
 }
 
 // Wait for another thread to exit.
-void thread_join(tid_t tid) {
+int thread_join(tid_t tid) {
     // TODO: This can be done more efficiently.
     while (1) {
         irq_disable();
@@ -860,15 +850,16 @@ void thread_join(tid_t tid) {
         sched_thread_t *thread = find_thread(tid);
         if (thread) {
             if (atomic_load(&thread->flags) & THREAD_EXITED) {
+                int res = thread->exit_code;
                 atomic_fetch_or(&thread->flags, THREAD_DETACHED);
                 spinlock_release_shared(&threads_lock);
                 irq_enable();
-                return;
+                return res;
             }
         } else {
             spinlock_release_shared(&threads_lock);
             irq_enable();
-            return;
+            return -ENOENT;
         }
         spinlock_release_shared(&threads_lock);
         // No need to re-enable IRQs because the yield implicitly does so.

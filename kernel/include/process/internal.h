@@ -41,6 +41,8 @@ errno_t proc_start_raw(process_t *process);
 // Create a new thread in a process.
 // Returns created user thread handle or -errno.
 long         proc_create_thread_raw(process_t *process, size_t entry_point, size_t arg, int priority);
+// Get the corresponding kernel thread handle.
+tid_t        proc_get_thread_raw(process_t *process, long u_tid);
 // Allocate more memory to a process.
 // Returns actual virtual address on success, 0 on failure.
 errno_size_t proc_map_raw(process_t *process, size_t vaddr, size_t size, size_t align, uint32_t flags);

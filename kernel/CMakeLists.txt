@@ -153,6 +153,7 @@ set(kernel_src
     ${CMAKE_CURRENT_LIST_DIR}/src/process/syscall_util.c
     
     ${CMAKE_CURRENT_LIST_DIR}/src/scheduler/scheduler.c
+    ${CMAKE_CURRENT_LIST_DIR}/src/scheduler/syscall_impl.c
     ${CMAKE_CURRENT_LIST_DIR}/src/scheduler/waitlist.c
     
     ${CMAKE_CURRENT_LIST_DIR}/src/cache.c

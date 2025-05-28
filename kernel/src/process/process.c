@@ -19,6 +19,7 @@
 #include "process/sighandler.h"
 #include "process/types.h"
 #include "scheduler/cpu.h"
+#include "scheduler/scheduler.h"
 #include "sys/wait.h"
 #include "time.h"
 #include "todo.h"
@@ -47,6 +48,9 @@ static bool        allow_proc1_death() {
 // Set arguments for a process.
 // If omitted, argc will be 0 and argv will be NULL.
 static bool proc_setargs_raw_unsafe(process_t *process, int argc, char const *const *argv);
+// Create a new thread in a process.
+// Returns created user thread handle or -errno.
+static long proc_create_thread_raw_unlocked(process_t *process, size_t entry_point, size_t arg, int priority);
 
 
 
@@ -313,16 +317,15 @@ errno_t proc_start_raw(process_t *process) {
     }
 
     // Create the process' main thread.
-    tid_t thread = proc_create_thread_raw(process, (size_t)kbelf_dyn_entrypoint(dyn), 0, SCHED_PRIO_NORMAL);
-    if (!thread) {
+    port_fencei();
+    long thread = proc_create_thread_raw_unlocked(process, (size_t)kbelf_dyn_entrypoint(dyn), 0, SCHED_PRIO_NORMAL);
+    if (thread < 0) {
         kbelf_dyn_unload(dyn);
         kbelf_dyn_destroy(dyn);
         mutex_release(&process->mtx);
-        return -ENOMEM;
+        return thread;
     }
-    port_fencei();
     atomic_store(&process->flags, PROC_RUNNING);
-    assert_dev_keep(thread_resume(thread) >= 0);
     mutex_release(&process->mtx);
     kbelf_dyn_destroy(dyn);
     logkf(LOG_INFO, "Process %{d} started", process->pid);
@@ -331,9 +334,21 @@ errno_t proc_start_raw(process_t *process) {
 }
 
 
+static int proc_thread_u_tid_cmp(void const *a_ptr, void const *b_ptr) {
+    proc_tid_t const *a = a_ptr;
+    proc_tid_t const *b = b_ptr;
+    if (a->u_tid < b->u_tid) {
+        return -1;
+    } else if (a->u_tid > b->u_tid) {
+        return 1;
+    } else {
+        return 0;
+    }
+}
+
 // Create a new thread in a process.
 // Returns created user thread handle or -errno.
-long proc_create_thread_raw(process_t *process, size_t entry_point, size_t arg, int priority) {
+static long proc_create_thread_raw_unlocked(process_t *process, size_t entry_point, size_t arg, int priority) {
     // Create an entry for a new thread.
     void *mem = realloc(process->threads, sizeof(tid_t) * (process->threads_len + 1));
     if (!mem) {
@@ -341,12 +356,9 @@ long proc_create_thread_raw(process_t *process, size_t entry_point, size_t arg, 
     }
     process->threads = mem;
 
-    mutex_acquire(&process->mtx, TIMESTAMP_US_MAX);
-
     // Create a thread.
     tid_t k_tid = thread_new_user(NULL, process, entry_point, arg, priority);
     if (k_tid < 0) {
-        mutex_release(&process->mtx);
         return k_tid;
     }
     sched_thread_t *thread = sched_get_thread(k_tid);
@@ -364,12 +376,42 @@ long proc_create_thread_raw(process_t *process, size_t entry_point, size_t arg, 
 
     // Add the thread to the list.
     proc_tid_t ent = {u_tid, k_tid};
-    array_len_insert(&process->threads, sizeof(proc_tid_t), &process->threads_len, &ent, i);
-    process->threads_len++;
-
-    mutex_release(&process->mtx);
+    if (array_len_insert(&process->threads, sizeof(proc_tid_t), &process->threads_len, &ent, i)) {
+        thread_resume(k_tid);
+    } else {
+        // TODO: Destroy thread.
+        u_tid = -ENOMEM;
+    }
 
     return u_tid;
+}
+
+// Create a new thread in a process.
+// Returns created user thread handle or -errno.
+long proc_create_thread_raw(process_t *process, size_t entry_point, size_t arg, int priority) {
+    mutex_acquire(&process->mtx, TIMESTAMP_US_MAX);
+    long res = proc_create_thread_raw_unlocked(process, entry_point, arg, priority);
+    mutex_release(&process->mtx);
+    return res;
+}
+
+// Get the corresponding kernel thread handle.
+tid_t proc_get_thread_raw(process_t *process, long u_tid) {
+    mutex_acquire_shared(&process->mtx, TIMESTAMP_US_MAX);
+
+    proc_tid_t        to_find = {u_tid, 0};
+    array_binsearch_t res =
+        array_binsearch(process->threads, sizeof(proc_tid_t), process->threads_len, &to_find, proc_thread_u_tid_cmp);
+    tid_t k_tid;
+    if (res.found) {
+        k_tid = process->threads[res.index].k_tid;
+    } else {
+        k_tid = -ENOENT;
+    }
+
+    mutex_release_shared(&process->mtx);
+
+    return k_tid;
 }
 
 
