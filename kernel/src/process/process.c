@@ -334,9 +334,10 @@ errno_t proc_start_raw(process_t *process) {
 }
 
 
-static int proc_thread_u_tid_cmp(void const *a_ptr, void const *b_ptr) {
-    proc_tid_t const *a = a_ptr;
-    proc_tid_t const *b = b_ptr;
+// Compare process thread entries by user thread ID.
+int proc_thread_u_tid_cmp(void const *a_ptr, void const *b_ptr) {
+    proc_thread_t const *a = a_ptr;
+    proc_thread_t const *b = b_ptr;
     if (a->u_tid < b->u_tid) {
         return -1;
     } else if (a->u_tid > b->u_tid) {
@@ -375,8 +376,8 @@ static long proc_create_thread_raw_unlocked(process_t *process, size_t entry_poi
     }
 
     // Add the thread to the list.
-    proc_tid_t ent = {u_tid, k_tid};
-    if (array_len_insert(&process->threads, sizeof(proc_tid_t), &process->threads_len, &ent, i)) {
+    proc_thread_t ent = {u_tid, k_tid};
+    if (array_len_insert(&process->threads, sizeof(proc_thread_t), &process->threads_len, &ent, i)) {
         thread_resume(k_tid);
     } else {
         // TODO: Destroy thread.
@@ -399,9 +400,9 @@ long proc_create_thread_raw(process_t *process, size_t entry_point, size_t arg, 
 tid_t proc_get_thread_raw(process_t *process, long u_tid) {
     mutex_acquire_shared(&process->mtx, TIMESTAMP_US_MAX);
 
-    proc_tid_t        to_find = {u_tid, 0};
+    proc_thread_t     to_find = {u_tid, 0};
     array_binsearch_t res =
-        array_binsearch(process->threads, sizeof(proc_tid_t), process->threads_len, &to_find, proc_thread_u_tid_cmp);
+        array_binsearch(process->threads, sizeof(proc_thread_t), process->threads_len, &to_find, proc_thread_u_tid_cmp);
     tid_t k_tid;
     if (res.found) {
         k_tid = process->threads[res.index].k_tid;

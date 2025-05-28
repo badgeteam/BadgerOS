@@ -38,6 +38,8 @@ process_t      *proc_current() __attribute__((const));
 // Load an executable and start a prepared process.
 errno_t proc_start_raw(process_t *process);
 
+// Compare process thread entries by user thread ID.
+int          proc_thread_u_tid_cmp(void const *a_ptr, void const *b_ptr);
 // Create a new thread in a process.
 // Returns created user thread handle or -errno.
 long         proc_create_thread_raw(process_t *process, size_t entry_point, size_t arg, int priority);

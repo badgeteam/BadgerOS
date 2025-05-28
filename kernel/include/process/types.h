@@ -57,9 +57,15 @@ typedef struct {
 
 // Process thread handle.
 typedef struct {
-    long  u_tid;
-    tid_t k_tid;
-} proc_tid_t;
+    // ID by which the user code refers to the thread.
+    long       u_tid;
+    // Kernel thread handle.
+    tid_t      k_tid;
+    // Copy of thread exit code.
+    int        exit_code;
+    // Whether the thread was detached.
+    atomic_int detached;
+} proc_thread_t;
 
 // Pending signal entry.
 typedef struct {
@@ -75,44 +81,44 @@ typedef int pid_t;
 // A process and all of its resources.
 typedef struct process_t {
     // Node for child process list.
-    dlist_node_t  node;
+    dlist_node_t   node;
     // Parent process, NULL for process 1.
-    process_t    *parent;
+    process_t     *parent;
     // Process binary.
-    char const   *binary;
+    char const    *binary;
     // Number of arguments.
-    int           argc;
+    int            argc;
     // Value of arguments.
-    char        **argv;
+    char         **argv;
     // Size required to store all of argv.
-    size_t        argv_size;
+    size_t         argv_size;
     // Number of file descriptors.
-    size_t        fds_len;
+    size_t         fds_len;
     // File descriptors.
-    proc_fd_t    *fds;
+    proc_fd_t     *fds;
     // Number of threads.
-    size_t        threads_len;
+    size_t         threads_len;
     // Thread handles.
-    proc_tid_t   *threads;
+    proc_thread_t *threads;
     // Process ID.
-    pid_t         pid;
+    pid_t          pid;
     // Memory map information.
-    proc_memmap_t memmap;
+    proc_memmap_t  memmap;
     // Resource mutex used for multithreading processes.
-    mutex_t       mtx;
+    mutex_t        mtx;
     // Process status flags.
-    atomic_int    flags;
+    atomic_int     flags;
     // Pending signals list.
-    dlist_t       sigpending;
+    dlist_t        sigpending;
     // Child process list.
-    dlist_t       children;
+    dlist_t        children;
     // Signal handler virtual addresses.
     // First index is for signal handler returns.
-    size_t        sighandlers[SIG_COUNT];
+    size_t         sighandlers[SIG_COUNT];
     // Exit code if applicable.
-    int           state_code;
+    int            state_code;
     // Total time usage.
-    timeusage_t   timeusage;
+    timeusage_t    timeusage;
 } process_t;
 
 // Indicates that a function returns a process or an -errno.

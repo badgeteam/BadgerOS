@@ -1,8 +1,14 @@
 
 // SPDX-License-Identifier: MIT
 
+#include "arrays.h"
+#include "mutex.h"
 #include "process/internal.h"
+#include "process/types.h"
 #include "scheduler/scheduler.h"
+#include "time.h"
+
+#include <stdatomic.h>
 
 
 
@@ -25,7 +31,20 @@ long syscall_thread_create(void *entry, void *arg, int priority) {
 // Detach a thread; the thread will be destroyed as soon as it exits.
 // Returns 0 or -errno.
 int syscall_thread_detach(long u_tid) {
-    return -ENOTSUP;
+    process_t *proc = proc_current();
+    mutex_acquire(&proc->mtx, TIMESTAMP_US_MAX);
+
+    proc_thread_t     dummy = {.u_tid = u_tid};
+    array_binsearch_t res =
+        array_binsearch(proc->threads, sizeof(proc_thread_t), proc->threads_len, &dummy, proc_thread_u_tid_cmp);
+    if (res.found) {
+        if (atomic_fetch_or(&proc->threads[res.index].detached, 1)) {
+            res.found = false;
+        }
+    }
+
+    mutex_release(&proc->mtx);
+    return res.found ? 0 : -ENOENT;
 }
 
 // Wait for a thread to stop and return its exit code.
