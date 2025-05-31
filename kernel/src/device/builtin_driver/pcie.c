@@ -12,21 +12,21 @@
 
 
 // Extract ranges from DTB.
-static bool pci_dtb_ranges(device_pcictl_t *device, dtb_handle_t *handle, dtb_node_t *node) {
+static errno_t pci_dtb_ranges(device_pcictl_t *device, dtb_handle_t *handle, dtb_node_t *node) {
     dtb_prop_t *ranges = dtb_get_prop(handle, node, "ranges");
     if (!ranges) {
         logk(LOG_ERROR, "Missing ranges for PCI");
-        return false;
+        return -EINVAL;
     }
 
     // PCIe cell counts must match these numbers.
     if (dtb_read_uint(handle, node, "#size-cells") != 2) {
         logk(LOG_ERROR, "Incorrect #size-cells for PCI");
-        return false;
+        return -EINVAL;
     }
     if (dtb_read_uint(handle, node, "#address-cells") != 3) {
         logk(LOG_ERROR, "Incorrect #address-cells for PCI");
-        return false;
+        return -EINVAL;
     }
 
     // If ranges is empty, it is identity-mapped.
@@ -34,22 +34,21 @@ static bool pci_dtb_ranges(device_pcictl_t *device, dtb_handle_t *handle, dtb_no
         device->ranges_len = 1;
         device->ranges     = malloc(sizeof(pci_bar_range_t));
         if (!device->ranges) {
-            return false;
+            return -ENOMEM;
         }
         device->ranges[0] = (pci_bar_range_t){
             .cpu_paddr = 0,
             .pci_paddr = {0},
             .length    = SIZE_MAX,
         };
-        return true;
+        return 0;
     }
 
     // A PCI range mapping is always 7 cells total.
     device->ranges_len = ranges->content_len / (4 * 7);
     device->ranges     = malloc(device->ranges_len * sizeof(pci_bar_range_t));
     if (!device->ranges) {
-        logk(LOG_ERROR, "Out of memory while initializing PCI");
-        return false;
+        return -ENOMEM;
     }
     for (size_t i = 0; i < device->ranges_len; i++) {
         device->ranges[i] = (pci_bar_range_t){
@@ -60,25 +59,26 @@ static bool pci_dtb_ranges(device_pcictl_t *device, dtb_handle_t *handle, dtb_no
             .length             = dtb_prop_read_cells(handle, ranges, i * 7 + 6, 1),
         };
     }
-    return true;
+
+    return 0;
 }
 
 // Extract interrupt mappings from DTB.
-static bool pci_dtb_irqmap(device_pcictl_t *device, dtb_handle_t *handle, dtb_node_t *node) {
+static errno_t pci_dtb_irqmap(device_pcictl_t *device, dtb_handle_t *handle, dtb_node_t *node) {
     // PCI #interrupt-cells must be 1.
     if (dtb_read_uint(handle, node, "#interrupt-cells") != 1) {
         logk(LOG_ERROR, "Incorrect #interrupt-cells for PCI");
-        return false;
+        return -EINVAL;
     }
 
     dtb_prop_t *interrupt_mask = dtb_get_prop(handle, node, "interrupt-map-mask");
     if (!interrupt_mask) {
         logk(LOG_WARN, "Missing interrupt-map-mask for PCI");
-        return false;
+        return -EINVAL;
 
     } else if (interrupt_mask->content_len != 16) {
         logk(LOG_ERROR, "Incorrect interrupt-map-mask for PCI");
-        return false;
+        return -EINVAL;
 
     } else {
         device->irqmap_mask.attr.val = dtb_prop_read_cell(handle, interrupt_mask, 0);
@@ -89,23 +89,23 @@ static bool pci_dtb_irqmap(device_pcictl_t *device, dtb_handle_t *handle, dtb_no
     dtb_prop_t *interrupt_map = dtb_get_prop(handle, node, "interrupt-map");
     if (!interrupt_map) {
         logk(LOG_ERROR, "Missing interrupt-map for PCI");
+        return -EINVAL;
     }
 
     device->irqmap_len = interrupt_map->content_len / 4 / 6;
     device->irqmap     = malloc(sizeof(pci_irqmap_t) * device->irqmap_len);
     if (!device->irqmap) {
-        logk(LOG_ERROR, "Out of memory while initializing PCI");
-        return false;
+        return -ENOMEM;
     }
     for (size_t i = 0; i < device->irqmap_len; i++) {
         device->irqmap[i].pci_paddr.attr.val = dtb_prop_read_cell(handle, interrupt_map, i * 6 + 0);
         device->irqmap[i].pci_paddr.addr_hi  = dtb_prop_read_cell(handle, interrupt_map, i * 6 + 1);
         device->irqmap[i].pci_paddr.addr_lo  = dtb_prop_read_cell(handle, interrupt_map, i * 6 + 2);
         device->irqmap[i].pci_irq            = dtb_prop_read_cell(handle, interrupt_map, i * 6 + 3);
-        device->irqmap[i].cpu_irq            = dtb_prop_read_cell(handle, interrupt_map, i * 6 + 5);
+        device->irqmap[i].parent_irq         = dtb_prop_read_cell(handle, interrupt_map, i * 6 + 5);
     }
 
-    return true;
+    return 0;
 }
 
 
@@ -119,29 +119,28 @@ errno_t pcie_generic_add_ecam_from_dtb(device_pcictl_t *device) {
     dtb_prop_t *bus_range = dtb_get_prop(device->base.info.dtb_handle, device->base.info.dtb_node, "bus-range");
     if (bus_range->content_len != 8) {
         logk(LOG_ERROR, "Incorrect bus-range for PCI");
-        return (errno_t){-EINVAL};
+        return -EINVAL;
     }
     device->bus_start = dtb_prop_read_cell(device->base.info.dtb_handle, bus_range, 0);
     device->bus_end   = dtb_prop_read_cell(device->base.info.dtb_handle, bus_range, 1);
 
-    if (!pci_dtb_ranges(device, device->base.info.dtb_handle, device->base.info.dtb_node)) {
-        return (errno_t){-EINVAL};
+    errno_t res = pci_dtb_ranges(device, device->base.info.dtb_handle, device->base.info.dtb_node);
+    if (res < 0) {
+        return res;
     }
-    if (!pci_dtb_irqmap(device, device->base.info.dtb_handle, device->base.info.dtb_node)) {
+    res = pci_dtb_irqmap(device, device->base.info.dtb_handle, device->base.info.dtb_node);
+    if (res < 0) {
         free(device->ranges);
         device->ranges_len = 0;
         device->ranges     = NULL;
-        return (errno_t){-EINVAL};
+        return res;
     }
 
-    return (errno_t){0};
+    return 0;
 }
 
 errno_t pcie_generic_add(device_t *device) {
-    // if (device_test_dtb_compat(&device->info, 1, (char const *const[]){"pci-host-ecam-generic"})) {
     return pcie_generic_add_ecam_from_dtb((device_pcictl_t *)device);
-    // }
-    // return false;
 }
 
 void pcie_generic_remove(device_t *device) {
@@ -151,7 +150,7 @@ void pcie_generic_interrupt(device_t *device, irqpin_t pin) {
 }
 
 errno_t pcie_generic_enable_irq(device_t *device, irqpin_t pin, bool enable) {
-    return (errno_t){-ENOTSUP};
+    return -ENOTSUP;
 }
 
 void pcie_generic_cam_read(device_pcictl_t *device, uint32_t addr, uint32_t len, void *data) {

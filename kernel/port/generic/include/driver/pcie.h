@@ -23,7 +23,7 @@
 
 // Information gleemed from PCI base address register.
 typedef struct {
-    size_t paddr;
+    size_t addr;
     size_t len;
     bool   is_io;
     bool   is_64bit;
@@ -57,7 +57,7 @@ typedef struct {
     // PCI IRQ pin.
     int         pci_irq;
     // CPU IRQ pin.
-    int         cpu_irq;
+    int         parent_irq;
 } pci_irqmap_t;
 
 // PCIe controller information.

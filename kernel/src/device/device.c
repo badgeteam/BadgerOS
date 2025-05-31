@@ -47,9 +47,9 @@ static spinlock_t       irqconn_lock = SPINLOCK_T_INIT_SHARED;
 static int dev_id_search(void const *a, void const *b) {
     device_union_t const *dev = *(void **)a;
     uint32_t              id  = (size_t)b;
-    if (dev->base.info.id < id) {
+    if (dev->base.id < id) {
         return -1;
-    } else if (dev->base.info.id > id) {
+    } else if (dev->base.id > id) {
         return 1;
     } else {
         return 0;
@@ -224,18 +224,14 @@ static void device_try_find_driver(device_union_t *device) {
 // Add a device interrupt link; child is the device that generates the interrupt, parent the one that receives it.
 // Any device interrupt pin can be connected to any number of opposite pins, but the resulting graph must be acyclic.
 // If a device has incoming interrupts then it must be an interrupt controller and only such drivers can match.
-static errno_t
-    device_link_irq_impl(device_union_t *child, irqpin_t child_pin, device_union_t *parent, irqpin_t parent_pin) {
+static errno_t device_link_irq_impl(
+    device_union_t *child, irqpin_t child_pin, device_union_t *parent, irqpin_t parent_pin, irqconn_t *conn
+) {
     // Enfore both devices are in the tree.
-    if (!child->base.info.id || !parent->base.info.id) {
+    if (!child->base.id || !parent->base.id) {
         return -EINVAL;
     }
 
-    // Create a struct to represent the connection.
-    irqconn_t *conn = calloc(1, sizeof(irqconn_t));
-    if (!conn) {
-        return -ENOMEM;
-    }
     conn->child.device  = &child->base;
     conn->child.pin     = child_pin;
     conn->parent.device = &parent->base;
@@ -249,10 +245,12 @@ static errno_t
 }
 
 // Remove a device interrupt link; see `device_link_irq`.
-static errno_t
-    device_unlink_irq_impl(device_union_t *child, irqpin_t child_pin, device_union_t *parent, irqpin_t parent_pin) {
+// Reuses `irqconn_t::child.node` to store nodes in `to_free_list`.
+static errno_t device_unlink_irq_impl(
+    device_union_t *child, irqpin_t child_pin, device_union_t *parent, irqpin_t parent_pin, dlist_t *to_free_list
+) {
     // Enfore both devices are in the tree.
-    if (!child->base.info.id || !parent->base.info.id) {
+    if (!child->base.id || !parent->base.id) {
         return -EINVAL;
     }
 
@@ -272,7 +270,7 @@ static errno_t
             dlist_remove(&parent->base.irq_children[parent_pin], &conn->parent.node);
 
             // Free memory.
-            free(conn);
+            dlist_append(to_free_list, &conn->child.node);
 
             return 0;
         }
@@ -305,7 +303,7 @@ device_t *device_add(device_info_t info) {
     // Initialize device data.
     uint32_t id           = ++id_ctr;
     device->base.info     = info;
-    device->base.info.id  = id;
+    device->base.id       = id;
     device->base.refcount = 2;
     device->base.state    = DEV_STATE_INACTIVE;
     if (!device_init(device)) {
@@ -317,6 +315,7 @@ device_t *device_add(device_info_t info) {
 
     // Add to parent's set of children.
     if (device->base.info.parent) {
+        device_push_ref(device->base.info.parent);
         set_add(device->base.info.parent->children, device);
     }
 
@@ -338,24 +337,25 @@ void device_activate(device_t *device) {
 }
 
 // Remove a device and its children.
-static uint32_t device_remove_impl(uint32_t id) {
+// Reuses `irqconn_t::child.node` to store nodes in `to_free_list`.
+static uint32_t device_remove_impl(uint32_t id, dlist_t *to_free_list) {
     array_binsearch_t res = array_binsearch(devs, sizeof(void *), devs_len, (void *)(size_t)id, dev_id_search);
 
     if (res.found) {
         device_union_t *device = devs[res.index];
 
         // Disconnect from interrupt parents, if any.
-        for (size_t i = 0; i < device->base.irq_parents_count; i++) {
+        for (size_t i = 0; i < device->base.irq_parents_len; i++) {
             while (device->base.irq_parents[i].len) {
                 irqconn_t conn = *(irqconn_t *)device->base.irq_parents[i].head;
-                device_unlink_irq_impl(device, i, (device_union_t *)conn.parent.device, conn.parent.pin);
+                device_unlink_irq_impl(device, i, (device_union_t *)conn.parent.device, conn.parent.pin, to_free_list);
             }
         }
 
         // First remove child devices, if any.
         if (device->base.children) {
             set_foreach(device_union_t, child, device->base.children) {
-                device_remove_impl(child->base.info.id);
+                device_remove_impl(child->base.id, to_free_list);
             }
         }
 
@@ -379,9 +379,21 @@ static uint32_t device_remove_impl(uint32_t id) {
 
 // Remove a device and its children.
 bool device_remove(uint32_t id) {
+    dlist_t to_free_list = DLIST_EMPTY;
+
+    // Recursively remove devices.
     mutex_acquire(&devs_mtx, TIMESTAMP_US_MAX);
-    bool success = device_remove_impl(id);
+    bool success = device_remove_impl(id, &to_free_list);
     mutex_release(&devs_mtx);
+
+    // Free the interrupt connections' memory.
+    irqconn_t *conn = container_of(to_free_list.head, irqconn_t, child.node);
+    while (conn) {
+        irqconn_t *next = container_of(conn->child.node.next, irqconn_t, child.node);
+        free(conn);
+        conn = next;
+    }
+
     return success;
 }
 
@@ -404,6 +416,10 @@ void device_pop_ref(device_t *device_base) {
     device_union_t *device = (device_union_t *)device_base;
     if (--device->base.refcount != 0) {
         return;
+    }
+
+    if (device->base.info.parent) {
+        device_pop_ref(device->base.info.parent);
     }
 
     switch (device->base.dev_class) {
@@ -546,25 +562,96 @@ set_t device_get_filtered(dev_filter_t const *filter) {
 
 
 
+// Set the number of incoming IRQ pins a device has.
+// Should not be called on active devices nor devices already with incoming IRQ pins.
+// Does not lock the device; should be called by the function that detected it.
+errno_t device_set_irq_in_count(device_t *device, irqpin_t count) {
+    if (device->state != DEV_STATE_INACTIVE || device->irq_parents_len) {
+        return -EINVAL;
+    }
+
+    device->irq_parents = calloc(count, sizeof(dlist_t));
+    if (!device->irq_parents) {
+        return -ENOMEM;
+    }
+    device->irq_parents_len = count;
+
+    return 0;
+}
+
+// Set the number of outgoing IRQ pins a device has.
+// Should not be called on active devices nor devices already with outgoing IRQ pins.
+// Does not lock the device; should be called by the driver when it is added.
+errno_t device_set_irq_out_count(device_t *device, irqpin_t count) {
+    if (device->state != DEV_STATE_INACTIVE || device->irq_children_len) {
+        return -EINVAL;
+    }
+
+    device->irq_children = calloc(count, sizeof(dlist_t));
+    if (!device->irq_children) {
+        return -ENOMEM;
+    }
+    device->irq_children_len = count;
+
+    return 0;
+}
+
+// Find the device's interrupt parent. If there are multiple, returns the first found.
+// This reference must be cleaned up by `device_pop_ref` and can be cloned by `device_push_ref`.
+device_t *device_get_irq_parent(device_t *device) {
+    while (device) {
+        for (size_t i = 0; i < device->irq_parents_len; i++) {
+            if (device->irq_parents[i].len) {
+                irqconn_t *conn = container_of(device->irq_parents[i].head, irqconn_t, child.node);
+                device_push_ref(conn->parent.device);
+                return conn->parent.device;
+            }
+        }
+        device = device->info.parent;
+    }
+    return NULL;
+}
+
 // Add a device interrupt link; child is the device that generates the interrupt, parent the one that receives it.
 // Any device interrupt pin can be connected to any number of opposite pins, but the resulting graph must be acyclic.
 // If a device has incoming interrupts then it must be an interrupt controller and only such drivers can match.
 errno_t device_link_irq(device_t *child, irqpin_t child_pin, device_t *parent, irqpin_t parent_pin) {
+    // Create a struct to represent the connection.
+    irqconn_t *conn = calloc(1, sizeof(irqconn_t));
+    if (!conn) {
+        return -ENOMEM;
+    }
+
+    // Actually create the connection.
     assert_dev_keep(irq_disable());
     spinlock_take(&irqconn_lock);
-    errno_t res = device_link_irq_impl((device_union_t *)child, child_pin, (device_union_t *)parent, parent_pin);
+    errno_t res = device_link_irq_impl((device_union_t *)child, child_pin, (device_union_t *)parent, parent_pin, conn);
     spinlock_release(&irqconn_lock);
     irq_enable();
+
     return res;
 }
 
 // Remove a device interrupt link; see `device_link_irq`.
 errno_t device_unlink_irq(device_t *child, irqpin_t child_pin, device_t *parent, irqpin_t parent_pin) {
+    dlist_t to_free_list = DLIST_EMPTY;
+
+    // Actually remove the connections.
     assert_dev_keep(irq_disable());
     spinlock_take(&irqconn_lock);
-    errno_t res = device_unlink_irq_impl((device_union_t *)child, child_pin, (device_union_t *)parent, parent_pin);
+    errno_t res =
+        device_unlink_irq_impl((device_union_t *)child, child_pin, (device_union_t *)parent, parent_pin, &to_free_list);
     spinlock_release(&irqconn_lock);
     irq_enable();
+
+    // Free the connections' memory.
+    irqconn_t *conn = container_of(to_free_list.head, irqconn_t, child.node);
+    while (conn) {
+        irqconn_t *next = container_of(conn->child.node.next, irqconn_t, child.node);
+        free(conn);
+        conn = next;
+    }
+
     return res;
 }
 

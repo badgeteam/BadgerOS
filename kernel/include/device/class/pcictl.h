@@ -5,10 +5,33 @@
 
 #pragma once
 
+#include "device/dev_addr.h"
 #include "device/device.h"
 #include "device/pci/bar.h"
 
 
+
+// Information gleemed from PCI base address register.
+typedef struct {
+    // BAR space address.
+    size_t addr;
+    // Length in bytes.
+    size_t len;
+    // Is I/O; requires write-through policy..
+    bool   is_io;
+    // Is a 64-bit BAR.
+    bool   is_64bit;
+    // Is prefetchable; allows caching of reads.
+    bool   prefetch;
+    // Is valid; if 0, this BAR is not present or valid.
+    bool   valid;
+} pci_bar_info_t;
+
+// Information about a memory-mapped PCI base address register.
+typedef struct {
+    pci_bar_info_t info;
+    size_t         vaddr;
+} pci_bar_handle_t;
 
 // Physical address -> BAR mapping range.
 typedef struct {
@@ -27,7 +50,7 @@ typedef struct {
     // PCI IRQ pin.
     int         pci_irq;
     // CPU IRQ pin.
-    int         cpu_irq;
+    int         parent_irq;
 } pci_irqmap_t;
 
 // PCI controller device; must use CAM (PCI) or ECAM (PCIe).
@@ -63,4 +86,9 @@ typedef struct {
 
 
 // Enumerate a PCI or PCIe bus, adding or removing devices accordingly.
-void device_pcictl_enumerate(device_pcictl_t *device);
+errno_t device_pcictl_enumerate(device_pcictl_t *device);
+// Get a PCI function's BAR information.
+void    device_pcictl_bar_info(device_pcictl_t *device, dev_pci_addr_t addr, pci_bar_info_t out_bar_info[6]);
+// Map a PCI function's BAR.
+// Returns a pointer to the mapped virtual address or NULL if out of virtual memory.
+void   *device_pcictl_bar_map(device_pcictl_t *device, pci_bar_info_t bar_info);

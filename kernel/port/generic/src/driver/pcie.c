@@ -137,7 +137,7 @@ pci_bar_info_t pci_bar_info(VOLATILE pci_bar_t *bar) {
             .is_io    = true,
             .is_64bit = false,
             .prefetch = false,
-            .paddr    = orig & BAR_IO_ADDR_MASK,
+            .addr     = orig & BAR_IO_ADDR_MASK,
             .len      = len,
         };
 
@@ -152,7 +152,7 @@ pci_bar_info_t pci_bar_info(VOLATILE pci_bar_t *bar) {
             .is_io    = false,
             .is_64bit = true,
             .prefetch = *bar & BAR_FLAG_PREFETCH,
-            .paddr    = orig & BAR_MEM64_ADDR_MASK,
+            .addr     = orig & BAR_MEM64_ADDR_MASK,
             .len      = len,
         };
 
@@ -166,7 +166,7 @@ pci_bar_info_t pci_bar_info(VOLATILE pci_bar_t *bar) {
             .is_io    = false,
             .is_64bit = false,
             .prefetch = *bar & BAR_FLAG_PREFETCH,
-            .paddr    = orig & BAR_MEM32_ADDR_MASK,
+            .addr     = orig & BAR_MEM32_ADDR_MASK,
             .len      = len,
         };
     }
@@ -184,8 +184,8 @@ pci_bar_handle_t pci_bar_map(VOLATILE pci_bar_t *bar) {
     for (i = 0; i < ctl.ranges_len; i++) {
         ppa       = ctl.ranges[i].pci_paddr;
         pci_paddr = ((uint64_t)ppa.addr_hi << 32) | ppa.addr_lo;
-        if ((ppa.attr.type == PCI_ASPACE_IO) == info.is_io && pci_paddr <= info.paddr &&
-            pci_paddr + ctl.ranges[i].length >= info.paddr + info.len) {
+        if ((ppa.attr.type == PCI_ASPACE_IO) == info.is_io && pci_paddr <= info.addr &&
+            pci_paddr + ctl.ranges[i].length >= info.addr + info.len) {
             break;
         }
     }
@@ -195,7 +195,7 @@ pci_bar_handle_t pci_bar_map(VOLATILE pci_bar_t *bar) {
     }
 
     // Determine CPU physical address.
-    size_t cpu_paddr = ctl.ranges[i].cpu_paddr + info.paddr - pci_paddr;
+    size_t cpu_paddr = ctl.ranges[i].cpu_paddr + info.addr - pci_paddr;
 
     // Determine appropriate flags.
     int flags = MEMPROTECT_FLAG_RW | MEMPROTECT_FLAG_NC;
@@ -226,7 +226,7 @@ int pci_trace_irq_pin(pci_addr_t addr, int pci_irq) {
     paddr.attr.val &= ctl.irqmap_mask.attr.val;
     for (size_t i = 0; i < ctl.irqmap_len; i++) {
         if (paddr.attr.val == ctl.irqmap[i].pci_paddr.attr.val && pci_irq == ctl.irqmap[i].pci_irq) {
-            return ctl.irqmap[i].cpu_irq;
+            return ctl.irqmap[i].parent_irq;
         }
     }
     return -1;
@@ -328,7 +328,7 @@ static bool pci_dtb_irqmap(dtb_handle_t *handle, dtb_node_t *node) {
         ctl.irqmap[i].pci_paddr.addr_lo  = dtb_prop_read_cell(handle, interrupt_map, i * 6 + 2);
         ctl.irqmap[i].pci_irq            = dtb_prop_read_cell(handle, interrupt_map, i * 6 + 3);
         // phandle = dtb_prop_read_cell(handle, interrupt_map, i * 6 + 4);
-        ctl.irqmap[i].cpu_irq            = dtb_prop_read_cell(handle, interrupt_map, i * 6 + 5);
+        ctl.irqmap[i].parent_irq         = dtb_prop_read_cell(handle, interrupt_map, i * 6 + 5);
     }
 
     return true;

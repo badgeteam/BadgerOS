@@ -204,7 +204,7 @@ void bootp_early_init() {
 void bootp_full_init() {
 #ifdef __riscv
     // Parse and process DTB.
-    // dtdump(dtb_req.response->dtb_ptr);
+    dtdump(dtb_req.response->dtb_ptr);
     dtparse(dtb_req.response->dtb_ptr);
 #elif defined(__x86_64__)
     // Initialize ACPI.

@@ -49,8 +49,6 @@ typedef struct dev_filter  dev_filter_t;
 struct device_info {
     // Parent device, if any.
     device_t     *parent;
-    // Globally unique device ID; if 0, the device is not in the tree and cannot be used.
-    uint32_t      id;
     // Number of device addresses, usually at least 1.
     size_t        addrs_len;
     // Device addresses.
@@ -65,6 +63,8 @@ struct device_info {
 struct device {
     // Device info.
     device_info_t   info;
+    // Globally unique device ID; becomes invalid when the device is removed.
+    uint32_t        id;
     // Current device state.
     dev_state_t     state;
     // Device reference count; when it reaches 0, the struct is freed.
@@ -78,7 +78,7 @@ struct device {
     // Set of children.
     set_t          *children;
     // Number of outgoing interrupts.
-    size_t          irq_parents_count;
+    size_t          irq_parents_len;
     // Interrupt parents; lists of `irqconn_t`.
     dlist_t        *irq_parents;
     // Number of incoming interrupts.
@@ -181,20 +181,31 @@ set_t device_get_all();
 // This reference must be cleaned up by `device_pop_ref` and can be cloned by `device_push_ref`.
 set_t device_get_filtered(dev_filter_t const *filter);
 
+// Set the number of incoming IRQ pins a device has.
+// Should not be called on active devices.
+// Does not lock the device; should be called by the function that detected it.
+errno_t   device_set_irq_in_count(device_t *device, irqpin_t count);
+// Set the number of outgoing IRQ pins a device has.
+// Should not be called on active devices.
+// Does not lock the device; should be called by the driver when it is added.
+errno_t   device_set_irq_out_count(device_t *device, irqpin_t count);
+// Find the device's interrupt parent. If there are multiple, returns the first found.
+// This reference must be cleaned up by `device_pop_ref` and can be cloned by `device_push_ref`.
+device_t *device_get_irq_parent(device_t *device);
 // Add a device interrupt link; child is the device that generates the interrupt, parent the one that receives it.
 // Any device interrupt pin can be connected to any number of opposite pins, but the resulting graph must be acyclic.
 // If a device has incoming interrupts then it must be an interrupt controller and only such drivers can match.
-errno_t device_link_irq(device_t *child, irqpin_t child_pin, device_t *parent, irqpin_t parent_pin);
+errno_t   device_link_irq(device_t *child, irqpin_t child_pin, device_t *parent, irqpin_t parent_pin);
 // Remove a device interrupt link; see `device_link_irq`.
-errno_t device_unlink_irq(device_t *child, irqpin_t child_pin, device_t *parent, irqpin_t parent_pin);
+errno_t   device_unlink_irq(device_t *child, irqpin_t child_pin, device_t *parent, irqpin_t parent_pin);
 // Enable an outgoing interrupt.
-errno_t device_enable_irq_out(device_t *device, irqpin_t irq_out_pin, bool enabled);
+errno_t   device_enable_irq_out(device_t *device, irqpin_t irq_out_pin, bool enabled);
 // Cascade-enable an interrupt output.
-errno_t device_cascade_enable_irq_out(device_t *device, irqpin_t irq_out_pin);
+errno_t   device_cascade_enable_irq_out(device_t *device, irqpin_t irq_out_pin);
 // Enable an incoming interrupt.
-errno_t device_enable_irq_in(device_t *device, irqpin_t irq_in_pin, bool enabled);
+errno_t   device_enable_irq_in(device_t *device, irqpin_t irq_in_pin, bool enabled);
 // Helper to send an interrupt to all children on a certain pin.
-void    device_forward_interrupt(device_t *device, irqpin_t irq_in_pin);
+void      device_forward_interrupt(device_t *device, irqpin_t irq_in_pin);
 
 // Notify of a device interrupt.
 void device_interrupt(device_t *device, irqpin_t irq_pin);
