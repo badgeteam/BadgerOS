@@ -182,6 +182,11 @@ static bool device_add_to_driver(device_union_t *device, driver_t const *driver)
         spinlock_release(&irqconn_lock);
         irq_enable();
 
+        device_t *parent = device->base.info.parent;
+        if (parent && parent->driver && parent->driver->child_got_driver) {
+            parent->driver->child_got_driver(parent, &device->base);
+        }
+
         mutex_release(&device->base.driver_mtx);
         return true;
     }
@@ -197,6 +202,11 @@ static void device_remove_from_driver(device_union_t *device) {
 
     if (device->base.driver) {
         driver_t const *driver = device->base.driver;
+
+        device_t *parent = device->base.info.parent;
+        if (parent && parent->driver && parent->driver->child_lost_driver) {
+            parent->driver->child_lost_driver(parent, &device->base);
+        }
 
         // Take the irq spinlock around the driver set to guard against partial write of the field during an interrupt.
         assert_dev_keep(irq_disable());
@@ -314,9 +324,29 @@ device_t *device_add(device_info_t info) {
     }
 
     // Add to parent's set of children.
-    if (device->base.info.parent) {
-        device_push_ref(device->base.info.parent);
-        set_add(device->base.info.parent->children, device);
+    device_t *parent = device->base.info.parent;
+    if (parent) {
+        device_push_ref(parent);
+        if (!set_add(parent->children, device)) {
+            device_pop_ref(parent);
+            device_deinit(device);
+            free(info.addrs);
+            free(device);
+            mutex_release(&devs_mtx);
+            return NULL;
+        }
+        if (parent->driver && parent->driver->child_added) {
+            errno_t res = parent->driver->child_added(parent, &device->base);
+            if (res < 0) {
+                set_remove(parent->children, device);
+                device_pop_ref(parent);
+                device_deinit(device);
+                free(info.addrs);
+                free(device);
+                mutex_release(&devs_mtx);
+                return NULL;
+            }
+        }
     }
 
     mutex_release(&devs_mtx);
@@ -330,7 +360,13 @@ device_t *device_add(device_info_t info) {
 void device_activate(device_t *device) {
     mutex_acquire(&device->driver_mtx, TIMESTAMP_US_MAX);
     if (device->state == DEV_STATE_INACTIVE) {
-        device->state = DEV_STATE_ACTIVE;
+        device->state    = DEV_STATE_ACTIVE;
+        device_t *parent = device->info.parent;
+        if (parent) {
+            if (parent->driver && parent->driver->child_activated) {
+                parent->driver->child_activated(parent, device);
+            }
+        }
     }
     mutex_release(&device->driver_mtx);
     device_try_find_driver((device_union_t *)device);
@@ -345,12 +381,16 @@ static uint32_t device_remove_impl(uint32_t id, dlist_t *to_free_list) {
         device_union_t *device = devs[res.index];
 
         // Disconnect from interrupt parents, if any.
+        assert_dev_keep(irq_disable());
+        spinlock_take(&irqconn_lock);
         for (size_t i = 0; i < device->base.irq_parents_len; i++) {
             while (device->base.irq_parents[i].len) {
                 irqconn_t conn = *(irqconn_t *)device->base.irq_parents[i].head;
                 device_unlink_irq_impl(device, i, (device_union_t *)conn.parent.device, conn.parent.pin, to_free_list);
             }
         }
+        spinlock_release(&irqconn_lock);
+        irq_enable();
 
         // First remove child devices, if any.
         if (device->base.children) {
@@ -365,8 +405,12 @@ static uint32_t device_remove_impl(uint32_t id, dlist_t *to_free_list) {
         }
 
         // Remove from parent's set of children.
-        if (device->base.info.parent) {
-            set_remove(device->base.info.parent->children, device);
+        device_t *parent = device->base.info.parent;
+        if (parent) {
+            if (parent->driver && parent->driver->child_removed) {
+                parent->driver->child_removed(parent, &device->base);
+            }
+            set_remove(parent->children, device);
         }
 
         // Remove the device from the list.

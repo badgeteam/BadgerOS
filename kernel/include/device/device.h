@@ -48,14 +48,17 @@ typedef struct dev_filter  dev_filter_t;
 // All information required to match drivers with devices and install said drivers.
 struct device_info {
     // Parent device, if any.
+    // TODO: This struct should probably own a share of this reference but currently doesn't.
     device_t     *parent;
     // Number of device addresses, usually at least 1.
     size_t        addrs_len;
     // Device addresses.
     dev_addr_t   *addrs;
     // DTB handle, if any.
+    // Not owned by this info struct as the DTB is never freed.
     dtb_handle_t *dtb_handle;
     // DTB node, if any.
+    // Not owned by this info struct as the DTB is never freed.
     dtb_node_t   *dtb_node;
 };
 
@@ -111,6 +114,18 @@ struct driver {
     errno_t (*add)(device_t *device);
     // Remove a device from this driver.
     void (*remove)(device_t *device);
+    // [optional] Called after a direct child device is added with `device_add`.
+    // If this fails, the child is removed again.
+    errno_t (*child_added)(device_t *device, device_t *child_device);
+    // [optional] Called after a direct child is activated with `device_activate`.
+    void (*child_activated)(device_t *device, device_t *child_device);
+    // [optional] Called after a direct child device gets added to a driver.
+    void (*child_got_driver)(device_t *device, device_t *child_device);
+    // [optional] Called before a direct child device gets removed from a driver.
+    // Always called before `child_removed`.
+    void (*child_lost_driver)(device_t *device, device_t *child_device);
+    // [optional] Called before a direct child device is removed with `device_remove`.
+    void (*child_removed)(device_t *device, device_t *child_device);
     // Device interrupt handler; also responsible for any potential forwarding of interrupts.
     // Only called from an interrupt context.
     void (*interrupt)(device_t *device, irqpin_t irq_pin);
