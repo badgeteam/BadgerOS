@@ -69,23 +69,7 @@ static errno_t device_pcictl_add_child(device_pcictl_t *device, device_info_t in
         return -ENOMEM;
     }
 
-    // Establish interrupt connections.
-    errno_t res = device_set_irq_out_count(child_dev, 4);
-    if (res < 0) {
-        device_remove(child_dev->id);
-        device_pop_ref(child_dev);
-        return res;
-    }
-
-    device_t *irq_parent = device_get_irq_parent(&device->base);
-    assert_dev_drop(irq_parent);
-    for (int pin = 0; pin < 4; pin++) {
-        int parent_pin = pci_trace_irq_pin(device, info.addrs[0].pci, pin + 1);
-        if (parent_pin >= 0) {
-            device_link_irq(child_dev, pin, irq_parent, parent_pin);
-        }
-    }
-    device_pop_ref(irq_parent);
+    // TODO: Connect interrupts.
 
     // Activate child.
     device_activate(child_dev);
@@ -151,13 +135,6 @@ static errno_t ecam_dev_detect(device_pcictl_t *device, uint8_t bus, uint8_t dev
 
 // Enumerate a PCI or PCIe bus, adding or removing devices accordingly.
 errno_t device_pcictl_enumerate(device_pcictl_t *device) {
-    device_t *irq_parent = device_get_irq_parent(&device->base);
-    if (!irq_parent) {
-        logk(LOG_ERROR, "PCIe controller has no interrupt parent");
-        return -EINVAL;
-    }
-    device_pop_ref(irq_parent);
-
     mutex_acquire_shared(&device->base.driver_mtx, TIMESTAMP_US_MAX);
     if (!device->base.driver) {
         mutex_release_shared(&device->base.driver_mtx);

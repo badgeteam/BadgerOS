@@ -27,9 +27,9 @@
 static bool    riscv_plic_match(device_info_t *device);
 static errno_t riscv_plic_add(device_t *device);
 static void    riscv_plic_remove(device_t *device);
-static void    riscv_plic_interrupt(device_t *device, irqpin_t pin);
-static errno_t riscv_plic_enable_irq_out(device_t *device, irqpin_t pin, bool enable);
-static errno_t riscv_plic_enable_irq_in(device_t *device, irqpin_t pin, bool enable);
+static bool    riscv_plic_interrupt(device_t *device, irqno_t pin);
+static errno_t riscv_plic_enable_irq_out(device_t *device, irqno_t pin, bool enable);
+static errno_t riscv_plic_enable_irq_in(device_t *device, irqno_t pin, bool enable);
 
 
 
@@ -50,20 +50,24 @@ static errno_t riscv_plic_add(device_t *device) {
 static void riscv_plic_remove(device_t *device) {
 }
 
-static void riscv_plic_interrupt(device_t *device, irqpin_t pin) {
+static bool riscv_plic_interrupt(device_t *device, irqno_t pin) {
     device_riscv_plic_t *plic  = (void *)device;
     size_t               vaddr = device->info.addrs[0].mmio.vaddr;
     uint32_t             irq   = REG_READ(PLIC_CLAIM_OFF(plic->ctx_no) + vaddr);
     if (irq) {
-        device_forward_interrupt(device, irq);
+        // Interrupt claimed by this CPU.
+        return device_forward_interrupt(device, irq);
+    } else {
+        // Interrupt presumed to have been handled by another CPU.
+        return true;
     }
 }
 
-static errno_t riscv_plic_enable_irq_out(device_t *device, irqpin_t pin, bool enable) {
+static errno_t riscv_plic_enable_irq_out(device_t *device, irqno_t pin, bool enable) {
     return -ENOTSUP;
 }
 
-static errno_t riscv_plic_enable_irq_in(device_t *device, irqpin_t pin, bool enable) {
+static errno_t riscv_plic_enable_irq_in(device_t *device, irqno_t pin, bool enable) {
     size_t   vaddr  = device->info.addrs[0].mmio.vaddr;
     // TODO: Figure out content numbers.
     uint32_t ctx_no = 0;
@@ -75,7 +79,7 @@ static errno_t riscv_plic_enable_irq_in(device_t *device, irqpin_t pin, bool ena
     return -ENOTSUP;
 }
 
-static void riscv_plic_cascade_enable(device_t *device, irqpin_t irq_in_pin) {
+static void riscv_plic_cascade_enable(device_t *device, irqno_t irq_in_pin) {
     // TODO: Use context number to figure this out.
 }
 

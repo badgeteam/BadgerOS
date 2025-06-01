@@ -28,7 +28,7 @@ errno_t riscv_intc_add(device_t *device) {
 void riscv_intc_remove(device_t *device) {
 }
 
-void riscv_intc_interrupt(device_t *device, irqpin_t pin) {
+bool riscv_intc_interrupt(device_t *device, irqno_t pin) {
     device_irqctl_t *irqctl = (void *)device;
 #ifdef CPU_RISCV_ENABLE_SBI_TIME
     if (pin == RISCV_INT_TIMER) {
@@ -36,19 +36,18 @@ void riscv_intc_interrupt(device_t *device, irqpin_t pin) {
         riscv_sbi_timer_interrupt();
     } else
 #endif
-        if (device->irq_children[pin].len) {
-        device_forward_interrupt(device, pin);
-    } else {
+        if (!device_forward_interrupt(device, pin)) {
         logkf_from_isr(LOG_FATAL, "Unhandled interrupt 0x%{size;x}", pin);
         panic_abort();
     }
+    return true;
 }
 
-errno_t riscv_intc_enable_irq(device_t *device, irqpin_t pin, bool enable) {
+errno_t riscv_intc_enable_irq(device_t *device, irqno_t pin, bool enable) {
     return -ENOTSUP;
 }
 
-errno_t riscv_intc_enable_in(device_t *device, irqpin_t pin, bool enable) {
+errno_t riscv_intc_enable_in(device_t *device, irqno_t pin, bool enable) {
     if (pin == 0 || pin > 32) {
         return -EINVAL;
     }
@@ -60,7 +59,7 @@ errno_t riscv_intc_enable_in(device_t *device, irqpin_t pin, bool enable) {
     return 0;
 }
 
-static void riscv_intc_cascade_enable(device_t *device, irqpin_t irq_in_pin) {
+static void riscv_intc_cascade_enable(device_t *device, irqno_t irq_in_pin) {
     riscv_intc_enable_in(device, irq_in_pin, true);
 }
 

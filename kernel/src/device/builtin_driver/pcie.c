@@ -146,10 +146,11 @@ errno_t pcie_generic_add(device_t *device) {
 void pcie_generic_remove(device_t *device) {
 }
 
-void pcie_generic_interrupt(device_t *device, irqpin_t pin) {
+bool pcie_generic_interrupt(device_t *device, irqno_t pin) {
+    return false;
 }
 
-errno_t pcie_generic_enable_irq(device_t *device, irqpin_t pin, bool enable) {
+errno_t pcie_generic_enable_irq(device_t *device, irqno_t pin, bool enable) {
     return -ENOTSUP;
 }
 

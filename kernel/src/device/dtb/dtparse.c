@@ -10,7 +10,9 @@
 #include "device/device.h"
 #include "device/dtb/dtb.h"
 #include "log.h"
+#include "map.h"
 #include "rawprint.h"
+#include "set.h"
 #include "smp.h"
 
 #if __BYTE_ORDER == __LITTLE_ENDIAN
@@ -94,21 +96,28 @@ static void get_node_addr(
 }
 
 // Recursive DTB parsing imlpementation that walks the SOC for devices and registers them all.
-static device_t *
-    dtparse_impl(dtb_handle_t *handle, dtb_node_t *node, uint32_t alen, uint32_t slen, device_t *parent_device) {
+static device_t *dtparse_impl(
+    map_t *phandle_map, dtb_handle_t *handle, dtb_node_t *node, uint32_t alen, uint32_t slen, device_t *parent_device
+) {
     device_t *device = NULL;
 
     if (dtb_get_prop(handle, node, "compatible")) {
         // If a compatible node is present, register it as a device.
+        if (parent_device) {
+            device_push_ref(parent_device);
+        }
         device_info_t info = {
             .parent     = parent_device,
             .dtb_handle = handle,
             .dtb_node   = node,
         };
         get_node_addr(handle, node, alen, slen, parent_device, &info);
-        device = device_add(info);
-        // TODO: Establish interrupt connections.
-        device_activate(device);
+        device              = device_add(info);
+        dtb_prop_t *phandle = dtb_get_prop(handle, node, "phandle");
+        if (device && phandle) {
+            device_push_ref(device);
+            map_set(phandle_map, (void *)(size_t)dtb_prop_read_uint(handle, phandle), device);
+        }
     }
 
     // Walk child nodes.
@@ -116,13 +125,41 @@ static device_t *
     uint32_t inner_slen = dtb_read_uint(handle, node, "#size-cells");
     for (dtb_node_t *child = node->nodes; child; child = child->next) {
         device_t *child_dev =
-            dtparse_impl(handle, child, inner_alen ?: alen, inner_slen ?: slen, device ?: parent_device);
+            dtparse_impl(phandle_map, handle, child, inner_alen ?: alen, inner_slen ?: slen, device ?: parent_device);
         if (child_dev) {
             device_pop_ref(child_dev);
         }
     }
 
     return device;
+}
+
+// Resolves phandle-based references then activates the device.
+static void dtparse_phandles(map_t *phandle_map, device_t *device) {
+    dtb_prop_t *irq_parent_prop = dtb_get_prop(device->info.dtb_handle, device->info.dtb_node, "interrupt-parent");
+    if (irq_parent_prop) {
+        uint32_t phandle        = dtb_prop_read_uint(device->info.dtb_handle, irq_parent_prop);
+        device->info.irq_parent = map_get(phandle_map, (void *)(size_t)phandle);
+        if (!device->info.irq_parent) {
+            logkf(
+                LOG_ERROR,
+                "DTB device %{cs} has invalid interrupt parent phandle 0x%{u32;x}",
+                device->info.dtb_node->name,
+                phandle
+            );
+        } else {
+            device_push_ref(device->info.irq_parent);
+        }
+    } else if (device->info.parent) {
+        device->info.irq_parent = device->info.parent->info.irq_parent;
+        device_push_ref(device->info.irq_parent);
+    }
+
+    set_foreach(device_t, child_dev, device->children) {
+        dtparse_phandles(phandle_map, child_dev);
+    }
+
+    device_activate(device);
 }
 
 // Parse the DTB and add found devices.
@@ -143,6 +180,9 @@ void dtparse(void *dtb_ptr) {
     // Initialise SMP.
     smp_init_dtb(handle);
 
+    map_t phandle_map = PTR_MAP_EMPTY;
+    set_t dt_devices  = PTR_SET_EMPTY;
+
     // Walk the CPU nodes to find CPU root interrupt controllers.
     for (dtb_node_t *cpu = cpus->nodes; cpu; cpu = cpu->next) {
         dtb_prop_t *reg = dtb_get_prop(handle, cpu, "reg");
@@ -158,21 +198,32 @@ void dtparse(void *dtb_ptr) {
             logkf(LOG_ERROR, "Missing interrupt controller for CPU%{d}", smp_idx);
             continue;
         }
-        device_t *irqctl = dtparse_impl(handle, irqctl_node, 0, 0, NULL);
-        if (!irqctl || !irqctl->driver || irqctl->dev_class != DEV_CLASS_IRQCTL) {
-            logkf(LOG_ERROR, "Invalid interrupt controller for CPU%{d}", smp_idx);
+        device_t *irqctl = dtparse_impl(&phandle_map, handle, irqctl_node, 0, 0, NULL);
+        if (!irqctl) {
+            logkf(LOG_ERROR, "Failed to add interrupt controller for CPU%{d}", smp_idx);
         } else {
             smp_get_cpulocal(smp_idx)->root_irqctl = irqctl;
+            device_push_ref(irqctl);
+            assert_always(set_add(&dt_devices, irqctl));
         }
     }
 
     // Walk the SOC node to detect devices and install drivers.
     for (dtb_node_t *node = soc->nodes; node; node = node->next) {
-        device_t *child_dev = dtparse_impl(handle, node, soc_alen, soc_slen, NULL);
+        device_t *child_dev = dtparse_impl(&phandle_map, handle, node, soc_alen, soc_slen, NULL);
         if (child_dev) {
-            device_pop_ref(child_dev);
+            assert_always(set_add(&dt_devices, child_dev));
         }
     }
+
+    set_foreach(device_t, dev, &dt_devices) {
+        // Do initialization that requires phandles.
+        dtparse_phandles(&phandle_map, dev);
+        // Drop the references from the set because we won't use it from this set again.
+        device_pop_ref(dev);
+    }
+    set_clear(&dt_devices);
+    map_clear(&phandle_map);
 }
 
 

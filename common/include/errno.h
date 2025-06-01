@@ -27,6 +27,26 @@ typedef struct {
     int   errno;
 } errno_ptr_t;
 
+// Returns the errno on error or passes through the value on success.
+#define RETURN_ON_ERRNO(expr)                                                                                          \
+    ({                                                                                                                 \
+        __typeof__((expr)) tmp = (expr);                                                                               \
+        if (tmp < 0) {                                                                                                 \
+            return tmp;                                                                                                \
+        };                                                                                                             \
+        tmp;                                                                                                           \
+    })
+
+// Returns `-ENOMEM` on `NULL` or passes through the pointer.
+#define ENOMEM_ON_NULL(expr)                                                                                           \
+    ({                                                                                                                 \
+        __typeof__((expr)) tmp = (expr);                                                                               \
+        if (!tmp) {                                                                                                    \
+            return -ENOMEM;                                                                                            \
+        }                                                                                                              \
+        tmp;                                                                                                           \
+    })
+
 #endif
 
 
