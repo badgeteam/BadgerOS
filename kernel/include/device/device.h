@@ -62,6 +62,8 @@ struct device_info {
     // DTB node, if any.
     // Not owned by this info struct as the DTB is never freed.
     dtb_node_t   *dtb_node;
+    // Copy of phandle for DTB nodes, or 0 if none.
+    uint32_t      phandle;
 };
 
 // A single connected device.
@@ -200,7 +202,10 @@ void      device_activate(device_t *device);
 bool      device_remove(uint32_t id);
 // Try to get a reference to a device by ID.
 // This reference must be cleaned up by `device_pop_ref` and can be cloned by `device_push_ref`.
-device_t *device_get(uint32_t id);
+device_t *device_by_id(uint32_t id);
+// Try to get a reference to a device by DTB phandle.
+// This reference must be cleaned up by `device_pop_ref` and can be cloned by `device_push_ref`.
+device_t *device_by_phandle(uint32_t phandle);
 // Decrease device reference count.
 void      device_pop_ref(device_t *device);
 // Increase device reference count.

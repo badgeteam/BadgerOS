@@ -55,9 +55,9 @@ typedef struct {
     // PCI device address.
     pci_paddr_t pci_paddr;
     // PCI IRQ pin.
-    int         pci_irq;
+    int         pci_irqno;
     // CPU IRQ pin.
-    int         parent_irq;
+    int         parent_irqno;
 } pci_irqmap_t;
 
 // PCIe controller information.

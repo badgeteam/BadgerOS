@@ -21,20 +21,15 @@ static void device_pcictl_remove_child(device_pcictl_t *device, uint8_t bus, uin
 }
 
 // Trace a PCI interrupt pin [1,4] to a parent interrupt pin.
-// Returns -1 if the interrupt does not exist.
-static int pci_trace_irq_pin(device_pcictl_t *device, dev_pci_addr_t addr, int pci_irq) {
-    pci_paddr_t paddr = {
-        .attr.bus  = addr.bus,
-        .attr.dev  = addr.dev,
-        .attr.func = addr.func,
-    };
-    paddr.attr.val &= device->irqmap_mask.attr.val;
+// Returns NULL if the interrupt does not exist.
+static pci_irqmap_t const *pci_trace_irq_pin(device_pcictl_t *device, dev_pci_addr_t addr, irqno_t pci_irqno) {
+    addr.val &= device->irqmap_mask.attr.val;
     for (size_t i = 0; i < device->irqmap_len; i++) {
-        if (paddr.attr.val == device->irqmap[i].pci_paddr.attr.val && pci_irq == device->irqmap[i].pci_irq) {
-            return device->irqmap[i].parent_irq;
+        if (addr.val == device->irqmap[i].pci_paddr.val && pci_irqno == device->irqmap[i].pci_irqno) {
+            return &device->irqmap[i];
         }
     }
-    return -1;
+    return NULL;
 }
 
 // Add a device with a certain PCIe address.
@@ -69,7 +64,27 @@ static errno_t device_pcictl_add_child(device_pcictl_t *device, device_info_t in
         return -ENOMEM;
     }
 
-    // TODO: Connect interrupts.
+    // Connect interrupts.
+    for (size_t addr = 0; addr < child_dev->info.addrs_len; addr++) {
+        for (irqno_t i = 1; i < 5; i++) {
+            pci_irqmap_t const *map = pci_trace_irq_pin(device, child_dev->info.addrs[addr].pci, i);
+            if (!map) {
+                logkf(
+                    LOG_ERROR,
+                    "Can't find interupt mapping for PCI function %{u8;x}:%{u8;x}.%{u8;x} INT%{c}",
+                    child_dev->info.addrs[addr].pci.bus,
+                    child_dev->info.addrs[addr].pci.dev,
+                    child_dev->info.addrs[addr].pci.func,
+                    'A' - 1 + i
+                );
+                device_remove(child_dev->id);
+                device_pop_ref(child_dev);
+                return -EINVAL;
+            }
+
+            device_link_irq(child_dev, i, map->irq_parent, map->parent_irqno);
+        }
+    }
 
     // Activate child.
     device_activate(child_dev);

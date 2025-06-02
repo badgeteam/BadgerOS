@@ -225,8 +225,8 @@ int pci_trace_irq_pin(pci_addr_t addr, int pci_irq) {
     };
     paddr.attr.val &= ctl.irqmap_mask.attr.val;
     for (size_t i = 0; i < ctl.irqmap_len; i++) {
-        if (paddr.attr.val == ctl.irqmap[i].pci_paddr.attr.val && pci_irq == ctl.irqmap[i].pci_irq) {
-            return ctl.irqmap[i].parent_irq;
+        if (paddr.attr.val == ctl.irqmap[i].pci_paddr.attr.val && pci_irq == ctl.irqmap[i].pci_irqno) {
+            return ctl.irqmap[i].parent_irqno;
         }
     }
     return -1;
@@ -326,9 +326,9 @@ static bool pci_dtb_irqmap(dtb_handle_t *handle, dtb_node_t *node) {
         ctl.irqmap[i].pci_paddr.attr.val = dtb_prop_read_cell(handle, interrupt_map, i * 6 + 0);
         ctl.irqmap[i].pci_paddr.addr_hi  = dtb_prop_read_cell(handle, interrupt_map, i * 6 + 1);
         ctl.irqmap[i].pci_paddr.addr_lo  = dtb_prop_read_cell(handle, interrupt_map, i * 6 + 2);
-        ctl.irqmap[i].pci_irq            = dtb_prop_read_cell(handle, interrupt_map, i * 6 + 3);
+        ctl.irqmap[i].pci_irqno          = dtb_prop_read_cell(handle, interrupt_map, i * 6 + 3);
         // phandle = dtb_prop_read_cell(handle, interrupt_map, i * 6 + 4);
-        ctl.irqmap[i].parent_irq         = dtb_prop_read_cell(handle, interrupt_map, i * 6 + 5);
+        ctl.irqmap[i].parent_irqno       = dtb_prop_read_cell(handle, interrupt_map, i * 6 + 5);
     }
 
     return true;

@@ -34,13 +34,16 @@ typedef struct {
 } dev_mmio_addr_t;
 
 // Represents a PCI or PCI express address.
-typedef struct {
-    // PCIe cotroller's bus number.
-    uint8_t bus;
-    // PCIe bus's device number.
-    uint8_t dev;
-    // PCIe device's function number.
-    uint8_t func;
+typedef union {
+    struct {
+        // PCIe cotroller's bus number.
+        uint8_t bus  : 8;
+        // PCIe bus's device number.
+        uint8_t dev  : 5;
+        // PCIe device's function number.
+        uint8_t func : 3;
+    };
+    uint16_t val;
 } dev_pci_addr_t;
 
 // Represents an AHCI address.

@@ -46,11 +46,13 @@ typedef struct {
 // Mapping from PCI IRQ to CPU IRQ.
 typedef struct {
     // PCI device address.
-    pci_paddr_t pci_paddr;
+    dev_pci_addr_t pci_paddr;
     // PCI IRQ pin.
-    int         pci_irq;
+    irqno_t        pci_irqno;
+    // Interrupt parent.
+    device_t      *irq_parent;
     // CPU IRQ pin.
-    int         parent_irq;
+    irqno_t        parent_irqno;
 } pci_irqmap_t;
 
 // PCI controller device; must use CAM (PCI) or ECAM (PCIe).

@@ -93,16 +93,27 @@ static errno_t pci_dtb_irqmap(device_pcictl_t *device, dtb_handle_t *handle, dtb
     }
 
     device->irqmap_len = interrupt_map->content_len / 4 / 6;
-    device->irqmap     = malloc(sizeof(pci_irqmap_t) * device->irqmap_len);
+    for (size_t i = 0; i < device->irqmap_len; i++) {
+        uint32_t  parent_phandle = dtb_prop_read_cell(handle, interrupt_map, i * 6 + 4);
+        device_t *parent_device  = device_by_phandle(parent_phandle);
+        if (!parent_device) {
+            logkf(LOG_ERROR, "Invalid interrupt-map IRQ parent phandle 0x%{u32;x}", parent_phandle);
+            return -EINVAL;
+        }
+        device_pop_ref(parent_device);
+    }
+
+    device->irqmap = malloc(sizeof(pci_irqmap_t) * device->irqmap_len);
     if (!device->irqmap) {
         return -ENOMEM;
     }
     for (size_t i = 0; i < device->irqmap_len; i++) {
-        device->irqmap[i].pci_paddr.attr.val = dtb_prop_read_cell(handle, interrupt_map, i * 6 + 0);
-        device->irqmap[i].pci_paddr.addr_hi  = dtb_prop_read_cell(handle, interrupt_map, i * 6 + 1);
-        device->irqmap[i].pci_paddr.addr_lo  = dtb_prop_read_cell(handle, interrupt_map, i * 6 + 2);
-        device->irqmap[i].pci_irq            = dtb_prop_read_cell(handle, interrupt_map, i * 6 + 3);
-        device->irqmap[i].parent_irq         = dtb_prop_read_cell(handle, interrupt_map, i * 6 + 5);
+        device->irqmap[i].pci_paddr.val = dtb_prop_read_cell(handle, interrupt_map, i * 6 + 0);
+        // Address stored in cells 1 and 2 is ignored; it is not relevant to interrupt mapping.
+        device->irqmap[i].pci_irqno     = dtb_prop_read_cell(handle, interrupt_map, i * 6 + 3);
+        uint32_t parent_phandle         = dtb_prop_read_cell(handle, interrupt_map, i * 6 + 4);
+        device->irqmap[i].irq_parent    = device_by_phandle(parent_phandle);
+        device->irqmap[i].parent_irqno  = dtb_prop_read_cell(handle, interrupt_map, i * 6 + 5);
     }
 
     return 0;
