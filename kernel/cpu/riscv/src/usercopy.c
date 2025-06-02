@@ -85,7 +85,7 @@ bool copy_from_user_raw(process_t *process, void *kernel_vaddr, size_t user_vadd
 // Copy from kernel to user.
 // Returns whether the user has access to all of these bytes.
 // If the user doesn't have access, no copy is performed.
-bool copy_to_user_raw(process_t *process, size_t user_vaddr, void *kernel_vaddr0, size_t len) {
+bool copy_to_user_raw(process_t *process, size_t user_vaddr, void const *kernel_vaddr0, size_t len) {
     uint8_t const *kernel_vaddr = kernel_vaddr0;
     if (!proc_map_contains_raw(process, user_vaddr, len)) {
         return false;

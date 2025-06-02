@@ -196,6 +196,23 @@ include_directories(
 )
 include_directories(SYSTEM ${port_system_include})
 
+# Integrate Rust.
+if("${CONFIG_CPU}" STREQUAL "x86_64")
+    set(rust_target "x86_64-unknown-linux-gnu")
+elseif("${CONFIG_CPU}" STREQUAL "riscv32")
+    set(rust_target "riscv32imac-unknown-none-elf")
+elseif("${CONFIG_CPU}" STREQUAL "riscv64")
+    set(rust_target "riscv64imac-unknown-none-elf")
+endif()
+set(rust_lib ${CMAKE_CURRENT_LIST_DIR}/target/${rust_target}/debug/libbadgeros_kernel.a)
+set(ENV{RUSTFLAGS} "-C target-feature=+frame-pointer")
+add_custom_target(
+    rust.target ALL
+    cargo +nightly build -Z build-std=core,alloc --target=${rust_target}
+)
+add_dependencies(${target} rust.target)
+target_link_libraries(${target} PRIVATE ${rust_lib})
+
 # Add libraries.
 add_subdirectory(../common/badgelib badgelib)
 add_subdirectory(lib/kbelf)
@@ -209,6 +226,14 @@ target_link_libraries(${target} PRIVATE kbelf badgelib)
 
 # Copy the BadgerOS binary to the output directory.
 install(TARGETS badger-os.elf DESTINATION .)
+add_custom_command(
+    OUTPUT badger-os.stripped.elf
+    ALL
+    COMMAND cp badger-os.elf badger-os.stripped.elf
+    COMMAND ${CONFIG_PREFIX}strip -g badger-os.stripped.elf
+    DEPENDS badger-os.elf
+)
+install(FILES ${CMAKE_BINARY_DIR}/badger-os.stripped.elf DESTINATION .)
 
 # Create a disassembled version for easier debugging.
 add_custom_target(

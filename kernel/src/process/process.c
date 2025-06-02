@@ -737,7 +737,7 @@ bool copy_from_user(pid_t pid, void *kernel_vaddr, size_t user_vaddr, size_t len
 // Copy from kernel to user.
 // Returns whether the user has access to all of these bytes.
 // If the user doesn't have access, no copy is performed.
-bool copy_to_user(pid_t pid, size_t user_vaddr, void *const kernel_vaddr, size_t len) {
+bool copy_to_user(pid_t pid, size_t user_vaddr, void const *kernel_vaddr, size_t len) {
     mutex_acquire_shared(&proc_mtx, TIMESTAMP_US_MAX);
     bool res = copy_to_user_raw(proc_get_unsafe(pid), user_vaddr, kernel_vaddr, len);
     mutex_release_shared(&proc_mtx);

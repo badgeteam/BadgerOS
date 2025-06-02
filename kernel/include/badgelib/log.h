@@ -22,8 +22,13 @@ typedef enum {
 
 extern mutex_t log_mtx;
 
+// Print the timestamp and prefix for a log message without locking `log_mtx`.
+void logk_prefix(log_level_t level);
+
 // Print an unformatted message.
 void logk(log_level_t level, char const *msg);
+// Print an unformatted message.
+void logk_len(log_level_t level, char const *msg, size_t msg_len);
 // Print a formatted message according to format_str.
 void logkf(log_level_t level, char const *msg, ...);
 // Print a hexdump (usually for debug purposes).
@@ -34,6 +39,9 @@ void logk_hexdump_vaddr(log_level_t level, char const *msg, void const *data, si
 // Print an unformatted message from an interrupt.
 // Only use this function in emergencies.
 void logk_from_isr(log_level_t level, char const *msg);
+// Print an unformatted message from an interrupt.
+// Only use this function in emergencies.
+void logk_len_from_isr(log_level_t level, char const *msg, size_t msg_len);
 // Print a formatted message according to format_str from an interrupt.
 // Only use this function in emergencies.
 void logkf_from_isr(log_level_t level, char const *msg, ...);
