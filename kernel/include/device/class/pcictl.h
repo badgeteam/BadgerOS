@@ -107,3 +107,6 @@ void device_pcictl_dev_cam_write(
 void device_pcictl_cam_read(device_pcictl_t *device, uint32_t addr, uint32_t len, void *data);
 // Write data to the configuration space.
 void device_pcictl_cam_write(device_pcictl_t *device, uint32_t addr, uint32_t len, void const *data);
+// Enable a PCI device's interrupt.
+// 0: MSI/MSI-X, 1-4: INTA-INTD.
+void device_pcictl_dev_enable_irq(device_pcictl_t *device, dev_pci_addr_t addr, irqno_t irqno, bool enable);

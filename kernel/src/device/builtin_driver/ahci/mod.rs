@@ -14,7 +14,7 @@ use crate::{
         error::{EResult, Errno},
         raw::{
             dev_addr_t, dev_addr_t__bindgen_ty_1, dev_ahci_addr_t, dev_atype_t_DEV_ATYPE_AHCI,
-            dev_atype_t_DEV_ATYPE_PCI, dev_class_t_DEV_CLASS_UNKNOWN, driver_t,
+            dev_atype_t_DEV_ATYPE_PCI, dev_class_t_DEV_CLASS_UNKNOWN, driver_t, irqno_t,
             pci_bclass_t_PCI_BCLASS_STORAGE,
             pci_progif_storage_sata_t_PCI_PROGIF_STORAGE_SATA_AHCI,
             pci_subclass_storage_t_PCI_SUBCLASS_STORAGE_SATA, pcie_hdr_com_t,
@@ -164,19 +164,8 @@ impl BaseDriver for AhciDriver {
         todo!()
     }
 
-    fn interrupt(&mut self, _irq: crate::bindings::raw::irqno_t) -> bool {
+    fn interrupt(&mut self, irq: irqno_t) -> bool {
         todo!()
-    }
-
-    fn enable_irq_out(&mut self, irq: crate::bindings::raw::irqno_t, enable: bool) -> EResult<()> {
-        if irq >= 32 {
-            return Err(Errno::EINVAL);
-        }
-        todo!()
-    }
-
-    fn enable_irq_in(&mut self, _irq: crate::bindings::raw::irqno_t, _enable: bool) -> EResult<()> {
-        Err(Errno::ENOTSUP)
     }
 }
 

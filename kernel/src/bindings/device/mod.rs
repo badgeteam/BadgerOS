@@ -290,7 +290,7 @@ impl HasBaseDevice for Device {
 /// Common device driver functions.
 pub trait BaseDriver {
     // Remove a device from this driver; only called once.
-    fn remove(&mut self);
+    fn remove(&mut self) {}
     // [optional] Called after a direct child device is added with `device_add`.
     // If this fails, the child is removed again.
     fn child_added(&mut self, _child: BaseDevice) -> EResult<()> {
@@ -308,13 +308,19 @@ pub trait BaseDriver {
     /// Device interrupt handler; also responsible for any potential forwarding of interrupts.
     /// Only called from an interrupt context.
     /// Returns true if this handled an interrupt request.
-    fn interrupt(&mut self, _irq: irqno_t) -> bool;
+    fn interrupt(&mut self, _irq: irqno_t) -> bool {
+        false
+    }
     /// Enable a certain interrupt output.
     /// Can be called with interrupts disabled.
-    fn enable_irq_out(&mut self, _irq: irqno_t, _enable: bool) -> EResult<()>;
+    fn enable_irq_out(&mut self, _irq: irqno_t, _enable: bool) -> EResult<()> {
+        Err(Errno::ENOTSUP)
+    }
     /// [optional] Enable an incoming interrupt.
     /// Can be called with interrupts disabled.
-    fn enable_irq_in(&mut self, _irq: irqno_t, _enable: bool) -> EResult<()>;
+    fn enable_irq_in(&mut self, _irq: irqno_t, _enable: bool) -> EResult<()> {
+        Err(Errno::ENOTSUP)
+    }
     /// [optional] Cascade-enable interrupts from some input designator.
     /// Can be called with interrupts disabled.
     fn cascase_enable_irq(&mut self, _irq: irqno_t) -> EResult<()> {
