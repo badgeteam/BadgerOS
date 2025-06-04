@@ -117,6 +117,7 @@ pub enum Errno {
 
     ENOTEMPTY = raw::ENOTEMPTY,
     ELOOP = raw::ELOOP,
+    ENOTSUP = raw::ENOTSUP,
     ENOMSG = raw::ENOMSG,
     EIDRM = raw::EIDRM,
     ECHRNG = raw::ECHRNG,
@@ -218,31 +219,55 @@ impl Errno {
     pub fn name(&self) -> &'static str {
         unsafe {
             let cs = raw::errno_get_name(*self as i32);
-            str::from_raw_parts(cs, raw::cstr_length(cs))
+            str::from_raw_parts(cs, raw::strlen(cs))
         }
     }
     /// Get a brief description of this errno.
     pub fn desc(&self) -> &'static str {
         unsafe {
             let cs = raw::errno_get_desc(*self as i32);
-            str::from_raw_parts(cs, raw::cstr_length(cs))
+            str::from_raw_parts(cs, raw::strlen(cs))
+        }
+    }
+    /// Create an `EResult` from some integer.
+    pub fn check_u32(errno: i32) -> EResult<u32> {
+        if errno < 0 {
+            Err(unsafe { core::mem::transmute(-errno) })
+        } else {
+            Ok(errno as u32)
+        }
+    }
+    /// Create an `EResult` from some integer.
+    pub fn check(errno: i32) -> EResult<()> {
+        if errno < 0 {
+            Err(unsafe { core::mem::transmute(-errno) })
+        } else {
+            Ok(())
+        }
+    }
+    /// Convert an `EResult` into an integer.
+    pub fn extract_u32(res: EResult<u32>) -> i32 {
+        match res {
+            Ok(x) => x as i32,
+            Err(x) => -(x as u32 as i32),
+        }
+    }
+    /// Convert an `EResult` into an integer.
+    pub fn extract(res: EResult<()>) -> i32 {
+        match res {
+            Ok(()) => 0,
+            Err(x) => -(x as u32 as i32),
         }
     }
 }
 
-/// Represents an error designated by errno.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ErrnoError {
-    pub errno: Errno,
-}
-
-impl Display for ErrnoError {
+impl Display for Errno {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "{} ({})", self.errno.name(), self.errno.desc())
+        write!(f, "{} ({})", self.name(), self.desc())
     }
 }
 
-impl Error for ErrnoError {
+impl Error for Errno {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         None
     }
@@ -252,24 +277,22 @@ impl Error for ErrnoError {
     }
 
     fn cause(&self) -> Option<&dyn Error> {
-        self.source()
+        None
     }
 
     fn provide<'a>(&'a self, _: &mut core::error::Request<'a>) {}
 }
 
-impl Into<ErrnoError> for AllocError {
-    fn into(self) -> ErrnoError {
-        ErrnoError {
-            errno: Errno::ENOMEM,
-        }
+impl Into<Errno> for AllocError {
+    fn into(self) -> Errno {
+        Errno::ENOMEM
     }
 }
 
 macro_rules! errno {
     ($errno: tt) => {
-        crate::bindings::error::ErrnoError {
-            errno: crate::bindings::error::Errno::$errno,
-        }
+        crate::bindings::error::Errno::$errno
     };
 }
+
+pub type EResult<T> = Result<T, Errno>;

@@ -59,8 +59,9 @@ errno_t riscv_intc_enable_in(device_t *device, irqno_t pin, bool enable) {
     return 0;
 }
 
-static void riscv_intc_cascade_enable(device_t *device, irqno_t irq_in_pin) {
+static errno_t riscv_intc_cascade_enable(device_t *device, irqno_t irq_in_pin) {
     riscv_intc_enable_in(device, irq_in_pin, true);
+    return 0;
 }
 
 

@@ -6,6 +6,7 @@
 #pragma once
 
 #include "device/class/irqctl.h"
+#include "device/device.h"
 
 
 
@@ -27,11 +28,12 @@
 
 
 
-// RISC-V PLIC device.
+// RISC-V PLIC device cookie.
 typedef struct {
-    device_irqctl_t base;
-    // Interrupt context to use for supervisor interrupts.
-    size_t          ctx_no;
+    // Number of implemented interrupts.
+    size_t ndev;
+    // PLIC context to use per logical CPU.
+    int   *ctx_by_cpu;
 } device_riscv_plic_t;
 
 

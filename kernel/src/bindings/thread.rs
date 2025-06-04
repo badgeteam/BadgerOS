@@ -6,7 +6,7 @@ use core::{
 use alloc::{boxed::Box, ffi::CString};
 
 use super::{
-    error::ErrnoError,
+    error::EResult,
     raw::{self, SCHED_PRIO_NORMAL, tid_t, timestamp_us_t},
 };
 
@@ -25,7 +25,7 @@ impl Thread {
     pub fn try_new<T: FnOnce() -> i32 + Send + 'static>(
         code: T,
         name: Option<&str>,
-    ) -> Result<Self, ErrnoError> {
+    ) -> EResult<Self> {
         unsafe {
             let closure: Box<dyn FnOnce() -> i32> = Box::new(code);
             let arg = Box::into_raw(Box::new(closure));
@@ -38,9 +38,7 @@ impl Thread {
             );
             if tid <= 0 {
                 drop(Box::from_raw(arg));
-                Err(ErrnoError {
-                    errno: core::mem::transmute(-tid),
-                })
+                Err(core::mem::transmute(-tid))
             } else {
                 raw::thread_resume(tid);
                 Ok(Self { handle: tid })

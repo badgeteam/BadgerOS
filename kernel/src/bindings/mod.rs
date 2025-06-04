@@ -1,3 +1,7 @@
+use raw::timestamp_us_t;
+
+pub mod device;
+
 pub mod dlist;
 #[macro_use]
 pub mod log;
@@ -10,3 +14,7 @@ pub mod raw;
 pub mod semaphore;
 pub mod thread;
 pub mod usercopy;
+
+pub fn time_us() -> timestamp_us_t {
+    unsafe { raw::time_us() }
+}

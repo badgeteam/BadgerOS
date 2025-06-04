@@ -12,6 +12,7 @@
 #include "interrupt.h"
 #include "log.h"
 #include "malloc.h"
+#include "memprotect.h"
 #include "mutex.h"
 #include "panic.h"
 #include "process/process.h"

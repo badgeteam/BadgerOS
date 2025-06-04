@@ -30,8 +30,10 @@ typedef struct {
     // Native erased byte value.
     uint8_t  erase_value;
     // Fast read; do not cache read data, only write data; requires byte read access.
+    // If `false`, all accesses use entire blocks.
     bool     no_read_cache;
     // Do not cache at all; requires byte write/erase access.
+    // If `false`, all accesses use entire blocks.
     bool     no_cache;
     // Block cache, if any.
     cache_t  cache;

@@ -8,6 +8,7 @@
 #include "device/dev_addr.h"
 #include "device/device.h"
 #include "device/pci/bar.h"
+#include "device/pci/confspace.h"
 
 
 
@@ -94,3 +95,15 @@ void    device_pcictl_bar_info(device_pcictl_t *device, dev_pci_addr_t addr, pci
 // Map a PCI function's BAR.
 // Returns a pointer to the mapped virtual address or NULL if out of virtual memory.
 void   *device_pcictl_bar_map(device_pcictl_t *device, pci_bar_info_t bar_info);
+// Read data from the configuration space for a specific device.
+void    device_pcictl_dev_cam_read(
+       device_pcictl_t *device, dev_pci_addr_t dev_addr, uint32_t offset, uint32_t len, void *data
+   );
+// Write data to the configuration space for a specific device.
+void device_pcictl_dev_cam_write(
+    device_pcictl_t *device, dev_pci_addr_t dev_addr, uint32_t offset, uint32_t len, void const *data
+);
+// Read data from the configuration space.
+void device_pcictl_cam_read(device_pcictl_t *device, uint32_t addr, uint32_t len, void *data);
+// Write data to the configuration space.
+void device_pcictl_cam_write(device_pcictl_t *device, uint32_t addr, uint32_t len, void const *data);

@@ -63,15 +63,17 @@ pub fn logkf(level: LogLevel, thing: &dyn Display) {
 }
 
 /// Print a formatted message without locking the mutex.
+#[macro_export]
 macro_rules! logkf_unlocked {
     ($level: expr, $($args:expr),*) => {
-        logkf_unlocked($level, &format_args!($($args),*));
+        crate::bindings::log::logkf_unlocked($level, &format_args!($($args),*))
     };
 }
 
 /// Print a formatted message.
+#[macro_export]
 macro_rules! logkf {
     ($level: expr, $($args:expr),*) => {
-        logkf($level, &format_args!($($args),*));
+        crate::bindings::log::logkf($level, &format_args!($($args),*))
     };
 }

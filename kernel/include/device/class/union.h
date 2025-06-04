@@ -6,6 +6,7 @@
 #pragma once
 
 #include "block.h"
+#include "device/class/pcictl.h"
 #include "irqctl.h"
 #include "tty.h"
 
@@ -17,4 +18,5 @@ typedef union {
     device_block_t  block;
     device_irqctl_t irqctl;
     device_tty_t    tty;
+    device_pcictl_t pcictl;
 } device_union_t;

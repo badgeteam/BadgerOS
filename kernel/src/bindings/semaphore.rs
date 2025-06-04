@@ -1,5 +1,5 @@
 use super::{
-    error::ErrnoError,
+    error::{EResult, Errno},
     raw::{self, sem_destroy, sem_t, timestamp_us_t},
 };
 
@@ -20,10 +20,10 @@ impl Semaphore {
             raw::sem_post(&raw mut self.inner);
         }
     }
-    pub fn try_await(&mut self, timeout: timestamp_us_t) -> Result<(), ErrnoError> {
+    pub fn try_await(&mut self, timeout: timestamp_us_t) -> EResult<()> {
         unsafe { raw::sem_await(&raw mut self.inner, timeout) }
             .then_some(())
-            .ok_or(errno!(ETIMEDOUT))
+            .ok_or(Errno::ETIMEDOUT)
     }
 }
 

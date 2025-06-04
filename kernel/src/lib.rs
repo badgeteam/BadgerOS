@@ -8,6 +8,7 @@
 #![feature(error_generic_member_access)]
 #![feature(str_from_raw_parts)]
 #![feature(negative_impls)]
+#![feature(ptr_metadata)]
 
 extern crate alloc;
 
@@ -15,11 +16,30 @@ pub use core::{include, option::Option, result::Result};
 
 #[macro_use]
 pub mod bindings;
+pub mod device;
 
-use core::{alloc::GlobalAlloc, ffi::c_void, panic::PanicInfo};
+use core::{alloc::GlobalAlloc, ffi::c_void, ops::Deref, panic::PanicInfo};
 
-use alloc::boxed::Box;
-use bindings::{log::*, thread::Thread};
+pub use bindings::log::*;
+
+#[derive(Clone, Copy)]
+pub struct ReadOnly<T> {
+    inner: T,
+}
+
+impl<T> ReadOnly<T> {
+    pub fn new<'a>(thing: &'a mut T) -> &'a mut ReadOnly<T> {
+        unsafe { &mut *(thing as *mut T as *mut ReadOnly<T>) }
+    }
+}
+
+impl<T> Deref for ReadOnly<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
 
 #[global_allocator]
 pub static BADGEROS_RUST_MALLOC: BadgerOSMalloc = BadgerOSMalloc {};
@@ -56,20 +76,4 @@ pub fn badgeros_rust_panic(info: &PanicInfo) -> ! {
 
         bindings::raw::panic_abort_unchecked()
     }
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn rust_test_func() -> i32 {
-    logkf!(LogLevel::Debug, "Waiting for 2 seconds");
-    let test = Box::new(1u8);
-    Thread::new(
-        move || {
-            Thread::sleep_us(2000000);
-            logkf!(LogLevel::Debug, "My box contains {}", *test);
-            0
-        },
-        Some("My Rust Thread"),
-    )
-    .join();
-    462
 }

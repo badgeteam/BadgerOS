@@ -23,6 +23,7 @@
 #include "set.h"
 #include "spinlock.h"
 #include "time.h"
+#include "todo.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -30,21 +31,21 @@
 
 
 // ID -> device map.
-static map_t      devs_by_id      = PTR_MAP_EMPTY;
+static map_t    devs_by_id      = PTR_MAP_EMPTY;
 // Phandle -> device map.
-static map_t      devs_by_phandle = PTR_MAP_EMPTY;
+static map_t    devs_by_phandle = PTR_MAP_EMPTY;
 // Device ID counter.
-static uint32_t   id_ctr;
+static uint32_t id_ctr;
 // Devices list mutex.
-static mutex_t    devs_mtx     = MUTEX_T_INIT_SHARED;
+mutex_t         devs_mtx     = MUTEX_T_INIT_SHARED;
 // Drivers set mutex.
-static mutex_t    drivers_mtx  = MUTEX_T_INIT_SHARED;
+static mutex_t  drivers_mtx  = MUTEX_T_INIT_SHARED;
 // Set of drivers.
-static set_t      drivers      = PTR_SET_EMPTY;
+static set_t    drivers      = PTR_SET_EMPTY;
 // Mutex guarding the act of changing the interrupt graph.
-static mutex_t    irqconn_mtx  = MUTEX_T_INIT_SHARED;
+mutex_t         irqconn_mtx  = MUTEX_T_INIT_SHARED;
 // Spinlock guarding changes to interrupt graph fields.
-static spinlock_t irqconn_lock = SPINLOCK_T_INIT_SHARED;
+spinlock_t      irqconn_lock = SPINLOCK_T_INIT_SHARED;
 
 
 
@@ -156,23 +157,29 @@ static bool device_add_to_driver(device_t *device, driver_t const *driver) {
 
     dev_class_t dev_class   = device->dev_class;
     bool        match_class = (dev_class == DEV_CLASS_UNKNOWN || dev_class == driver->dev_class);
-    if (match_class && driver->match(&device->info) && driver->add(device) >= 0) {
-        device->dev_class = driver->dev_class;
+    if (match_class && driver->match(&device->info)) {
+        errno_t res = driver->add(device);
+        if (res >= 0) {
+            device->dev_class = driver->dev_class;
 
-        // Take the irq spinlock around the driver set to guard against partial write of the field during an interrupt.
-        assert_dev_keep(irq_disable());
-        spinlock_take(&irqconn_lock);
-        device->driver = driver;
-        spinlock_release(&irqconn_lock);
-        irq_enable();
+            // Take the irq spinlock around the driver set to guard against partial write of the field during an
+            // interrupt.
+            assert_dev_keep(irq_disable());
+            spinlock_take(&irqconn_lock);
+            device->driver = driver;
+            spinlock_release(&irqconn_lock);
+            irq_enable();
 
-        device_t *parent = device->info.parent;
-        if (parent && parent->driver && parent->driver->child_got_driver) {
-            parent->driver->child_got_driver(parent, device);
+            device_t *parent = device->info.parent;
+            if (parent && parent->driver && parent->driver->child_got_driver) {
+                parent->driver->child_got_driver(parent, device);
+            }
+
+            mutex_release(&device->driver_mtx);
+            return true;
+        } else {
+            logkf(LOG_ERROR, "driver->add failed: %{cs} (%{cs})", errno_get_name(-res), errno_get_desc(-res));
         }
-
-        mutex_release(&device->driver_mtx);
-        return true;
     }
 
     mutex_release(&device->driver_mtx);
@@ -257,6 +264,12 @@ device_t *device_add(device_info_t info) {
         if (parent->driver && parent->driver->child_added) {
             errno_t res = parent->driver->child_added(parent, &device->base);
             if (res < 0) {
+                logkf(
+                    LOG_ERROR,
+                    "parent->driver->child_added failed: %{cs} (%{cs})",
+                    errno_get_name(-res),
+                    errno_get_desc(-res)
+                );
                 goto err4;
             }
         }
@@ -321,7 +334,7 @@ static uint32_t device_remove_impl(uint32_t id) {
         for (size_t i = 0; i < device->irq_parents_len; i++) {
             while (device->irq_parents[i].connections.len) {
                 irqconn_t conn = *(irqconn_t *)device->irq_parents[i].connections.head;
-                device_unlink_irq_impl(device, i, conn.parent.device, conn.parent.irqno);
+                device_unlink_irq_impl(device, i, conn.device, conn.irqno);
             }
         }
         mutex_release(&irqconn_mtx);
@@ -568,8 +581,20 @@ __attribute__((always_inline)) static inline errno_size_t
     device_alloc_irqno(size_t *const len, size_t *const cap, irqconns_t **const arr, irqno_t irqno) {
     irqconns_t        dummy = {.irqno = irqno, .connections = DLIST_EMPTY};
     array_binsearch_t res   = array_binsearch(*arr, sizeof(irqconns_t), *len, &dummy, irqconns_irqno_cmp);
-    if (res.found || *cap >= *len + 1) {
-        return 0;
+    if (res.found) {
+        return res.index;
+    } else if (*cap >= *len + 1) {
+        // No need to grow the array; just lock and insert.
+        assert_dev_keep(irq_disable());
+        spinlock_take(&irqconn_lock);
+
+        array_insert(*arr, sizeof(irqconns_t), *len, &dummy, res.index);
+        ++*len;
+
+        spinlock_release(&irqconn_lock);
+        irq_enable();
+
+        return res.index;
     }
 
     size_t      new_cap = (*cap ?: 1) * 2;
@@ -601,30 +626,35 @@ errno_t device_link_irq(device_t *child, irqno_t child_pin, device_t *parent, ir
         return -EINVAL;
     }
 
+    // Allocate a new interrupt connection.
+    irqconn_t *child_conn  = ENOMEM_ON_NULL(malloc(sizeof(irqconn_t)));
+    irqconn_t *parent_conn = ENOMEM_ON_NULL(malloc(sizeof(irqconn_t)), free(child_conn));
+
     mutex_acquire(&irqconn_mtx, TIMESTAMP_US_MAX);
 
     // Ensure enough capacity for interrupt connections.
     size_t child_index = RETURN_ON_ERRNO(
-        device_alloc_irqno(&child->irq_parents_len, &child->irq_parents_cap, &child->irq_parents, child_pin)
+        device_alloc_irqno(&child->irq_parents_len, &child->irq_parents_cap, &child->irq_parents, child_pin),
+        free(child_conn);
+        free(parent_conn)
     );
     size_t parent_index = RETURN_ON_ERRNO(
-        device_alloc_irqno(&parent->irq_children_len, &parent->irq_children_cap, &parent->irq_children, parent_pin)
+        device_alloc_irqno(&parent->irq_children_len, &parent->irq_children_cap, &parent->irq_children, parent_pin),
+        free(child_conn);
+        free(parent_conn)
     );
 
-    // Allocate a new interrupt connection.
-    irqconn_t *conn = ENOMEM_ON_NULL(malloc(sizeof(irqconn_t)));
-
-    conn->child.device  = child;
-    conn->child.irqno   = child_pin;
-    conn->parent.device = parent;
-    conn->parent.irqno  = parent_pin;
+    child_conn->device  = child;
+    child_conn->irqno   = child_pin;
+    parent_conn->device = parent;
+    parent_conn->irqno  = parent_pin;
 
     assert_dev_keep(irq_disable());
     spinlock_take(&irqconn_lock);
 
     // Register the connection to both.
-    dlist_append(&child->irq_parents[child_index].connections, &conn->child.node);
-    dlist_append(&parent->irq_children[parent_index].connections, &conn->parent.node);
+    dlist_append(&child->irq_parents[child_index].connections, &parent_conn->node);
+    dlist_append(&parent->irq_children[parent_index].connections, &child_conn->node);
 
     spinlock_release(&irqconn_lock);
     irq_enable();
@@ -635,45 +665,7 @@ errno_t device_link_irq(device_t *child, irqno_t child_pin, device_t *parent, ir
 
 // Remove a device interrupt link; see `device_link_irq`.
 static errno_t device_unlink_irq_impl(device_t *child, irqno_t child_irqno, device_t *parent, irqno_t parent_irqno) {
-    // Enfore both devices are in the tree.
-    if (child->state == DEV_STATE_REMOVED || parent->state == DEV_STATE_REMOVED) {
-        return -EINVAL;
-    }
-
-    mutex_acquire(&irqconn_mtx, TIMESTAMP_US_MAX);
-
-    irqconns_t        dummy = {.irqno = child_irqno};
-    array_binsearch_t child_idx =
-        array_binsearch(child->irq_parents, sizeof(irqconns_t), child->irq_parents_len, &dummy, irqconns_irqno_cmp);
-    dummy.irqno = parent_irqno;
-    array_binsearch_t parent_idx =
-        array_binsearch(child->irq_parents, sizeof(irqconns_t), child->irq_parents_len, &dummy, irqconns_irqno_cmp);
-
-    if (!child_idx.found || !parent_idx.found) {
-        mutex_release(&irqconn_mtx);
-        return -ENOENT;
-    }
-
-    dlist_foreach(irqconn_t, conn, child.node, &child->irq_parents->connections) {
-        if (conn->child.irqno == child_irqno && conn->parent.irqno == parent_irqno) {
-
-            assert_dev_keep(irq_disable());
-            spinlock_take(&irqconn_lock);
-
-            dlist_remove(&child->irq_parents[child_idx.index].connections, &conn->child.node);
-            dlist_remove(&parent->irq_children[parent_idx.index].connections, &conn->parent.node);
-
-            spinlock_release(&irqconn_lock);
-            irq_enable();
-
-            mutex_release(&irqconn_mtx);
-            free(conn);
-            return 0;
-        }
-    }
-
-    mutex_release(&irqconn_mtx);
-    return -ENOENT;
+    TODO();
 }
 
 // Remove a device interrupt link; see `device_link_irq`.
@@ -691,6 +683,82 @@ errno_t device_unlink_irq(device_t *child, irqno_t child_irqno, device_t *parent
 
     return res;
 }
+
+static devirqno_arr_t device_list_irq_impl(device_t *device, irqno_t irqno, bool is_in) {
+    devirqno_arr_t result = {0, NULL};
+    mutex_acquire_shared(&irqconn_mtx, TIMESTAMP_US_MAX);
+    irqconns_t        dummy     = {.irqno = irqno};
+    irqconns_t       *conns     = is_in ? device->irq_children : device->irq_parents;
+    size_t            conns_len = is_in ? device->irq_children_len : device->irq_parents_len;
+    array_binsearch_t idx       = array_binsearch(conns, sizeof(irqconns_t), conns_len, &dummy, irqconns_irqno_cmp);
+    if (!idx.found) {
+        mutex_release_shared(&irqconn_mtx);
+        return result;
+    }
+    size_t count = conns[idx.index].connections.len;
+    if (!count) {
+        mutex_release_shared(&irqconn_mtx);
+        return result;
+    }
+    devirqno_t *arr = malloc(count * sizeof(devirqno_t));
+    if (!arr) {
+        mutex_release_shared(&irqconn_mtx);
+        return result;
+    }
+    size_t i = 0;
+    dlist_foreach_node(irqconn_t, conn, &conns[idx.index].connections) {
+        device_push_ref(conn->device);
+        arr[i].device = conn->device;
+        arr[i].irqno  = conn->irqno;
+        i++;
+    }
+    result.len = count;
+    result.arr = arr;
+    mutex_release_shared(&irqconn_mtx);
+    return result;
+}
+
+// Get the list of incoming IRQ links.
+devirqno_arr_t device_list_in_irq(device_t *device, irqno_t in_irqno) {
+    return device_list_irq_impl(device, in_irqno, true);
+}
+
+// Get the list of outgoing IRQ links.
+devirqno_arr_t device_list_out_irq(device_t *device, irqno_t out_irqno) {
+    return device_list_irq_impl(device, out_irqno, false);
+}
+
+// Free all memory and device references of an `devirqno_arr_t`.
+void devirqno_arr_free(devirqno_arr_t arr) {
+    for (size_t i = 0; i < arr.len; i++) {
+        device_pop_ref(arr.arr[i].device);
+    }
+    free(arr.arr);
+}
+
+
+// Get a set containing all connected incoming interrupts.
+set_t device_all_in_irq(device_t *device) {
+    set_t set = PTR_SET_EMPTY;
+    mutex_acquire_shared(&irqconn_mtx, TIMESTAMP_US_MAX);
+    for (size_t i = 0; i < device->irq_children_len; i++) {
+        set_add(&set, (void *)(size_t)device->irq_children[i].irqno);
+    }
+    mutex_release_shared(&irqconn_mtx);
+    return set;
+}
+
+// Get a set containing all connected outgoing interrupts.
+set_t device_all_out_irq(device_t *device) {
+    set_t set = PTR_SET_EMPTY;
+    mutex_acquire_shared(&irqconn_mtx, TIMESTAMP_US_MAX);
+    for (size_t i = 0; i < device->irq_parents_len; i++) {
+        set_add(&set, (void *)(size_t)device->irq_parents[i].irqno);
+    }
+    mutex_release_shared(&irqconn_mtx);
+    return set;
+}
+
 
 // Enable an outgoing interrupt.
 errno_t device_enable_irq_out(device_t *device, irqno_t irq_out_pin, bool enabled) {
@@ -712,6 +780,7 @@ errno_t device_cascade_enable_irq_out(device_t *device, irqno_t out_irqno) {
     array_binsearch_t index =
         array_binsearch(device->irq_parents, sizeof(irqconns_t), device->irq_parents_len, &dummy, irqconns_irqno_cmp);
     if (!index.found) {
+        mutex_release_shared(&device->driver_mtx);
         return -ENOENT;
     }
     if (!device->driver || !device->irq_parents[index.index].connections.len) {
@@ -722,12 +791,12 @@ errno_t device_cascade_enable_irq_out(device_t *device, irqno_t out_irqno) {
     if (res < 0) {
         return res;
     }
-    dlist_foreach(irqconn_t, conn, child.node, &device->irq_parents[index.index].connections) {
-        device_t *parent = conn->parent.device;
+    dlist_foreach_node(irqconn_t, conn, &device->irq_parents[index.index].connections) {
+        device_t *parent = conn->device;
         if (!parent->driver || !parent->driver->cascase_enable_irq) {
             continue;
         }
-        parent->driver->cascase_enable_irq(parent, conn->parent.irqno);
+        parent->driver->cascase_enable_irq(parent, conn->irqno);
     }
     mutex_release_shared(&device->driver_mtx);
     return 0;
@@ -756,9 +825,9 @@ bool device_forward_interrupt(device_t *device, irqno_t in_irqno) {
         return false;
     }
     bool handled = false;
-    dlist_foreach(irqconn_t, conn, parent.node, &device->irq_children[res.index].connections) {
-        if (conn->child.device->driver) {
-            handled |= conn->child.device->driver->interrupt(conn->child.device, conn->child.irqno);
+    dlist_foreach_node(irqconn_t, conn, &device->irq_children[res.index].connections) {
+        if (conn->device->driver) {
+            handled |= conn->device->driver->interrupt(conn->device, conn->irqno);
         }
     }
     return handled;

@@ -198,8 +198,6 @@ static void kernel_init() {
 static void userland_init() {
     logk(LOG_INFO, "Kernel initialized");
     logk(LOG_INFO, "Starting init process");
-    int rust_test_func();
-    logkf(LOG_DEBUG, "Test functor goes %{d}", rust_test_func());
 
     char const *initbin = "/sbin/init";
     pid_t       pid     = proc_create(-1, "/sbin/init", 1, &initbin);

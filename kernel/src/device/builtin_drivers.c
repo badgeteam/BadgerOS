@@ -13,6 +13,8 @@ static void add_builtin_drivers() {
     driver_add(&driver_generic_pcie.base);
     // driver_add(&driver_generic_ahci.base);
     // driver_add(&driver_generic_sata.base);
+    void add_rust_builtin_drivers();
+    add_rust_builtin_drivers();
 }
 
 static void dummy() {

@@ -9,4 +9,4 @@ app/
 root/
 .venv/
 .config
-target
+target/

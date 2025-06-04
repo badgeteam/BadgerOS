@@ -133,6 +133,7 @@ static device_t *
 
 // Resolves phandle-based references then activates the device.
 static void dtparse_phandles(device_t *device) {
+    // Parse interrupt-parent.
     dtb_prop_t *irq_parent_prop = dtb_get_prop(device->info.dtb_handle, device->info.dtb_node, "interrupt-parent");
     if (irq_parent_prop) {
         uint32_t phandle        = dtb_prop_read_uint(device->info.dtb_handle, irq_parent_prop);
@@ -150,11 +151,71 @@ static void dtparse_phandles(device_t *device) {
         device_push_ref(device->info.irq_parent);
     }
 
-    set_foreach(device_t, child_dev, device->children) {
-        dtparse_phandles(child_dev);
+    // Parse interrupts-extended.
+    dtb_prop_t *irq_ext_prop = dtb_get_prop(device->info.dtb_handle, device->info.dtb_node, "interrupts-extended");
+    if (irq_ext_prop) {
+        uint32_t tot_cells   = irq_ext_prop->content_len / 4;
+        uint32_t i           = 0;
+        irqno_t  child_irqno = 0;
+        while (i < tot_cells) {
+            // Get interrupt parent.
+            uint32_t  phandle    = dtb_prop_read_cell(device->info.dtb_handle, irq_ext_prop, i);
+            device_t *irq_parent = device_by_phandle(phandle);
+            if (!irq_parent) {
+                logkf(
+                    LOG_ERROR,
+                    "Invalid interrupts-extended phandle 0x%{u32;x} for %{cs}",
+                    phandle,
+                    device->info.dtb_node->name
+                );
+                break;
+            }
+
+            // Get number of cells for this parent.
+            dtb_prop_t *irq_cells_prop =
+                dtb_get_prop(device->info.dtb_handle, irq_parent->info.dtb_node, "#interrupt-cells");
+            if (!irq_cells_prop) {
+                device_pop_ref(irq_parent);
+                logkf(
+                    LOG_ERROR,
+                    "Missing #interrupt-cells for interrupt parent %{cs}",
+                    irq_parent->info.dtb_node->name
+                );
+                break;
+            }
+            uint32_t irq_cells = dtb_prop_read_uint(device->info.dtb_handle, irq_cells_prop);
+
+            // Read that many cells for the interrupt number.
+            int parent_irqno  = dtb_prop_read_cells(device->info.dtb_handle, irq_ext_prop, i + 1, irq_cells);
+            i                += irq_cells + 1;
+
+            // Add the interrupt link.
+            if (parent_irqno >= 0) {
+                errno_t res = device_link_irq(device, child_irqno, irq_parent, parent_irqno);
+                if (res < 0) {
+                    logkf(
+                        LOG_ERROR,
+                        "Failed to link interrupts-extended[%{u32;d}] for device %{cs}: %{cs} (%{cs})",
+                        child_irqno,
+                        device->info.dtb_node->name,
+                        errno_get_name(-res),
+                        errno_get_desc(-res)
+                    );
+                    break;
+                }
+            }
+            child_irqno++;
+
+            device_pop_ref(irq_parent);
+        }
     }
 
     device_activate(device);
+
+    // Resolve for child devices.
+    set_foreach(device_t, child_dev, device->children) {
+        dtparse_phandles(child_dev);
+    }
 }
 
 // Parse the DTB and add found devices.

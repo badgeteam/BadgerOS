@@ -6,7 +6,6 @@
 #include "device/class/pcictl.h"
 
 #include "arrays.h"
-#include "assertions.h"
 #include "device/dev_addr.h"
 #include "device/device.h"
 #include "device/pci/bar.h"
@@ -107,6 +106,7 @@ static errno_t ecam_dev_detect(device_pcictl_t *device, uint8_t bus, uint8_t dev
     }
 
     // Construct device info to contain all function numbers.
+    device_push_ref(&device->base);
     device_info_t info = {
         .addrs      = NULL,
         .addrs_len  = 0,
@@ -139,6 +139,7 @@ static errno_t ecam_dev_detect(device_pcictl_t *device, uint8_t bus, uint8_t dev
             addr.pci.func = func;
             if (!array_len_insert(&info.addrs, sizeof(dev_addr_t), &info.addrs_len, &addr, info.addrs_len)) {
                 free(info.addrs);
+                device_pop_ref(&device->base);
                 return -ENOMEM;
             }
         }
@@ -224,7 +225,7 @@ static pci_bar_info_t bar_info_impl(device_pcictl_t *device, uint32_t bar_offset
 
 // Get a PCI function's BAR information.
 void device_pcictl_bar_info(device_pcictl_t *device, dev_pci_addr_t addr, pci_bar_info_t bar_info[6]) {
-    uint32_t bar_offset = (addr.bus * 256 + addr.dev * 8 + addr.func) * 4096;
+    uint32_t bar_offset = (addr.bus * 256 + addr.dev * 8 + addr.func) * 4096 + offsetof(pcie_hdr_dev_t, bar);
     for (int i = 0; i < 6; i++) {
         bar_info[i].valid = false;
     }
@@ -251,6 +252,7 @@ void *device_pcictl_bar_map(device_pcictl_t *device, pci_bar_info_t bar_info) {
     }
     if (i >= device->ranges_len) {
         // No matches found.
+        logk(LOG_ERROR, "Invalid BAR range specified");
         return NULL;
     }
 
@@ -266,12 +268,42 @@ void *device_pcictl_bar_map(device_pcictl_t *device, pci_bar_info_t bar_info) {
     // Create MMU mapping.
     size_t vaddr = memprotect_alloc_vaddr(bar_info.len);
     if (!vaddr) {
+        logk(LOG_ERROR, "memprotect_alloc_vaddr failed");
         return NULL;
     }
     if (!memprotect_k(vaddr, cpu_paddr, bar_info.len, flags)) {
+        logk(LOG_ERROR, "memprotect_k failed");
         memprotect_free_vaddr(vaddr);
         return NULL;
     }
 
     return (void *)vaddr;
+}
+
+// Read data from the configuration space for a specific device.
+void device_pcictl_dev_cam_read(
+    device_pcictl_t *device, dev_pci_addr_t dev_addr, uint32_t offset, uint32_t len, void *data
+) {
+    driver_pcictl_t const *driver = (void *)device->base.driver;
+    driver->cam_read(device, offset + (dev_addr.bus * 256 + dev_addr.dev * 8 + dev_addr.func) * 4096, len, data);
+}
+
+// Write data to the configuration space for a specific device.
+void device_pcictl_dev_cam_write(
+    device_pcictl_t *device, dev_pci_addr_t dev_addr, uint32_t offset, uint32_t len, void const *data
+) {
+    driver_pcictl_t const *driver = (void *)device->base.driver;
+    driver->cam_write(device, offset + (dev_addr.bus * 256 + dev_addr.dev * 8 + dev_addr.func) * 4096, len, data);
+}
+
+// Read data from the configuration space.
+void device_pcictl_cam_read(device_pcictl_t *device, uint32_t addr, uint32_t len, void *data) {
+    driver_pcictl_t const *driver = (void *)device->base.driver;
+    driver->cam_read(device, addr, len, data);
+}
+
+// Write data to the configuration space.
+void device_pcictl_cam_write(device_pcictl_t *device, uint32_t addr, uint32_t len, void const *data) {
+    driver_pcictl_t const *driver = (void *)device->base.driver;
+    driver->cam_write(device, addr, len, data);
 }

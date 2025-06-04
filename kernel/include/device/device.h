@@ -31,19 +31,23 @@ typedef enum {
 } dev_state_t;
 
 // Device interrupt designator.
-typedef uint32_t           irqno_t;
+typedef uint32_t            irqno_t;
 // All information required to match drivers with devices and install said drivers.
-typedef struct device_info device_info_t;
+typedef struct device_info  device_info_t;
 // A single connected device.
-typedef struct device      device_t;
+typedef struct device       device_t;
+// Array of `devirqno_t`.
+typedef struct devirqno_arr devirqno_arr_t;
+// Pair of owned `device_t *` and `irqno_t`.
+typedef struct devirqno     devirqno_t;
 // A device interrupt connection.
-typedef struct irqconn     irqconn_t;
+typedef struct irqconn      irqconn_t;
 // One or more device interrupt connections.
-typedef struct irqconns    irqconns_t;
+typedef struct irqconns     irqconns_t;
 // A device driver.
-typedef struct driver      driver_t;
+typedef struct driver       driver_t;
 // Device filter.
-typedef struct dev_filter  dev_filter_t;
+typedef struct dev_filter   dev_filter_t;
 
 // All information required to match drivers with devices and install said drivers.
 struct device_info {
@@ -99,19 +103,31 @@ struct device {
     // Can be read from interrupts; guarded by `irqconn_lock`.
     irqconns_t     *irq_children;
     // Additional driver-specific data, if any.
-    void           *cookie;
+    void           *cookie, *cookie2;
+};
+
+// Array of `devirqno_t`.
+struct devirqno_arr {
+    size_t      len;
+    devirqno_t *arr;
+};
+
+// Pair of owned `device_t *` and `irqno_t`.
+struct devirqno {
+    // Connected device.
+    device_t *device;
+    // Connected device's interrupt.
+    irqno_t   irqno;
 };
 
 // A device interrupt connection.
 struct irqconn {
-    struct {
-        // Linked list node in parent device.
-        dlist_node_t node;
-        // Connected device.
-        device_t    *device;
-        // Connected device's interrupt.
-        irqno_t      irqno;
-    } parent, child;
+    // Linked list node in parent device.
+    dlist_node_t node;
+    // Connected device.
+    device_t    *device;
+    // Connected device's interrupt.
+    irqno_t      irqno;
 };
 
 // One or more device interrupt connections.
@@ -147,19 +163,19 @@ struct driver {
     // Device interrupt handler; also responsible for any potential forwarding of interrupts.
     // Only called from an interrupt context.
     // Returns true if this handled an interrupt request.
-    bool (*interrupt)(device_t *device, irqno_t irq_irqno);
+    bool (*interrupt)(device_t *device, irqno_t irqno);
     // Enable a certain interrupt output.
     // Can be called with interrupts disabled.
-    errno_t (*enable_irq_out)(device_t *device, irqno_t irq_irqno, bool enable);
+    errno_t (*enable_irq_out)(device_t *device, irqno_t irqno, bool enable);
     // [optional] Enable an incoming interrupt.
     // Can be called with interrupts disabled.
-    errno_t (*enable_irq_in)(device_t *device, irqno_t irq_in_irqno, bool enabled);
+    errno_t (*enable_irq_in)(device_t *device, irqno_t in_irqno, bool enable);
     // [optional] Cascade-enable interrupts from some input designator.
     // Can be called with interrupts disabled.
-    void (*cascase_enable_irq)(device_t *device, irqno_t irq_in_irqno);
+    errno_t (*cascase_enable_irq)(device_t *device, irqno_t in_irqno);
     // [optional] Create additional device node files.
     // Called when a new `devtmpfs` is mounted OR after registered to the driver.
-    void (*create_devnodes)(device_t *device, file_t devtmpfs_root, file_t devnode_dir);
+    errno_t (*create_devnodes)(device_t *device, file_t devtmpfs_root, file_t devnode_dir);
 };
 
 // Device filter.
@@ -222,9 +238,20 @@ set_t device_get_filtered(dev_filter_t const *filter);
 // Any device interrupt designator can be connected to any number of opposite designators, but the resulting graph must
 // be acyclic. If a device has incoming interrupts then it must be an interrupt controller and only such drivers can
 // match.
-errno_t device_link_irq(device_t *child, irqno_t child_irqno, device_t *parent, irqno_t parent_irqno);
+errno_t        device_link_irq(device_t *child, irqno_t child_irqno, device_t *parent, irqno_t parent_irqno);
 // Remove a device interrupt link; see `device_link_irq`.
-errno_t device_unlink_irq(device_t *child, irqno_t child_irqno, device_t *parent, irqno_t parent_irqno);
+errno_t        device_unlink_irq(device_t *child, irqno_t child_irqno, device_t *parent, irqno_t parent_irqno);
+// Get the list of incoming IRQ links.
+devirqno_arr_t device_list_in_irq(device_t *device, irqno_t in_irqno);
+// Get the list of outgoing IRQ links.
+devirqno_arr_t device_list_out_irq(device_t *device, irqno_t out_irqno);
+// Get a set containing all connected incoming interrupts.
+set_t          device_all_in_irq(device_t *device);
+// Get a set containing all connected outgoing interrupts.
+set_t          device_all_out_irq(device_t *device);
+// Free all memory and device references of an `devirqno_arr_t`.
+void           devirqno_arr_free(devirqno_arr_t arr);
+
 // Enable an outgoing interrupt.
 errno_t device_enable_irq_out(device_t *device, irqno_t irq_out_irqno, bool enabled);
 // Cascade-enable an interrupt output.
