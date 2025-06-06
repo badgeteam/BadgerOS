@@ -9,7 +9,7 @@ use crate::bindings::{
 /// Specialization for block devices.
 pub type BlockDevice = AbstractDevice<device_block_t>;
 impl BlockDevice {
-    // Device block size, must be power of 2.
+    /// Device block size, must be power of 2.
     pub fn block_size(&self) -> u64 {
         unsafe { (*self.inner.as_ptr()).block_size }
     }
@@ -157,4 +157,25 @@ pub trait BlockDriver: BaseDriver {
     fn erase_bytes(&self, _start: u64, _count: u64, _mode: blkdev_erase_t) -> EResult<()> {
         Err(Errno::ENOTSUP)
     }
+}
+
+/// Helper macro for filling in block driver fields.
+#[macro_export]
+macro_rules! block_driver {
+    ($match_: expr, $add: expr) => {
+        crate::bindings::raw::driver_block_t {
+            base: crate::base_driver!(
+                crate::bindings::raw::dev_class_t_DEV_CLASS_BLOCK,
+                $match_,
+                $add
+            ),
+            write_blocks: None,
+            read_blocks: None,
+            is_block_erased: None,
+            erase_blocks: None,
+            write_bytes: None,
+            read_bytes: None,
+            erase_bytes: None,
+        }
+    };
 }

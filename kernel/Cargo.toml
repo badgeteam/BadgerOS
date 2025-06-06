@@ -8,6 +8,7 @@ crate-type = ["staticlib"]
 test = false
 
 [dependencies]
+bytemuck = "1.23.0"
 tock-registers = "0.9.0"
 
 [build-dependencies]

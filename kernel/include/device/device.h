@@ -236,8 +236,7 @@ set_t device_get_filtered(dev_filter_t const *filter);
 
 // Add a device interrupt link; child is the device that generates the interrupt, parent the one that receives it.
 // Any device interrupt designator can be connected to any number of opposite designators, but the resulting graph must
-// be acyclic. If a device has incoming interrupts then it must be an interrupt controller and only such drivers can
-// match.
+// be acyclic.
 errno_t        device_link_irq(device_t *child, irqno_t child_irqno, device_t *parent, irqno_t parent_irqno);
 // Remove a device interrupt link; see `device_link_irq`.
 errno_t        device_unlink_irq(device_t *child, irqno_t child_irqno, device_t *parent, irqno_t parent_irqno);
@@ -253,14 +252,15 @@ set_t          device_all_out_irq(device_t *device);
 void           devirqno_arr_free(devirqno_arr_t arr);
 
 // Enable an outgoing interrupt.
-errno_t device_enable_irq_out(device_t *device, irqno_t irq_out_irqno, bool enabled);
-// Cascade-enable an interrupt output.
-errno_t device_cascade_enable_irq_out(device_t *device, irqno_t irq_out_irqno);
+errno_t device_enable_irq_out(device_t *device, irqno_t out_irqno, bool enabled);
+// Cascade-enable an interrupt output's connected parent pins.
+// Does not actually enable this interrupt pin on `device`.
+errno_t device_cascade_enable_irq_out(device_t *device, irqno_t out_irqno);
 // Enable an incoming interrupt.
-errno_t device_enable_irq_in(device_t *device, irqno_t irq_in_irqno, bool enabled);
+errno_t device_enable_irq_in(device_t *device, irqno_t in_irqno, bool enabled);
 // Helper to send an interrupt to all children on a certain designator.
 // Returns true if an interrupt handler was run.
-bool    device_forward_interrupt(device_t *device, irqno_t irq_in_irqno);
+bool    device_forward_interrupt(device_t *device, irqno_t in_irqno);
 
 // Notify of a device interrupt.
 void device_interrupt(device_t *device, irqno_t irq_irqno);

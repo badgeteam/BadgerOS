@@ -9,6 +9,7 @@
 #![feature(str_from_raw_parts)]
 #![feature(negative_impls)]
 #![feature(ptr_metadata)]
+#![feature(box_vec_non_null)]
 
 extern crate alloc;
 
@@ -16,6 +17,7 @@ pub use core::{include, option::Option, result::Result};
 
 #[macro_use]
 pub mod bindings;
+pub mod config;
 pub mod device;
 
 use core::{alloc::GlobalAlloc, ffi::c_void, ops::Deref, panic::PanicInfo};
@@ -53,6 +55,14 @@ unsafe impl GlobalAlloc for BadgerOSMalloc {
 
     unsafe fn dealloc(&self, ptr: *mut u8, _: core::alloc::Layout) {
         unsafe { bindings::raw::free(ptr as *mut c_void) }
+    }
+
+    unsafe fn alloc_zeroed(&self, layout: core::alloc::Layout) -> *mut u8 {
+        unsafe { bindings::raw::calloc(1, layout.pad_to_align().size()) as *mut u8 }
+    }
+
+    unsafe fn realloc(&self, ptr: *mut u8, _: core::alloc::Layout, new_size: usize) -> *mut u8 {
+        unsafe { bindings::raw::realloc(ptr as *mut c_void, new_size) as *mut u8 }
     }
 }
 

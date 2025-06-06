@@ -164,14 +164,24 @@ register_bitfields! {
         port_status   OFFSET(6)  NUMBITS(1) [],
         /// Device mechanical presence status.
         presence      OFFSET(7)  NUMBITS(1) [],
-        /// Reserved.
-        _resvd0       OFFSET(8)  NUMBITS(14) [],
         /// PhyRdy signal changed.
         phy_rdy       OFFSET(22) NUMBITS(1) [],
         /// Incorrect port multiplier status.
         port_mul_err  OFFSET(23) NUMBITS(1) [],
         /// Overflow status.
         overflow      OFFSET(24) NUMBITS(1) [],
+        /// Interface non-fatal error.
+        if_nonfatal   OFFSET(26) NUMBITS(1) [],
+        /// Fatal error that caused the transfer to abort.
+        if_fatal      OFFSET(27) NUMBITS(1) [],
+        /// Host bus data error.
+        hb_data_err   OFFSET(28) NUMBITS(1) [],
+        /// Host bus fatal error.
+        hb_fatal_err  OFFSET(29) NUMBITS(1) [],
+        /// Task file error status.
+        tf_err        OFFSET(30) NUMBITS(1) [],
+        /// Connected status changed.
+        conn_changed  OFFSET(31) NUMBITS(1) [],
     ],
 
     /// AHCI port command and status register.

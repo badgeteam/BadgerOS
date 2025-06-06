@@ -14,6 +14,7 @@
 #include "malloc.h"
 #include "memprotect.h"
 #include "mutex.h"
+#include "page_alloc.h"
 #include "panic.h"
 #include "process/process.h"
 #include "rawprint.h"

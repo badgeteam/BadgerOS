@@ -13,6 +13,7 @@ use super::{
 pub struct Thread {
     handle: tid_t,
 }
+unsafe impl Send for Thread {}
 
 unsafe extern "C" fn rust_thread_trampoline(arg: *mut c_void) -> i32 {
     unsafe { Box::from_raw(arg as *mut Box<dyn FnOnce() -> i32>)() }
@@ -52,14 +53,18 @@ impl Thread {
         unsafe { raw::thread_join(self.handle) as i32 }
     }
     pub fn detach(self) {
-        unsafe { raw::thread_detach(self.handle) };
+        // This will drop, which will call the detach function.
     }
-
     pub fn sleep_us(delay: timestamp_us_t) {
         unsafe { raw::thread_sleep(delay) }
     }
-
     pub unsafe fn exit(code: i32) -> ! {
         unsafe { raw::thread_exit(code) }
+    }
+}
+
+impl Drop for Thread {
+    fn drop(&mut self) {
+        unsafe { raw::thread_detach(self.handle) };
     }
 }

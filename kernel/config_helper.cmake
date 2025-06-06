@@ -4,6 +4,7 @@
 cmake_minimum_required(VERSION 3.10.0)
 
 macro(config_enum VAR DEFAULT DESCRIPTION)
+    list(APPEND ALL_CONFIGS ${VAR})
     set(CONFIG_${VAR} ${DEFAULT} CACHE STRING ${DESCRIPTION})
     set_property(CACHE CONFIG_${VAR} PROPERTY STRINGS ${ARGN})
     set(_tmp_valid_values ${ARGN})

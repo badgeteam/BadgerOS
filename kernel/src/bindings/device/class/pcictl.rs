@@ -1,7 +1,7 @@
 use core::mem::MaybeUninit;
 
 use crate::bindings::{
-    device::AbstractDevice,
+    device::{AbstractDevice, addr::PciAddr},
     error::{EResult, Errno},
     raw::{self, dev_pci_addr_t, device_pcictl_t, mpu_global_ctx, pci_bar_info_t},
 };
@@ -44,12 +44,12 @@ impl PciCtlDevice {
     }
 
     /// Get a PCI function's BAR information.
-    pub unsafe fn bar_info(&self, addr: dev_pci_addr_t) -> [pci_bar_info_t; 6] {
+    pub unsafe fn bar_info(&self, addr: PciAddr) -> [pci_bar_info_t; 6] {
         unsafe {
             let mut res = MaybeUninit::<[pci_bar_info_t; 6]>::uninit();
             raw::device_pcictl_bar_info(
                 self.as_raw_ptr(),
-                addr,
+                addr.into(),
                 res.as_mut_ptr() as *mut pci_bar_info_t,
             );
             res.assume_init()
@@ -73,14 +73,14 @@ impl PciCtlDevice {
     /// Read data from the configuration space for a specific device.
     pub unsafe fn dev_cam_read<T: Sized + Copy>(
         &self,
-        dev_addr: dev_pci_addr_t,
+        dev_addr: PciAddr,
         offset: u32,
         data: &mut T,
     ) {
         unsafe {
             raw::device_pcictl_dev_cam_read(
                 self.as_raw_ptr(),
-                dev_addr,
+                dev_addr.into(),
                 offset,
                 size_of::<T>() as u32,
                 data as *mut T as *mut core::ffi::c_void,
@@ -88,16 +88,11 @@ impl PciCtlDevice {
         }
     }
     /// Write data to the configuration space for a specific device.
-    pub unsafe fn dev_cam_write<T: Sized + Copy>(
-        &self,
-        dev_addr: dev_pci_addr_t,
-        offset: u32,
-        data: &T,
-    ) {
+    pub unsafe fn dev_cam_write<T: Sized + Copy>(&self, dev_addr: PciAddr, offset: u32, data: &T) {
         unsafe {
             raw::device_pcictl_dev_cam_write(
                 self.as_raw_ptr(),
-                dev_addr,
+                dev_addr.into(),
                 offset,
                 size_of::<T>() as u32,
                 data as *const T as *const core::ffi::c_void,

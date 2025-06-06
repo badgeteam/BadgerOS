@@ -6,6 +6,7 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 
@@ -28,9 +29,9 @@ typedef struct {
     // Base address in physical memory.
     uint64_t paddr;
     // Base address in virtual memory.
-    uint64_t vaddr;
+    size_t   vaddr;
     // Byte size in memory.
-    uint64_t size;
+    size_t   size;
 } dev_mmio_addr_t;
 
 // Represents a PCI or PCI express address.

@@ -10,40 +10,6 @@ use super::{
     raw::{self, mutex_t, timestamp_us_t},
 };
 
-pub trait HasMutex<T, const SHARED: bool>: Send + Sync {
-    unsafe fn mutex(&self) -> &mut mutex_t;
-    unsafe fn data(&self) -> &mut T;
-}
-
-/// A reference to a BadgerOS mutex that protects some disconnected value.
-pub struct DetachedMutex<'a, T, const SHARED: bool> {
-    inner: *mut mutex_t,
-    data: *mut T,
-    marker: PhantomData<&'a mut T>,
-}
-unsafe impl<T, const SHARED: bool> Send for DetachedMutex<'_, T, SHARED> {}
-unsafe impl<T, const SHARED: bool> Sync for DetachedMutex<'_, T, SHARED> {}
-
-impl<T, const SHARED: bool> HasMutex<T, SHARED> for DetachedMutex<'_, T, SHARED> {
-    unsafe fn mutex(&self) -> &mut mutex_t {
-        unsafe { &mut *self.inner }
-    }
-
-    unsafe fn data(&self) -> &mut T {
-        unsafe { &mut *self.data }
-    }
-}
-
-impl<T, const SHARED: bool> DetachedMutex<'_, T, SHARED> {
-    pub unsafe fn new(inner: *mut mutex_t, data: *mut T) -> Self {
-        Self {
-            inner,
-            data,
-            marker: PhantomData {},
-        }
-    }
-}
-
 /// A BadgerOS mutex with a value in it.
 pub struct Mutex<T, const SHARED: bool> {
     inner: UnsafeCell<mutex_t>,
@@ -52,7 +18,7 @@ pub struct Mutex<T, const SHARED: bool> {
 unsafe impl<T, const SHARED: bool> Send for Mutex<T, SHARED> {}
 unsafe impl<T, const SHARED: bool> Sync for Mutex<T, SHARED> {}
 
-impl<T, const SHARED: bool> HasMutex<T, SHARED> for Mutex<T, SHARED> {
+impl<T, const SHARED: bool> Mutex<T, SHARED> {
     unsafe fn mutex(&self) -> &mut mutex_t {
         unsafe { self.inner.as_mut_unchecked() }
     }
@@ -74,7 +40,7 @@ impl<T, const SHARED: bool> Mutex<T, SHARED> {
     }
 }
 
-impl<T, const SHARED: bool> dyn HasMutex<T, SHARED> {
+impl<T, const SHARED: bool> Mutex<T, SHARED> {
     /// Try to lock the mutex.
     pub fn try_lock<'a>(&'a self, timeout: timestamp_us_t) -> EResult<MutexGuard<'a, T, SHARED>> {
         MutexGuard::try_new(self, timeout)
@@ -85,7 +51,7 @@ impl<T, const SHARED: bool> dyn HasMutex<T, SHARED> {
     }
 }
 
-impl<T> dyn HasMutex<T, true> {
+impl<T> Mutex<T, true> {
     /// Try to lock the mutex as shared.
     pub fn try_lock_shared<'a>(
         &'a self,
@@ -99,21 +65,21 @@ impl<T> dyn HasMutex<T, true> {
     }
 }
 
-impl<T, const SHARED: bool> dyn HasMutex<T, SHARED> {
+impl<T, const SHARED: bool> Mutex<T, SHARED> {
     /// Write the value in the mutex.
     pub fn write(&self, value: T) {
         *self.lock() = value
     }
 }
 
-impl<T: Clone> dyn HasMutex<T, true> {
+impl<T: Clone> Mutex<T, true> {
     /// Read the value in the mutex.
     pub fn read(&self) -> T {
         self.lock_shared().clone()
     }
 }
 
-impl<T: Clone> dyn HasMutex<T, false> {
+impl<T: Clone> Mutex<T, false> {
     /// Read the value in the mutex.
     pub fn read(&self) -> T {
         self.lock().clone()
@@ -149,7 +115,7 @@ impl<'a, T, const SHARED: bool> MutexGuard<'a, T, SHARED> {
         unsafe { Self::try_new_raw(mutex, data, timestamp_us_t::MAX) }.unwrap()
     }
     /// Try to lock a mutex.
-    pub fn try_new(mutex: &'a dyn HasMutex<T, SHARED>, timeout: timestamp_us_t) -> EResult<Self> {
+    pub fn try_new(mutex: &'a Mutex<T, SHARED>, timeout: timestamp_us_t) -> EResult<Self> {
         unsafe {
             raw::mutex_acquire(mutex.mutex(), timeout)
                 .then_some(Self {
@@ -161,7 +127,7 @@ impl<'a, T, const SHARED: bool> MutexGuard<'a, T, SHARED> {
         }
     }
     /// Lock a mutex.
-    pub fn new(mutex: &'a dyn HasMutex<T, SHARED>) -> Self {
+    pub fn new(mutex: &'a Mutex<T, SHARED>) -> Self {
         Self::try_new(mutex, timestamp_us_t::MAX).unwrap()
     }
 }
@@ -215,7 +181,7 @@ impl<'a, T> SharedMutexGuard<'a, T> {
         unsafe { Self::try_new_raw(mutex, data, timestamp_us_t::MAX) }.unwrap()
     }
     /// Try to lock a mutex as shared.
-    pub fn try_new(mutex: &'a dyn HasMutex<T, true>, timeout: timestamp_us_t) -> EResult<Self> {
+    pub fn try_new(mutex: &'a Mutex<T, true>, timeout: timestamp_us_t) -> EResult<Self> {
         unsafe {
             raw::mutex_acquire_shared(mutex.mutex(), timeout)
                 .then_some(Self {
@@ -227,7 +193,7 @@ impl<'a, T> SharedMutexGuard<'a, T> {
         }
     }
     /// Lock a mutex as shared.
-    pub fn new(mutex: &'a dyn HasMutex<T, true>) -> Self {
+    pub fn new(mutex: &'a Mutex<T, true>) -> Self {
         Self::try_new(mutex, timestamp_us_t::MAX).unwrap()
     }
 }

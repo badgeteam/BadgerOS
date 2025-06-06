@@ -283,8 +283,8 @@ impl Error for Errno {
     fn provide<'a>(&'a self, _: &mut core::error::Request<'a>) {}
 }
 
-impl Into<Errno> for AllocError {
-    fn into(self) -> Errno {
+impl From<AllocError> for Errno {
+    fn from(_: AllocError) -> Self {
         Errno::ENOMEM
     }
 }

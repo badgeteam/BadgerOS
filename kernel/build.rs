@@ -18,10 +18,7 @@ fn main() {
         // Fix: For some reason, `malloc` and `realloc` specifically do not use `usize`.
         .blocklist_function("malloc")
         .blocklist_function("realloc")
-        .raw_line("unsafe extern \"C\" { pub fn malloc(_: usize) -> *mut c_void; }")
-        .raw_line(
-            "unsafe extern \"C\" { pub fn realloc(_: *mut c_void, _: usize) -> *mut c_void; }",
-        )
+        .blocklist_function("calloc")
         // The input header we would like to generate
         // bindings for.
         .header("include/rust_bindgen_wrapper.h")

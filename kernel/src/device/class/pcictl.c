@@ -58,6 +58,7 @@ static errno_t device_pcictl_add_child(device_pcictl_t *device, device_info_t in
     }
 
     // Add the child to the device tree.
+    // TODO: This is incorrect; there should be one device node per function.
     device_t *child_dev = device_add(info);
     if (!child_dev) {
         return -ENOMEM;

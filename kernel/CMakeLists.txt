@@ -196,6 +196,13 @@ include_directories(
 )
 include_directories(SYSTEM ${port_system_include})
 
+# Export configs in a way visible to Rust.
+set(RUST_CONFIG_FILE "")
+foreach(config_name ${ALL_CONFIGS})
+    set(RUST_CONFIG_FILE "${RUST_CONFIG_FILE}cmake_config!(${config_name}, ${CONFIG_${config_name}});")
+endforeach()
+file(CONFIGURE OUTPUT "cmake_config.rs" CONTENT "${RUST_CONFIG_FILE}")
+
 # Integrate Rust.
 if("${CONFIG_CPU}" STREQUAL "x86_64")
     set(rust_target "x86_64-unknown-linux-gnu")

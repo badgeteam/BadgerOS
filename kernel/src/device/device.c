@@ -158,6 +158,9 @@ static bool device_add_to_driver(device_t *device, driver_t const *driver) {
     dev_class_t dev_class   = device->dev_class;
     bool        match_class = (dev_class == DEV_CLASS_UNKNOWN || dev_class == driver->dev_class);
     if (match_class && driver->match(&device->info)) {
+        if (dev_class == DEV_CLASS_UNKNOWN) {
+            device->dev_class = driver->dev_class;
+        }
         errno_t res = driver->add(device);
         if (res >= 0) {
             device->dev_class = driver->dev_class;
@@ -171,14 +174,23 @@ static bool device_add_to_driver(device_t *device, driver_t const *driver) {
             irq_enable();
 
             device_t *parent = device->info.parent;
-            if (parent && parent->driver && parent->driver->child_got_driver) {
-                parent->driver->child_got_driver(parent, device);
+            if (parent) {
+                mutex_acquire_shared(&parent->driver_mtx, TIMESTAMP_US_MAX);
+                mutex_release(&device->driver_mtx);
+                if (parent->driver && parent->driver->child_got_driver) {
+                    parent->driver->child_got_driver(parent, device);
+                }
+                mutex_release_shared(&parent->driver_mtx);
+            } else {
+                mutex_release(&device->driver_mtx);
             }
 
-            mutex_release(&device->driver_mtx);
             return true;
         } else {
             logkf(LOG_ERROR, "driver->add failed: %{cs} (%{cs})", errno_get_name(-res), errno_get_desc(-res));
+            if (dev_class == DEV_CLASS_UNKNOWN) {
+                device->dev_class = DEV_CLASS_UNKNOWN;
+            }
         }
     }
 
@@ -773,32 +785,25 @@ errno_t device_enable_irq_out(device_t *device, irqno_t irq_out_pin, bool enable
     return res;
 }
 
-// Cascade-enable an interrupt output.
+// Cascade-enable an interrupt output's connected parent pins.
+// Does not actually enable this interrupt pin on `device`.
 errno_t device_cascade_enable_irq_out(device_t *device, irqno_t out_irqno) {
-    mutex_acquire_shared(&device->driver_mtx, TIMESTAMP_US_MAX);
     irqconns_t        dummy = {.irqno = out_irqno};
     array_binsearch_t index =
         array_binsearch(device->irq_parents, sizeof(irqconns_t), device->irq_parents_len, &dummy, irqconns_irqno_cmp);
-    if (!index.found) {
-        mutex_release_shared(&device->driver_mtx);
+    if (!index.found || !device->irq_parents[index.index].connections.len) {
         return -ENOENT;
-    }
-    if (!device->driver || !device->irq_parents[index.index].connections.len) {
-        mutex_release_shared(&device->driver_mtx);
-        return -ENOENT;
-    }
-    errno_t res = device->driver->enable_irq_out(device, out_irqno, true);
-    if (res < 0) {
-        return res;
     }
     dlist_foreach_node(irqconn_t, conn, &device->irq_parents[index.index].connections) {
         device_t *parent = conn->device;
+        mutex_acquire_shared(&parent->driver_mtx, TIMESTAMP_US_MAX);
         if (!parent->driver || !parent->driver->cascase_enable_irq) {
+            mutex_release_shared(&parent->driver_mtx);
             continue;
         }
         parent->driver->cascase_enable_irq(parent, conn->irqno);
+        mutex_release_shared(&parent->driver_mtx);
     }
-    mutex_release_shared(&device->driver_mtx);
     return 0;
 }
 

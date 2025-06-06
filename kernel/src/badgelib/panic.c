@@ -7,7 +7,9 @@
 #include "interrupt.h"
 #include "isr_ctx.h"
 #include "log.h"
+#include "mutex.h"
 #include "rawprint.h"
+#include "time.h"
 
 #include <stdatomic.h>
 
@@ -58,7 +60,9 @@ static atomic_int panic_flag;
 // Try to atomically claim the panic flag.
 // Only ever call this if a subsequent call to `panic_abort_unchecked` or `panic_poweroff_unchecked` is imminent.
 void claim_panic() {
-    irq_disable();
+    if (irq_disable()) {
+        mutex_acquire(&log_mtx, TIMESTAMP_US_MAX);
+    }
     if (atomic_fetch_add_explicit(&panic_flag, 1, memory_order_release)) {
         // Didn't win the flag.
         cpu_panic_poweroff();
