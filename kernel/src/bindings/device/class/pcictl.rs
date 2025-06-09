@@ -3,7 +3,7 @@ use core::mem::MaybeUninit;
 use crate::bindings::{
     device::{AbstractDevice, addr::PciAddr},
     error::{EResult, Errno},
-    raw::{self, dev_pci_addr_t, device_pcictl_t, mpu_global_ctx, pci_bar_info_t},
+    raw::{self, device_pcictl_t, mpu_global_ctx, pci_bar_info_t},
 };
 
 /// Representation of some mapped PCIe BAR memory.

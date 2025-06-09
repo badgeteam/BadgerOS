@@ -21,9 +21,10 @@ use crate::{
         mutex::Mutex,
         pmm::PhysBox,
         raw::{driver_block_t, mpu_global_ctx},
+        thread::Thread,
         time_us,
     },
-    block_driver, config,
+    block_driver,
     device::builtin_driver::ahci::{AHCI_DRIVER, ata, fis},
     logk,
 };
@@ -98,6 +99,23 @@ impl SataDriver {
         {
             let guard = this.mem.lock();
 
+            guard.mmio.cmd.modify(reg::PortCmd::cmd_start.val(0));
+            let lim = time_us() + 100000;
+            while guard.mmio.cmd.read(reg::PortCmd::cmd_running) != 0 {
+                if time_us() > lim {
+                    return Err(Errno::ENAVAIL);
+                }
+                Thread::sleep_us(5000);
+            }
+            guard.mmio.cmd.modify(reg::PortCmd::fis_en.val(0));
+            let lim = time_us() + 100000;
+            while guard.mmio.cmd.read(reg::PortCmd::fis_running) != 0 {
+                if time_us() > lim {
+                    return Err(Errno::ENAVAIL);
+                }
+                Thread::sleep_us(5000);
+            }
+
             // Set up the physical-memory pointers.
             let cmd_paddr = offset_of!(PortHMS, cmd_fis) + guard.hms.paddr();
             guard.hms.cmd_list[0]
@@ -124,7 +142,6 @@ impl SataDriver {
                 .set((rxfis_paddr & 0xffffffff) as u32);
             guard.mmio.fis_addr_hi.set((rxfis_paddr >> 32) as u32);
 
-            guard.mmio.cmd_issue.set(0);
             guard.mmio.cmd.modify(reg::PortCmd::fis_en.val(1));
             guard.mmio.cmd.modify(reg::PortCmd::cmd_start.val(1));
         }
@@ -184,11 +201,11 @@ impl SataDriver {
         if &data[0] as *const u8 as usize & 1 != 0 {
             logk(
                 LogLevel::Error,
-                "Misaligned address for SataDriver::issue_raw_cmd",
+                "Misaligned address for SataDriver::do_raw_cmd",
             );
             return Err(Errno::EINVAL);
         } else if data.len() & 1 != 0 {
-            logk(LogLevel::Error, "Odd size for SataDriver::issue_raw_cmd");
+            logk(LogLevel::Error, "Odd size for SataDriver::do_raw_cmd");
             return Err(Errno::EINVAL);
         }
 
@@ -296,7 +313,7 @@ impl SataDriver {
         unsafe {
             self.do_ata_cmd(
                 ata::Command::IdentDev,
-                0,
+                1 << 6,
                 0,
                 0,
                 0,
