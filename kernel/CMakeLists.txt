@@ -59,7 +59,7 @@ config_const(PAGE_SIZE 4096 "MMU / memory map page size")
 
 
 set(common_compiler_flags
-    -ffreestanding                     # We do not compile against an OS.
+    -ffreestanding -DCHAR_BIT=8        # We do not compile against an OS.
     -march=${CONFIG_KISA_SPEC}         # Selects the target CPU.
     -mabi=${CONFIG_KABI_SPEC}          # Selects target ABI
     -nodefaultlibs                     # Do not link any default libraries like libgcc or libc.
@@ -120,6 +120,7 @@ set(kernel_src
     ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/semaphore.c
     ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/set.c
     ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/spinlock.c
+    ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/nanoprintf.c
     
     ${CMAKE_CURRENT_LIST_DIR}/src/bootp/${CONFIG_BOOT_PROTOCOL}.c
     
@@ -168,6 +169,7 @@ set(kernel_src
     ${CMAKE_CURRENT_LIST_DIR}/src/time.c
 )
 set(kernel_include
+    ${CMAKE_CURRENT_LIST_DIR}/lib/nanoprintf
     ${CMAKE_CURRENT_LIST_DIR}/include
     ${CMAKE_CURRENT_LIST_DIR}/include/badgelib
     ${CMAKE_CURRENT_LIST_DIR}/../common/include

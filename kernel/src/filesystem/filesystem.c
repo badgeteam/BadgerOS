@@ -6,6 +6,7 @@
 #include "arrays.h"
 #include "assertions.h"
 #include "badge_strings.h"
+#include "device/devtmpfs.h"
 #include "errno.h"
 #include "filesystem/vfs_fifo.h"
 #include "filesystem/vfs_internal.h"
@@ -298,6 +299,11 @@ errno_t
         vfs_file_pop_ref(res.parent);
     }
     mutex_release(&dirs_mtx);
+
+    if (errno == 0 && cstr_equals(type, "devtmpfs")) {
+        device_devtmpfs_mounted(fs_dir_open(at, path, path_len, 0));
+    }
+
     return errno;
 }
 

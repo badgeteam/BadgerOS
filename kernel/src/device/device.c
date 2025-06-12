@@ -10,16 +10,19 @@
 #include "badge_strings.h"
 #include "cache.h"
 #include "cpu/interrupt.h"
+#include "device/class/block.h"
 #include "device/class/union.h"
 #include "device/dev_addr.h"
 #include "device/dev_class.h"
 #include "device/dtb/dtb.h"
 #include "errno.h"
+#include "filesystem.h"
 #include "list.h"
 #include "log.h"
 #include "map.h"
 #include "memprotect.h"
 #include "mutex.h"
+#include "nanoprintf.h"
 #include "set.h"
 #include "spinlock.h"
 #include "time.h"
@@ -137,6 +140,25 @@ static void device_deinit(device_union_t *device) {
     free(device->base.info.addrs);
 }
 
+
+// Called after a driver's add function succeeds.
+static void driver_add_succeeded(device_union_t *device) {
+    switch (device->base.dev_class) {
+        case DEV_CLASS_UNKNOWN: break;
+        case DEV_CLASS_BLOCK: {
+            if (!device->block.no_cache) {
+                device_block_init_cache(&device->block);
+            }
+        } break;
+        case DEV_CLASS_IRQCTL:
+        case DEV_CLASS_TTY:
+        case DEV_CLASS_PCICTL:
+        case DEV_CLASS_I2CCTL:
+        case DEV_CLASS_AHCI: break;
+    }
+}
+
+
 // Register a device to a certain driver.
 // Initializes all data used by devices with drivers.
 // Returns `true` if the search for drivers should stop, regardless of whether adding this one was successful.
@@ -172,6 +194,8 @@ static bool device_add_to_driver(device_t *device, driver_t const *driver) {
             device->driver = driver;
             spinlock_release(&irqconn_lock);
             irq_enable();
+
+            driver_add_succeeded((device_union_t *)device);
 
             device_t *parent = device->info.parent;
             if (parent) {
@@ -438,7 +462,11 @@ void device_pop_ref(device_t *device_base) {
 
     switch (device->base.dev_class) {
         case DEV_CLASS_UNKNOWN: /* NOLINT; no action required. */ break;
-        case DEV_CLASS_BLOCK: cache_clear(&device->block.cache); break;
+        case DEV_CLASS_BLOCK: {
+            if (!device->block.no_cache) {
+                cache_clear(&device->block.cache);
+            }
+        } break;
         case DEV_CLASS_IRQCTL: /* NOLINT; no action required. */ break;
         case DEV_CLASS_TTY: /* NOLINT; no action required. */ break;
         case DEV_CLASS_PCICTL: /* NOLINT; no action required. */ break;
@@ -899,6 +927,28 @@ errno_t driver_remove(driver_t const *driver) {
 
 
 // Add device nodes to a new devtmpfs.
-// Called by the devtmpfs mount function.
-void device_devtmpfs_mounted(file_t devtmpfs_root) {
+// Called by the VFS after a devtmpfs filesystem is mounted.
+errno_t device_devtmpfs_mounted(file_t devtmpfs_root) {
+    RETURN_ON_ERRNO(fs_mkdir(devtmpfs_root, "by_id", 5));
+
+    mutex_acquire_shared(&devs_mtx, TIMESTAMP_US_MAX);
+    map_foreach(ent, &devs_by_id) {
+        device_t *dev = ent->value;
+        char      buf[9];
+        npf_snprintf(buf, sizeof(buf), "%08x", (int)dev->id);
+        fs_mkdir(devtmpfs_root, buf, 8);
+
+        // TODO: Some infos here maybe?
+
+        mutex_acquire_shared(&dev->driver_mtx, TIMESTAMP_US_MAX);
+        if (dev->driver && dev->driver->create_devnodes) {
+            file_t devnode_dir = fs_dir_open(devtmpfs_root, buf, 8, 0);
+            dev->driver->create_devnodes(dev, devtmpfs_root, devnode_dir);
+            fs_dir_close(devnode_dir);
+        }
+        mutex_release_shared(&dev->driver_mtx);
+    }
+    mutex_release_shared(&devs_mtx);
+
+    return 0;
 }

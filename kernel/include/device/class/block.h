@@ -63,7 +63,7 @@ typedef struct {
 
 
 // Initialize this block device's cache.
-// Must be called by all block devices, during the `driver->add` function, if the device does not have `no_cache` set.
+// Called after a block driver's add function succeeds.
 void device_block_init_cache(device_block_t *device);
 
 // Write device blocks.

@@ -1,6 +1,6 @@
 use core::ffi::{c_char, c_void};
 
-include!("../../build/bindings.rs");
+include!("../../target/bindings.rs");
 
 unsafe extern "C" {
     pub fn malloc(_: usize) -> *mut c_void;

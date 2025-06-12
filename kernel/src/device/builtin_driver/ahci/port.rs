@@ -190,8 +190,6 @@ impl SataDriver {
             dev_blk.block_count
         );
 
-        unsafe { bindings::raw::device_block_init_cache(this.device.as_raw_ptr()) };
-
         Ok(this)
     }
 
@@ -259,6 +257,7 @@ impl SataDriver {
         // Issue and await the command.
         guard.mmio.cmd_issue.set(1);
 
+        // TODO: This is an incorrect way to wait for the command.
         let lim = time_us() + 100000;
         loop {
             if guard.mmio.cmd_issue.get() & 1 == 0 {

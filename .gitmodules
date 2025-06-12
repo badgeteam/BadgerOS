@@ -19,3 +19,6 @@
 [submodule "kernel/lib/limine"]
 	path = kernel/lib/limine
 	url = https://github.com/limine-bootloader/limine
+[submodule "kernel/lib/nanoprintf"]
+	path = kernel/lib/nanoprintf
+	url = https://github.com/charlesnicholson/nanoprintf
