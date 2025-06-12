@@ -300,27 +300,29 @@ register_structs! {
         (0x14 => pub irq_enable:      ReadWrite<u32, PortIrq::Register>),
         /// Command and status register.
         (0x18 => pub cmd:             ReadWrite<u32, PortCmd::Register>),
+        /// Reserved.
+        (0x1c => pub _resvd0:         ReadOnly<u32>),
         /// Task file data.
-        (0x1c => pub tfd:             ReadWrite<u32, PortTFD::Register>),
+        (0x20 => pub tfd:             ReadWrite<u32, PortTFD::Register>),
         /// Port signature.
-        (0x20 => pub signature:       ReadOnly<u32>),
+        (0x24 => pub signature:       ReadOnly<u32>),
         /// SATA status register.
-        (0x24 => pub sstatus:         ReadWrite<u32, PortSStatus::Register>),
+        (0x28 => pub sstatus:         ReadWrite<u32, PortSStatus::Register>),
         /// SATA control register.
-        (0x28 => pub sctrl:           ReadWrite<u32, PortSCtrl::Register>),
+        (0x2c => pub sctrl:           ReadWrite<u32, PortSCtrl::Register>),
         /// SATA error register.
-        (0x2c => pub err:             ReadWrite<u32, PortSError::Register>),
+        (0x30 => pub err:             ReadWrite<u32, PortSError::Register>),
         /// SATA active mask.
-        (0x30 => pub active:          ReadWrite<u32>),
+        (0x34 => pub active:          ReadWrite<u32>),
         /// Command issue.
-        (0x34 => pub cmd_issue:       ReadWrite<u32>),
+        (0x38 => pub cmd_issue:       ReadWrite<u32>),
         /// Port multiplier notification management.
-        (0x38 => pub notif:           ReadWrite<u32>),
+        (0x3c => pub notif:           ReadWrite<u32>),
         /// Port multiplier switching control.
-        (0x3c => pub swctrl:          ReadWrite<u32>),
+        (0x40 => pub swctrl:          ReadWrite<u32>),
         /// Device sleep control.
-        (0x40 => pub sleep_ctrl:      ReadWrite<u32>),
+        (0x44 => pub sleep_ctrl:      ReadWrite<u32>),
         /// End of structure.
-        (0x44 => @END),
+        (0x48 => @END),
     }
 }

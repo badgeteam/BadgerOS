@@ -10,7 +10,7 @@ use crate::{
     config,
 };
 
-use super::raw::{self, virt2phys_t};
+use super::raw;
 
 /// A box for physical RAM allocations.
 pub struct PhysBox<T: Sized> {

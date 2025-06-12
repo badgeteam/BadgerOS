@@ -22,8 +22,8 @@ qemu-debug: $(BUILDDIR)/cache/OVMF_RISCV64.fd build
 
 .PHONY: qemu
 qemu: $(BUILDDIR)/cache/OVMF_RISCV64.fd build
+		# -d trace:ahci*,guest_errors,unimp
 	$(QEMU) -s \
-		-d trace:ahci* \
 		-M virt,acpi=off -cpu rv64,sv48=false -smp 4 -m 4G \
 		-device pcie-root-port,bus=pcie.0,id=pcisw0 \
 		-device qemu-xhci,bus=pcisw0 -device usb-kbd \

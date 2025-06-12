@@ -62,6 +62,10 @@ typedef struct {
 
 
 
+// Initialize this block device's cache.
+// Must be called by all block devices, during the `driver->add` function, if the device does not have `no_cache` set.
+void device_block_init_cache(device_block_t *device);
+
 // Write device blocks.
 // The alignment for DMA is handled by this function.
 errno_t device_block_write_blocks(device_block_t *device, uint64_t start, uint64_t count, void const *data);

@@ -11,10 +11,19 @@
 #include "log.h"
 #include "malloc.h"
 #include "mutex.h"
+#include "radixtree.h"
 #include "refcount.h"
 #include "time.h"
 
 #include <stdint.h>
+
+
+
+// Initialize this block device's cache.
+// Must be called by all block devices, during the `driver->add` function, if the device does not have `no_cache` set.
+void device_block_init_cache(device_block_t *device) {
+    device->cache = (cache_t)CACHE_T_INIT(64 - __builtin_clzll(device->block_count), device->block_size);
+}
 
 
 

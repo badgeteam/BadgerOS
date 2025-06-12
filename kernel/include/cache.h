@@ -49,7 +49,7 @@ struct cache_entry {
 };
 
 #define CACHE_T_INIT(_addr_width, _block_size)                                                                         \
-    {MUTEX_T_INIT, RTREE_T_INIT(sizeof(cache_entry_t, _addr_width, 3)), _block_size}
+    {MUTEX_T_INIT, RTREE_T_INIT(sizeof(cache_entry_t), _addr_width, 3), _block_size}
 
 
 

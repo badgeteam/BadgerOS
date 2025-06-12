@@ -76,8 +76,6 @@ pub(super) struct SataDriver {
 
 impl SataDriver {
     pub fn new(device: Device) -> EResult<Box<Self>> {
-        Thread::sleep_us(1000000);
-
         // Assert all preconditions and get handles.
         let device = device.as_block().unwrap();
         let parent_dev = device.info().parent().unwrap();
@@ -171,8 +169,14 @@ impl SataDriver {
         this.identify(&mut id)?;
         let dev_blk = unsafe { &mut *this.device.as_raw_ptr() };
         this.supports_48bit = id[83] & (1 << 10) != 0;
-        let sec_size_exp = id[106] & 15;
-        dev_blk.block_size = 1u64 << sec_size_exp;
+        if id[106] & (1 << 14) == 0 {
+            dev_blk.block_size = 512;
+        } else {
+            dev_blk.block_size = id[117] as u64 + (id[118] as u64) << 16;
+            if dev_blk.block_size == 0 {
+                dev_blk.block_size = 512;
+            }
+        }
         dev_blk.block_count = (id[100] as u64)
             + ((id[101] as u64) << 16)
             + ((id[102] as u64) << 32)
@@ -186,11 +190,11 @@ impl SataDriver {
             dev_blk.block_count
         );
 
+        unsafe { bindings::raw::device_block_init_cache(this.device.as_raw_ptr()) };
+
         Ok(this)
     }
-}
 
-impl SataDriver {
     /// Issue and await a command that reads data.
     unsafe fn do_raw_cmd(
         &self,
@@ -254,31 +258,8 @@ impl SataDriver {
 
         // Issue and await the command.
         guard.mmio.cmd_issue.set(1);
-        Thread::sleep_us(100000);
-        logkf!(LogLevel::Debug, "Received FIS:");
-        let mut prev = guard.hms.rxfis[0].get();
-        let mut ctr = 0usize;
-        for ent in &guard.hms.rxfis {
-            let val = ent.get();
-            if val == prev {
-                ctr += 1;
-            } else {
-                if ctr > 1 {
-                    logkf!(LogLevel::Debug, "  0x{:08x} <x{}>", prev, ctr);
-                } else if ctr == 1 {
-                    logkf!(LogLevel::Debug, "  0x{:08x}", prev);
-                }
-                prev = val;
-                ctr = 1;
-            }
-        }
-        if ctr > 1 {
-            logkf!(LogLevel::Debug, "  0x{:08x} <x{}>", prev, ctr);
-        } else if ctr == 1 {
-            logkf!(LogLevel::Debug, "  0x{:08x}", prev);
-        }
 
-        let lim = time_us(); // + 100000;
+        let lim = time_us() + 100000;
         loop {
             if guard.mmio.cmd_issue.get() & 1 == 0 {
                 return Ok(());
@@ -292,6 +273,7 @@ impl SataDriver {
             }
         }
     }
+
     /// Issue an ATA command.
     unsafe fn do_ata_cmd(
         &self,
@@ -336,6 +318,7 @@ impl SataDriver {
             )
         }
     }
+
     /// Get device information.
     pub fn identify(&self, id_out: &mut [u16; 256]) -> EResult<()> {
         unsafe {
