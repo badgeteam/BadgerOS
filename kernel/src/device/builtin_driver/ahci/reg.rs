@@ -226,6 +226,17 @@ register_bitfields! {
         dev_is_atapi            OFFSET(24) NUMBITS(1) [],
         /// Enable drive LED even for ATAPI devices.
         drive_led_atapi         OFFSET(25) NUMBITS(1) [],
+        /// Interface communication control.
+        if_comm_ctrl            OFFSET(28) NUMBITS(4) [
+            /// The HBA is ready to accept a new change.
+            NOP       = 0,
+            /// Change into the active state.
+            ACTIVE    = 1,
+            /// Change into the partial state; may be rejected by the device.
+            PARTIAL   = 2,
+            /// Assert the DEVSLP signal, causing the device to sleep.
+            DEV_SLEEP = 8
+        ],
     ],
 
     /// AHCI port task file data.

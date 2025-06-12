@@ -76,14 +76,17 @@ pub(super) struct SataDriver {
 
 impl SataDriver {
     pub fn new(device: Device) -> EResult<Box<Self>> {
+        Thread::sleep_us(1000000);
+
         // Assert all preconditions and get handles.
         let device = device.as_block().unwrap();
         let parent_dev = device.info().parent().unwrap();
         assert!(parent_dev.driver() == &raw const AHCI_DRIVER);
         let parent: &'static mut AhciDriver =
             unsafe { &mut *core::ptr::from_raw_parts_mut((*parent_dev.base_ptr()).cookie, ()) };
-        let mmio = &parent.ports_mmio
-            [unsafe { device.info().addrs()[0].__bindgen_anon_1.ahci.port } as usize];
+        let mmio = unsafe {
+            &parent.ports_mmio[device.info().addrs()[0].__bindgen_anon_1.ahci.port as usize]
+        };
 
         // Allocate memory for this port.
         let hms = unsafe { PhysBox::<PortHMS>::try_new(false, true) }?;
@@ -99,6 +102,13 @@ impl SataDriver {
         {
             let guard = this.mem.lock();
 
+            // Power on the port.
+            if this.parent.mmio.cap.read(reg::HostCaps::supports_ss) != 0 {
+                guard.mmio.cmd.modify(reg::PortCmd::spinup.val(1));
+            }
+            guard.mmio.cmd.modify(reg::PortCmd::if_comm_ctrl::ACTIVE);
+
+            // Stop DMA engine.
             guard.mmio.cmd.modify(reg::PortCmd::cmd_start.val(0));
             let lim = time_us() + 100000;
             while guard.mmio.cmd.read(reg::PortCmd::cmd_running) != 0 {
@@ -142,7 +152,15 @@ impl SataDriver {
                 .set((rxfis_paddr & 0xffffffff) as u32);
             guard.mmio.fis_addr_hi.set((rxfis_paddr >> 32) as u32);
 
+            // Start DMA engine.
             guard.mmio.cmd.modify(reg::PortCmd::fis_en.val(1));
+            let lim = time_us() + 100000;
+            while guard.mmio.cmd.read(reg::PortCmd::cmd_running) != 0 {
+                if time_us() > lim {
+                    return Err(Errno::ENAVAIL);
+                }
+                Thread::sleep_us(5000);
+            }
             guard.mmio.cmd.modify(reg::PortCmd::cmd_start.val(1));
         }
 
@@ -173,21 +191,6 @@ impl SataDriver {
 }
 
 impl SataDriver {
-    /// Issue the current command and await its completion.
-    unsafe fn await_cmd(reg: &reg::Port) -> EResult<()> {
-        reg.cmd_issue.set(1);
-        let lim = time_us() + 10000;
-        loop {
-            if reg.cmd_issue.get() == 0 {
-                return Ok(());
-            } else if reg.irq_status.read(reg::PortIrq::tf_err) != 0 {
-                reg.irq_status.write(reg::PortIrq::tf_err.val(1));
-                return Err(Errno::EIO);
-            } else if time_us() > lim {
-                return Err(Errno::EIO);
-            }
-        }
-    }
     /// Issue and await a command that reads data.
     unsafe fn do_raw_cmd(
         &self,
@@ -237,6 +240,7 @@ impl SataDriver {
         // Write command descriptor.
         guard.hms.cmd_list[0].desc.write(
             hms::CmdHdrDesc::clr_busy.val(1)
+                + hms::CmdHdrDesc::prdtl.val(prdt as u32)
                 + hms::CmdHdrDesc::write.val(is_write as u32)
                 + hms::CmdHdrDesc::fis_len.val(fis_len as u32)
                 + hms::CmdHdrDesc::pmp.val(unsafe {
@@ -246,11 +250,35 @@ impl SataDriver {
                         .pmul_port as u32
                 }),
         );
-        guard.hms.cmd_list[0].prd_len.set(data.len() as u32);
+        guard.hms.cmd_list[0].prd_len.set(0);
 
         // Issue and await the command.
         guard.mmio.cmd_issue.set(1);
-        let lim = time_us() + 100000;
+        Thread::sleep_us(100000);
+        logkf!(LogLevel::Debug, "Received FIS:");
+        let mut prev = guard.hms.rxfis[0].get();
+        let mut ctr = 0usize;
+        for ent in &guard.hms.rxfis {
+            let val = ent.get();
+            if val == prev {
+                ctr += 1;
+            } else {
+                if ctr > 1 {
+                    logkf!(LogLevel::Debug, "  0x{:08x} <x{}>", prev, ctr);
+                } else if ctr == 1 {
+                    logkf!(LogLevel::Debug, "  0x{:08x}", prev);
+                }
+                prev = val;
+                ctr = 1;
+            }
+        }
+        if ctr > 1 {
+            logkf!(LogLevel::Debug, "  0x{:08x} <x{}>", prev, ctr);
+        } else if ctr == 1 {
+            logkf!(LogLevel::Debug, "  0x{:08x}", prev);
+        }
+
+        let lim = time_us(); // + 100000;
         loop {
             if guard.mmio.cmd_issue.get() & 1 == 0 {
                 return Ok(());
