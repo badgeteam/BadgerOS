@@ -186,9 +186,9 @@ errno_t fs_umount(file_t at, char const *path, size_t path_len);
 // Returns `NULL` on error or if the filesystem is unknown.
 errno_ptr_t fs_detect(fs_media_t *media);
 
-// Test whether a path is a canonical path, but not for the existence of the file or directory.
-// A canonical path starts with '/' and contains none of the following regex: `\.\.?/|//+`
-errno_t fs_is_canonical_path(char const *path, size_t path_len);
+// Get the real path of a filename.
+// Returns a heap-allocated string on success.
+errno_ptr_t fs_realpath(file_t at, char const *path, size_t path_len);
 
 // Get file status given file handler or path, optionally following the final symlink.
 // If both `fd` and `path` are specified, `fd` is a directory handle to which `path` is relative.

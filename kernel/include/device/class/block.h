@@ -66,6 +66,11 @@ typedef struct {
 // Called after a block driver's add function succeeds.
 void device_block_init_cache(device_block_t *device);
 
+// Create a block device file with a certain prefix.
+// The prefix must not end in a digit because disks are disambiguated by appending a number.
+// Similarly, partitions are disambiguated by appending 'p' and then a number.
+errno_t device_block_create_blkfile(device_block_t *device);
+
 // Write device blocks.
 // The alignment for DMA is handled by this function.
 errno_t device_block_write_blocks(device_block_t *device, uint64_t start, uint64_t count, void const *data);

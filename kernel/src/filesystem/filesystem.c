@@ -14,6 +14,8 @@
 #include "filesystem/vfs_vtable.h"
 #include "log.h"
 #include "malloc.h"
+#include "mutex.h"
+#include "time.h"
 
 extern fs_driver_t const __start_fsdrivers[];
 extern fs_driver_t const __stop_fsdrivers[];
@@ -331,9 +333,9 @@ errno_ptr_t fs_detect(fs_media_t *media) {
 
 
 
-// Test whether a path is a canonical path, but not for the existence of the file or directory.
-// A canonical path starts with '/' and contains none of the following regex: `(^|/)\.\.?/|//+`
-errno_t fs_is_canonical_path(char const *path, size_t path_len);
+// Get the real path of a filename.
+// Returns a heap-allocated string on success.
+errno_ptr_t fs_realpath(file_t at, char const *path, size_t path_len);
 
 
 
