@@ -142,40 +142,135 @@ pub trait BlockDriver: BaseDriver {
     /// The caller must ensure that `data` is aligned at least as much as needed for DMA.
     fn read_blocks(&self, start: u64, count: u64, data: &mut [u8]) -> EResult<()>;
     /// Test whether a single block is erased with native erase value.
-    fn is_block_erased(&self, start: u64) -> EResult<()>;
+    fn is_block_erased(&self, start: u64) -> EResult<bool>;
     /// Erase blocks.
     fn erase_blocks(&self, start: u64, count: u64, mode: blkdev_erase_t) -> EResult<()>;
     /// [optional] Write device bytes.
-    fn write_bytes(&self, _start: u64, _count: u64, _data: &[u8]) -> EResult<()> {
+    fn write_bytes(&self, _offset: u64, _data: &[u8]) -> EResult<()> {
         Err(Errno::ENOTSUP)
     }
     /// [optional] Read device bytes.
-    fn read_bytes(&self, _start: u64, _count: u64, _data: &mut [u8]) -> EResult<()> {
+    fn read_bytes(&self, _offset: u64, _data: &mut [u8]) -> EResult<()> {
         Err(Errno::ENOTSUP)
     }
     /// [optional] Erase bytes.
-    fn erase_bytes(&self, _start: u64, _count: u64, _mode: blkdev_erase_t) -> EResult<()> {
+    fn erase_bytes(&self, _offset: u64, _count: u64, _mode: blkdev_erase_t) -> EResult<()> {
         Err(Errno::ENOTSUP)
     }
 }
 
 /// Helper macro for filling in block driver fields.
 #[macro_export]
-macro_rules! block_driver {
-    ($match_: expr, $add: expr) => {
-        crate::bindings::raw::driver_block_t {
-            base: crate::base_driver!(
-                crate::bindings::raw::dev_class_t_DEV_CLASS_BLOCK,
+macro_rules! block_driver_struct {
+    ($type: ty, $match_: expr, $add: expr) => {{
+        use crate::bindings::{device::class::block::*, error::*, raw::*};
+        use ::core::{
+            ffi::c_void,
+            ptr::{slice_from_raw_parts, slice_from_raw_parts_mut},
+        };
+        driver_block_t {
+            base: crate::abstract_driver_struct! {
+                $type,
+                dev_class_t_DEV_CLASS_BLOCK,
                 $match_,
                 $add
-            ),
-            write_blocks: None,
-            read_blocks: None,
-            is_block_erased: None,
-            erase_blocks: None,
-            write_bytes: None,
-            read_bytes: None,
-            erase_bytes: None,
+            },
+            write_blocks: {
+                unsafe extern "C" fn write_blocks_wrapper(
+                    device: *mut device_block_t,
+                    start: u64,
+                    count: u64,
+                    data: *const c_void,
+                ) -> errno_t {
+                    let ptr = unsafe { &mut *((*device).base.cookie as *mut $type) };
+                    Errno::extract(ptr.write_blocks(start, count, unsafe {
+                        &*slice_from_raw_parts(
+                            data as *const u8,
+                            count as usize * (*device).block_size as usize,
+                        )
+                    }))
+                }
+                Some(write_blocks_wrapper)
+            },
+            read_blocks: {
+                unsafe extern "C" fn read_blocks_wrapper(
+                    device: *mut device_block_t,
+                    start: u64,
+                    count: u64,
+                    data: *mut c_void,
+                ) -> errno_t {
+                    let ptr = unsafe { &mut *((*device).base.cookie as *mut $type) };
+                    Errno::extract(ptr.read_blocks(start, count, unsafe {
+                        &mut *slice_from_raw_parts_mut(
+                            data as *mut u8,
+                            count as usize * (*device).block_size as usize,
+                        )
+                    }))
+                }
+                Some(read_blocks_wrapper)
+            },
+            is_block_erased: {
+                unsafe extern "C" fn is_block_erased_wrapper(
+                    device: *mut device_block_t,
+                    block: u64,
+                ) -> errno_t {
+                    let ptr = unsafe { &mut *((*device).base.cookie as *mut $type) };
+                    Errno::extract_bool(ptr.is_block_erased(block))
+                }
+                Some(is_block_erased_wrapper)
+            },
+            erase_blocks: {
+                unsafe extern "C" fn erase_blocks_wrapper(
+                    device: *mut device_block_t,
+                    start: u64,
+                    count: u64,
+                    mode: blkdev_erase_t,
+                ) -> errno_t {
+                    let ptr = unsafe { &mut *((*device).base.cookie as *mut $type) };
+                    Errno::extract(ptr.erase_blocks(start, count, mode))
+                }
+                Some(erase_blocks_wrapper)
+            },
+            write_bytes: {
+                unsafe extern "C" fn write_bytes_wrapper(
+                    device: *mut device_block_t,
+                    offset: u64,
+                    len: u64,
+                    data: *const c_void,
+                ) -> errno_t {
+                    let ptr = unsafe { &mut *((*device).base.cookie as *mut $type) };
+                    Errno::extract(ptr.write_bytes(offset, unsafe {
+                        &*slice_from_raw_parts(data as *const u8, len as usize)
+                    }))
+                }
+                Some(write_bytes_wrapper)
+            },
+            read_bytes: {
+                unsafe extern "C" fn read_bytes_wrapper(
+                    device: *mut device_block_t,
+                    offset: u64,
+                    len: u64,
+                    data: *mut c_void,
+                ) -> errno_t {
+                    let ptr = unsafe { &mut *((*device).base.cookie as *mut $type) };
+                    Errno::extract(ptr.read_bytes(offset, unsafe {
+                        &mut *slice_from_raw_parts_mut(data as *mut u8, len as usize)
+                    }))
+                }
+                Some(read_bytes_wrapper)
+            },
+            erase_bytes: {
+                unsafe extern "C" fn erase_bytes_wrapper(
+                    device: *mut device_block_t,
+                    offset: u64,
+                    len: u64,
+                    mode: blkdev_erase_t,
+                ) -> errno_t {
+                    let ptr = unsafe { &mut *((*device).base.cookie as *mut $type) };
+                    Errno::extract(ptr.erase_bytes(offset, len, mode))
+                }
+                Some(erase_bytes_wrapper)
+            },
         }
-    };
+    }};
 }

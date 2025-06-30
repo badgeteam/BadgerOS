@@ -55,6 +55,11 @@ impl Thread {
     pub fn detach(self) {
         // This will drop, which will call the detach function.
     }
+    pub fn into_tid(self) -> tid_t {
+        let tid = self.handle;
+        core::mem::forget(self);
+        tid
+    }
     pub fn sleep_us(delay: timestamp_us_t) {
         unsafe { raw::thread_sleep(delay) }
     }

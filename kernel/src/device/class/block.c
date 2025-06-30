@@ -84,8 +84,15 @@ errno_t device_block_write_bytes(device_block_t *device, uint64_t offset, uint64
     uint64_t init_offset = offset;
     for (uint64_t i = start_block; i < end_block; i++) {
         // Get sub-block offsets.
-        uint64_t sub_offset = offset % device->block_size;
-        uint64_t sub_size   = size - sub_offset < device->block_size ? size - sub_offset : device->block_size;
+        uint64_t sub_offset;
+        uint64_t sub_size;
+        if (i == start_block) {
+            sub_offset = offset % device->block_size;
+            sub_size   = size < device->block_size - sub_offset ? size : device->block_size - sub_offset;
+        } else {
+            sub_offset = 0;
+            sub_size   = size - sub_offset < device->block_size ? size - sub_offset : device->block_size;
+        }
 
         // Try to read the data from the cache.
         cache_data_t ent = cache_get(&device->cache, i);
@@ -111,6 +118,7 @@ errno_t device_block_write_bytes(device_block_t *device, uint64_t offset, uint64
                 // Cache is indeed still empty; make new entry.
                 void *raw_buf = malloc(device->block_size);
                 if (!raw_buf) {
+                    cache_unlock(&device->cache, i);
                     mutex_release_shared(&device->base.driver_mtx);
                     return -ENOMEM;
                 }
@@ -121,17 +129,25 @@ errno_t device_block_write_bytes(device_block_t *device, uint64_t offset, uint64
                 };
                 if (!new_ent.buffer) {
                     free(raw_buf);
+                    cache_unlock(&device->cache, i);
                     mutex_release_shared(&device->base.driver_mtx);
                     return -ENOMEM;
                 }
 
                 // Read the data and copy into it.
-                driver->read_blocks(device, i, 1, new_ent.buffer->data);
+                errno_t res = driver->read_blocks(device, i, 1, new_ent.buffer->data);
+                if (res < 0) {
+                    rc_delete(new_ent.buffer);
+                    cache_unlock(&device->cache, i);
+                    mutex_release_shared(&device->base.driver_mtx);
+                    return res;
+                }
                 mem_copy(new_ent.buffer->data + sub_offset, data + offset - init_offset, sub_size);
 
                 // Try to insert the data into the cache.
                 if (!cache_set_unsafe(&device->cache, i, new_ent)) {
                     rc_delete(new_ent.buffer);
+                    cache_unlock(&device->cache, i);
                     mutex_release_shared(&device->base.driver_mtx);
                     return -ENOMEM;
                 }
@@ -180,8 +196,15 @@ errno_t device_block_read_bytes(device_block_t *device, uint64_t offset, uint64_
     uint64_t init_offset = offset;
     for (uint64_t i = start_block; i < end_block; i++) {
         // Get sub-block offsets.
-        uint64_t sub_offset = offset % device->block_size;
-        uint64_t sub_size   = size - sub_offset < device->block_size ? size - sub_offset : device->block_size;
+        uint64_t sub_offset;
+        uint64_t sub_size;
+        if (i == start_block) {
+            sub_offset = offset % device->block_size;
+            sub_size   = size < device->block_size - sub_offset ? size : device->block_size - sub_offset;
+        } else {
+            sub_offset = 0;
+            sub_size   = size - sub_offset < device->block_size ? size - sub_offset : device->block_size;
+        }
 
         // Try to read the data from the cache.
         cache_data_t ent = cache_get(&device->cache, i);
@@ -212,6 +235,8 @@ errno_t device_block_read_bytes(device_block_t *device, uint64_t offset, uint64_
                 void *raw_buf = malloc(device->block_size);
                 if (!raw_buf) {
                     mutex_release_shared(&device->base.driver_mtx);
+                    cache_unlock(&device->cache, i);
+                    mutex_release_shared(&device->base.driver_mtx);
                     return -ENOMEM;
                 }
                 cache_data_t new_ent = {
@@ -222,16 +247,27 @@ errno_t device_block_read_bytes(device_block_t *device, uint64_t offset, uint64_
                 if (!new_ent.buffer) {
                     free(raw_buf);
                     mutex_release_shared(&device->base.driver_mtx);
+                    cache_unlock(&device->cache, i);
+                    mutex_release_shared(&device->base.driver_mtx);
                     return -ENOMEM;
                 }
 
                 // Read the data and copy it out.
-                driver->read_blocks(device, i, 1, new_ent.buffer->data);
+                errno_t res = driver->read_blocks(device, i, 1, new_ent.buffer->data);
+                if (res < 0) {
+                    rc_delete(new_ent.buffer);
+                    cache_unlock(&device->cache, i);
+                    mutex_release_shared(&device->base.driver_mtx);
+                    return res;
+                }
                 mem_copy(data + offset - init_offset, new_ent.buffer->data + sub_offset, sub_size);
 
                 // Try to insert the data into the cache.
                 if (!cache_set_unsafe(&device->cache, i, new_ent)) {
                     rc_delete(new_ent.buffer);
+                    cache_unlock(&device->cache, i);
+                    mutex_release_shared(&device->base.driver_mtx);
+                    return -ENOMEM;
                 }
             }
 
@@ -276,8 +312,15 @@ errno_t device_block_erase_bytes(device_block_t *device, uint64_t offset, uint64
     uint8_t erase_value = mode == BLKDEV_ERASE_NATIVE ? device->erase_value : 0;
     for (uint64_t i = start_block; i < end_block; i++) {
         // Get sub-block offsets.
-        uint64_t sub_offset = offset % device->block_size;
-        uint64_t sub_size   = size - sub_offset < device->block_size ? size - sub_offset : device->block_size;
+        uint64_t sub_offset;
+        uint64_t sub_size;
+        if (i == start_block) {
+            sub_offset = offset % device->block_size;
+            sub_size   = size < device->block_size - sub_offset ? size : device->block_size - sub_offset;
+        } else {
+            sub_offset = 0;
+            sub_size   = size - sub_offset < device->block_size ? size - sub_offset : device->block_size;
+        }
 
         // Try to read the data from the cache.
         cache_data_t ent = cache_get(&device->cache, i);
@@ -350,7 +393,7 @@ static errno_t device_block_sync_block(device_block_t *device, uint64_t block, b
     }
 
     driver_block_t const *driver = (void *)device->base.driver;
-    cache_data_t          ent    = cache_get(&device->cache, block);
+    cache_data_t          ent    = cache_get_unsafe(&device->cache, block);
     if (!ent.valid) {
         // No data; no need to sync.
         cache_unlock_remove(&device->cache, block);

@@ -5,6 +5,10 @@
 #include "badge_strings.h"
 #include "bootp.h"
 #include "cpulocal.h"
+#include "device/class/block.h"
+#include "device/dev_class.h"
+#include "device/device.h"
+#include "errno.h"
 #include "filesystem.h"
 #include "housekeeping.h"
 #include "interrupt.h"
@@ -16,8 +20,10 @@
 #include "panic.h"
 #include "port/port.h"
 #include "process/process.h"
+#include "radixtree.h"
 #include "rawprint.h"
 #include "scheduler/scheduler.h"
+#include "set.h"
 #include "time.h"
 
 #include <stdatomic.h>
@@ -29,19 +35,13 @@
 // 1: Shut down (default).
 // 2: Reboot.
 atomic_int              kernel_shutdown_mode;
-// Temporary file image.
-extern uint8_t const    elf_rom[];
-extern size_t const     elf_rom_len;
+// Thread ID of kernel lifetime thread.
+static tid_t            klifetime_tid;
+// Set of threads that will be joined before kernel init comletes.
+static set_t            kinit_join_threads = PTR_SET_EMPTY;
 // Built-in kernel modules.
 extern kmodule_t const *start_kmodules[] asm("__start_kmodules");
 extern kmodule_t const *stop_kmodules[] asm("__stop_kmodules");
-
-#define show_csr(name)                                                                                                 \
-    do {                                                                                                               \
-        long csr;                                                                                                      \
-        asm("csrr %0, " #name : "=r"(csr));                                                                            \
-        logkf(LOG_INFO, #name ": %{long;x}", csr);                                                                     \
-    } while (0)
 
 void        init_ramfs();
 static void kernel_init();
@@ -86,9 +86,9 @@ void basic_runtime_init() {
     // Housekeeping thread initialization.
     hk_init();
     // Add the remainder of the kernel lifetime as a new thread.
-    tid_t thread = thread_new_kernel("main", (void *)kernel_lifetime_func, NULL, SCHED_PRIO_NORMAL);
-    assert_always(thread > 0);
-    assert_always(thread_resume(thread) >= 0);
+    klifetime_tid = thread_new_kernel("main", (void *)kernel_lifetime_func, NULL, SCHED_PRIO_NORMAL);
+    assert_always(klifetime_tid > 0);
+    assert_always(thread_resume(klifetime_tid) >= 0);
 
     // Start the scheduler and enter the next phase in the kernel's lifetime.
     sched_exec();
@@ -177,6 +177,71 @@ static void kernel_init() {
     // Full hardware initialization.
     bootp_full_init();
 
+    // Wait for some final threads before mounting root FS.
+    set_foreach(void, tid, &kinit_join_threads) {
+        thread_join((tid_t)(size_t)tid);
+    }
+    set_clear(&kinit_join_threads);
+
+    rtree_t tree;
+    rtree_init(&tree);
+    for (uint64_t i = 0; i < 32; i++) {
+        rtree_set(&tree, i, (void *)i);
+    }
+    for (uint64_t i = 62; i < 65; i++) {
+        rtree_set(&tree, i, (void *)i);
+    }
+    for (uint64_t i = 8192; i < 8200; i++) {
+        rtree_set(&tree, i, (void *)i);
+    }
+    rtree_dump(&tree, NULL);
+    for (uint64_t i = 5; i < 30; i++) {
+        rtree_set(&tree, i, NULL);
+    }
+    for (uint64_t i = 62; i < 65; i++) {
+        rtree_set(&tree, i, NULL);
+    }
+    for (uint64_t i = 8193; i < 8199; i++) {
+        rtree_set(&tree, i, NULL);
+    }
+    rtree_dump(&tree, NULL);
+    while (1);
+
+    dev_filter_t filter = {
+        .match_class = true,
+        .class       = DEV_CLASS_BLOCK,
+    };
+    set_t devs = device_get_filtered(&filter);
+    set_foreach(device_t, dev, &devs) {
+        device_block_t *blkdev = (void *)dev;
+
+        logk(LOG_DEBUG, "Doing a read of the block device");
+        uint8_t buf[512];
+        errno_t res = device_block_read_bytes(blkdev, 0, 512, buf);
+        if (res < 0) {
+            logkf(LOG_ERROR, "Failed to read: %d (%s)", -res, errno_get_name(-res));
+        }
+        logk_hexdump_vaddr(LOG_DEBUG, "First block:", buf, 512, 0);
+
+        logk(LOG_DEBUG, "Doing a write of the block device");
+        res = device_block_write_bytes(blkdev, 9, 36, "This is some destructive write data.");
+        if (res < 0) {
+            logkf(LOG_ERROR, "Failed to write: %d (%s)", -res, errno_get_name(-res));
+        }
+
+        logk(LOG_DEBUG, "Doing a sync of the block device");
+        res = device_block_sync_all(blkdev, false);
+        if (res < 0) {
+            logkf(LOG_ERROR, "Failed to sync: %d (%s)", -res, errno_get_name(-res));
+        }
+
+        logk(LOG_DEBUG, "Done!");
+        device_pop_ref(dev);
+    }
+    set_clear(&devs);
+
+    rtree_dump(NULL, NULL);
+
     // Temporary filesystem image.
     errno_t res;
     res = fs_mount("ramfs", NULL, FILE_NONE, "/", 1, 0);
@@ -252,4 +317,12 @@ static void userland_shutdown() {
 // When finished, the CPU continues to the platform-specific hardware shutdown / reboot handler.
 static void kernel_shutdown() {
     // TODO: Filesystems flush.
+}
+
+
+
+// Add a thread to the list to block on for kernel init.
+void klifetime_join_for_kinit(tid_t tid) {
+    assert_dev_drop(sched_current_tid() == klifetime_tid);
+    set_add(&kinit_join_threads, (void *)(size_t)tid);
 }

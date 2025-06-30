@@ -24,7 +24,7 @@ use crate::{
         thread::Thread,
         time_us,
     },
-    block_driver,
+    block_driver_struct,
     device::builtin_driver::ahci::{AHCI_DRIVER, ata, fis},
     logk,
 };
@@ -57,6 +57,28 @@ fn sata_match(info: DeviceInfoView<'_>) -> bool {
                 && matches!(DevAddr::from(info.addrs()[0]), DevAddr::Ahci(_))
         }
         None => false,
+    }
+}
+
+/// An enum that is either a const or a mut slice.
+enum ConstOrMutSlice<'a> {
+    Const(&'a [u8]),
+    Mut(&'a mut [u8]),
+}
+
+impl<'a> ConstOrMutSlice<'a> {
+    pub fn is_mut(&self) -> bool {
+        if let ConstOrMutSlice::Mut(_) = self {
+            true
+        } else {
+            false
+        }
+    }
+    pub fn into_const_slice(self) -> &'a [u8] {
+        match self {
+            ConstOrMutSlice::Const(x) => x,
+            ConstOrMutSlice::Mut(x) => x,
+        }
     }
 }
 
@@ -197,10 +219,11 @@ impl SataDriver {
     unsafe fn do_raw_cmd(
         &self,
         make_cmd: impl FnOnce(*mut ()) -> u32,
-        data: &mut [u8],
-        is_write: bool,
+        data: ConstOrMutSlice<'_>,
     ) -> EResult<()> {
         let mut guard = self.mem.lock();
+        let is_write = !data.is_mut();
+        let data = data.into_const_slice();
 
         // Ensure data is aligned to at least 2 bytes.
         if &data[0] as *const u8 as usize & 1 != 0 {
@@ -281,8 +304,7 @@ impl SataDriver {
         sec_count: u16,
         feature: u16,
         lba: u64,
-        data: &mut [u8],
-        is_write: bool,
+        data: ConstOrMutSlice<'_>,
     ) -> EResult<()> {
         let lba = lba.to_le_bytes();
         unsafe {
@@ -313,7 +335,6 @@ impl SataDriver {
                     return (size_of::<fis::RegisterH2D>() / 4) as u32;
                 },
                 data,
-                is_write,
             )
         }
     }
@@ -327,10 +348,43 @@ impl SataDriver {
                 0,
                 0,
                 0,
-                bytemuck::cast_slice_mut(id_out),
-                false,
+                ConstOrMutSlice::Mut(bytemuck::cast_slice_mut(id_out)),
             )
         }
+    }
+
+    /// Perform a bounds check.
+    fn access_bounds_check(&self, start: u64, count: u64, data: Option<&[u8]>) -> EResult<()> {
+        if start
+            .checked_add(count)
+            .map(|x| x > self.device.block_count())
+            .unwrap_or(false)
+        {
+            logkf!(
+                LogLevel::Error,
+                "Invalid access; {}x at offset {} exceeds size {}",
+                count,
+                start,
+                self.device.block_count()
+            );
+        }
+        if let Some(data) = data {
+            if count
+                .checked_mul(self.device.block_size())
+                .map(|x| x != data.len() as u64)
+                .unwrap_or(true)
+            {
+                logkf!(
+                    LogLevel::Error,
+                    "Mismatch between data length ({}) and block size ({}x {}b block)",
+                    data.len(),
+                    count,
+                    self.device.block_size()
+                );
+                return Err(Errno::EIO);
+            }
+        }
+        Ok(())
     }
 }
 
@@ -338,26 +392,57 @@ impl BaseDriver for SataDriver {}
 
 impl BlockDriver for SataDriver {
     fn write_blocks(&self, start: u64, count: u64, data: &[u8]) -> EResult<()> {
-        todo!()
+        // Bounds check is required because do_ata_cmd doesn't check.
+        self.access_bounds_check(start, count, Some(data))?;
+        unsafe {
+            self.do_ata_cmd(
+                if self.supports_48bit {
+                    ata::Command::ReadDmaExt
+                } else {
+                    ata::Command::ReadDma
+                },
+                1 << 6,
+                count.try_into().map_err(|_| Errno::E2BIG)?,
+                0,
+                start,
+                ConstOrMutSlice::Const(data),
+            )
+        }
     }
 
     fn read_blocks(&self, start: u64, count: u64, data: &mut [u8]) -> EResult<()> {
-        todo!()
+        // Bounds check is required because do_ata_cmd doesn't check.
+        self.access_bounds_check(start, count, Some(data))?;
+        unsafe {
+            self.do_ata_cmd(
+                if self.supports_48bit {
+                    ata::Command::ReadDmaExt
+                } else {
+                    ata::Command::ReadDma
+                },
+                1 << 6,
+                count.try_into().map_err(|_| Errno::E2BIG)?,
+                0,
+                start,
+                ConstOrMutSlice::Mut(data),
+            )
+        }
     }
 
-    fn is_block_erased(&self, start: u64) -> EResult<()> {
-        todo!()
+    fn is_block_erased(&self, _start: u64) -> EResult<bool> {
+        Ok(false)
     }
 
     fn erase_blocks(
         &self,
-        start: u64,
-        count: u64,
-        mode: crate::bindings::raw::blkdev_erase_t,
+        _start: u64,
+        _count: u64,
+        _mode: crate::bindings::raw::blkdev_erase_t,
     ) -> EResult<()> {
-        todo!()
+        Ok(())
     }
 }
 
 /// The SATA drive driver struct.
-pub(super) static SATA_DRIVER: driver_block_t = block_driver!(sata_match, SataDriver::new);
+pub(super) static SATA_DRIVER: driver_block_t =
+    block_driver_struct!(SataDriver, sata_match, SataDriver::new);

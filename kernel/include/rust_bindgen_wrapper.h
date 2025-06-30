@@ -10,6 +10,7 @@
 #include "errno.h"
 #include "filesystem.h"
 #include "interrupt.h"
+#include "klifetime.h"
 #include "log.h"
 #include "malloc.h"
 #include "memprotect.h"

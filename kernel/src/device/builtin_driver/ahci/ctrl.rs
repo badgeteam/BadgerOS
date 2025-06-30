@@ -5,8 +5,9 @@ use alloc::{boxed::Box, vec};
 use tock_registers::interfaces::{ReadWriteable, Readable, Writeable};
 
 use crate::{
-    LogLevel, base_driver,
+    LogLevel, base_driver_struct,
     bindings::{
+        self,
         device::{
             BaseDevice, BaseDriver, Device, DeviceInfo, DeviceInfoView, HasBaseDevice,
             addr::{AhciAddr, DevAddr, PciAddr},
@@ -161,7 +162,7 @@ impl AhciDriver {
                 }
             }
         }
-        Thread::new(
+        let discover_thread = Thread::new(
             move || {
                 for drive in drives {
                     drive.activate();
@@ -169,8 +170,8 @@ impl AhciDriver {
                 0
             },
             Some("AHCI drive discover"),
-        )
-        .detach();
+        );
+        unsafe { bindings::raw::klifetime_join_for_kinit(discover_thread.into_tid()) };
 
         // Enable interrupts.
         unsafe {
@@ -214,4 +215,4 @@ impl BaseDriver for AhciDriver {
 
 /// The AHCI controller driver struct.
 pub(super) static AHCI_DRIVER: driver_t =
-    base_driver!(dev_class_t_DEV_CLASS_UNKNOWN, ahci_match, AhciDriver::new);
+    base_driver_struct!(AhciDriver, ahci_match, AhciDriver::new);

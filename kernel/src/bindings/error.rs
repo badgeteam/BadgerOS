@@ -230,6 +230,14 @@ impl Errno {
         }
     }
     /// Create an `EResult` from some integer.
+    pub fn check_bool(errno: i32) -> EResult<bool> {
+        if errno < 0 {
+            Err(unsafe { core::mem::transmute(-errno) })
+        } else {
+            Ok(errno != 0)
+        }
+    }
+    /// Create an `EResult` from some integer.
     pub fn check_u32(errno: i32) -> EResult<u32> {
         if errno < 0 {
             Err(unsafe { core::mem::transmute(-errno) })
@@ -247,6 +255,13 @@ impl Errno {
     }
     /// Convert an `EResult` into an integer.
     pub fn extract_u32(res: EResult<u32>) -> i32 {
+        match res {
+            Ok(x) => x as i32,
+            Err(x) => -(x as u32 as i32),
+        }
+    }
+    /// Convert an `EResult` into an integer.
+    pub fn extract_bool(res: EResult<bool>) -> i32 {
         match res {
             Ok(x) => x as i32,
             Err(x) => -(x as u32 as i32),

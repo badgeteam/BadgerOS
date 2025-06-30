@@ -103,7 +103,7 @@ struct device {
     // Can be read from interrupts; guarded by `irqconn_lock`.
     irqconns_t     *irq_children;
     // Additional driver-specific data, if any.
-    void           *cookie, *cookie2;
+    void           *cookie;
 };
 
 // Array of `devirqno_t`.

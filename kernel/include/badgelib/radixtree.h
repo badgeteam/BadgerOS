@@ -5,11 +5,19 @@
 
 #pragma once
 
+#include "errno.h"
+#include "spinlock.h"
+
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
 
+
+// How many bits per node are consumed in a radix tree.
+#define RTREE_BITS_PER_NODE 6u
+// How many entries are stored per node in a radix tree.
+#define RTREE_ENTS_PER_NODE (1llu << RTREE_BITS_PER_NODE)
 
 // A generic radix tree.
 typedef struct rtree      rtree_t;
@@ -18,65 +26,69 @@ typedef struct rtree_node rtree_node_t;
 // A radix tree iterator.
 typedef struct rtree_iter rtree_iter_t;
 
-// A generic radix tree.
+// A generic thread-safe radix tree.
+// Inspired by the way Linux implements its xarray.
 struct rtree {
-    // Size of the data in the tree.
-    size_t        value_size;
-    // Number of leaf nodes in the tree.
-    size_t        len;
-    // Total width of the key in bits, at most 64.
-    uint8_t       key_width;
-    // Bits consumed per node, at most 8.
-    uint8_t       bits_per_node;
+    // Tree write spinlock.
+    spinlock_t              lock;
     // Tree root node.
-    rtree_node_t *root;
+    _Atomic(rtree_node_t *) root;
 };
 
 // A radix tree node.
 struct rtree_node {
-    // Extra key match bits.
-    uint32_t subkey;
-    // Number of bits in the subkey to match; must be a multiple of the tree's bits_per_node.
-    uint8_t  subkey_bits;
-    // Number of child nodes present minus one; irrelevant for leaf nodes.
-    uint8_t  len;
-    // Is a leaf node?
-    bool     is_leaf;
-    // Padding.
-    uint8_t : 8;
-    // Child node pointers or a single data pointer.
-    uint8_t data[];
+    // Parent node, NULL for root node.
+    rtree_node_t *parent;
+    // Node write spinlock.
+    spinlock_t    lock;
+    // How far up the node is multiplied by RTREE_BITS_PER_NODE; 0 at leaf nodes.
+    uint8_t       height;
+    // How many child nodes are not empty.
+    uint8_t       occupancy;
+    union {
+        // Child nodes.
+        _Atomic(rtree_node_t *) children[RTREE_ENTS_PER_NODE];
+        // Data pointers.
+        _Atomic(void *)         data[RTREE_ENTS_PER_NODE];
+    };
 };
 
 // A radix tree iterator.
 struct rtree_iter {
-    // Iterator is valid.
-    bool     valid;
+    // Current node.
+    rtree_node_t const *node;
     // Current key.
-    uint64_t key;
+    uint64_t            key;
     // Current value.
-    void    *value;
+    void               *value;
 };
 
 // Initialize an empty radix tree of pointers.
-#define RTREE_T_INIT(_value_size, _key_width, _bits_per_node) {_value_size, 0, _key_width, _bits_per_node, NULL}
+// Should only be used for static initializations; use `rtree_init()` for non-static.
+#define RTREE_T_INIT {SPINLOCK_T_INIT, NULL}
 
 // Iterate a radix tree by key and value.
 #define rtree_foreach(iter_name, tree)                                                                                 \
-    for (rtree_iter_t iter_name = rtree_next((tree), NULL); iter_name.valid; iter_name = rtree_next((tree), &iter_name))
+    for (rtree_iter_t iter_name = rtree_first((tree), NULL); iter_name.node; iter_name = rtree_next((tree), &iter_name))
 
 
 
+// Initiate a stack or dynamically allocated radix tree.
+void        rtree_init(rtree_t *tree);
 // Get a value from the radix tree.
-void        *rtree_get(rtree_t const *tree, uint64_t key);
-// Insert a value into the radix tree.
-bool         rtree_set(rtree_t *tree, uint64_t key, void *value);
-// Remove an entry from the radix tree.
-bool         rtree_remove(rtree_t *tree, uint64_t key);
-// Clear the radix tree.
-void         rtree_clear(rtree_t *tree);
+void       *rtree_get(rtree_t *tree, uint64_t key);
+// Insert a value into the radix tree, returning the old value.
+errno_ptr_t rtree_set(rtree_t *tree, uint64_t key, void *value);
+// Compare-exchange a value in radix tree.
+// Writes the old value back if it was different.
+errno_ptr_t rtree_cmpxchg(rtree_t *tree, uint64_t key, void *old_value, void *new_value);
+// Clear the entire radix tree to NULL.
+void        rtree_clear(rtree_t *tree);
+
+// Get the first entry in the radix tree.
+rtree_iter_t rtree_first(rtree_t *tree);
 // Get the next entry in the radix tree.
-// If `iter` is `NULL`, the first entry is returned.
-rtree_iter_t rtree_next(rtree_t const *tree, rtree_iter_t *cur);
+rtree_iter_t rtree_next(rtree_t *tree, rtree_iter_t cur);
+
 // Debug-print a radix tree.
-void         rtree_dump(rtree_t const *tree, void (*printer)(int indent, void *value));
+void rtree_dump(rtree_t *tree, void (*printer)(int indent, void *value));

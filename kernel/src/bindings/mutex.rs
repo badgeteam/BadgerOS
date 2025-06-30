@@ -11,6 +11,7 @@ use super::{
 };
 
 /// A BadgerOS mutex with a value in it.
+#[repr(C)]
 pub struct Mutex<T, const SHARED: bool> {
     inner: UnsafeCell<mutex_t>,
     data: UnsafeCell<T>,

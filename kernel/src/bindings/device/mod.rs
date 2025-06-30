@@ -271,6 +271,7 @@ impl Device {
         }
     }
     /// Create a device enum from a raw pointer.
+    /// Doesn't increment the refcount.
     pub unsafe fn from_raw(inner: *mut device_t) -> Self {
         unsafe {
             #[allow(non_upper_case_globals)]
@@ -291,6 +292,14 @@ impl Device {
                     Device::Unknown(BaseDevice::from_raw(inner))
                 }
             }
+        }
+    }
+    /// Create a device enum from a raw pointer.
+    /// Increments the refcount.
+    pub unsafe fn from_raw_ref(inner: *mut device_t) -> Self {
+        unsafe {
+            raw::device_push_ref(inner);
+            Self::from_raw(inner)
         }
     }
     /// Add a new device.
@@ -407,166 +416,131 @@ pub trait BaseDriver: Sync {
     }
 }
 
-pub const unsafe fn recombine_driver<
-    T: ?Sized + BaseDriver + Pointee<Metadata = DynMetadata<T>>,
->(
-    device: *mut device_t,
-) -> &'static mut T {
-    unsafe {
-        &mut *(core::ptr::from_raw_parts::<T>(
-            (*device).cookie,
-            core::mem::transmute((*device).cookie2),
-        ) as *mut T)
-    }
-}
-
-/// Remove a device from this driver.
-pub unsafe extern "C" fn driver_t_remove_wrapper(device: *mut device_t) {
-    let driver = unsafe { recombine_driver::<dyn BaseDriver>(device) };
-    driver.remove();
-}
-
-/// [optional] Called after a direct child device is added with [`Device::add`].
-/// If this fails, the child is removed again.
-pub unsafe extern "C" fn driver_t_child_added_wrapper(
-    device: *mut device_t,
-    child_device: *mut device_t,
-) -> errno_t {
-    let driver = unsafe { recombine_driver::<dyn BaseDriver>(device) };
-    let child_device = unsafe { BaseDevice::from_raw_ref(child_device) };
-    Errno::extract(driver.child_added(child_device))
-}
-
-/// [optional] Called after a direct child is activated with [`Device::activate`].
-pub unsafe extern "C" fn driver_t_child_activated_wrapper(
-    device: *mut device_t,
-    child_device: *mut device_t,
-) {
-    let driver = unsafe { recombine_driver::<dyn BaseDriver>(device) };
-    let child_device = unsafe { BaseDevice::from_raw_ref(child_device) };
-    driver.child_activated(child_device);
-}
-
-/// [optional] Called after a direct child device gets added to a driver.
-pub unsafe extern "C" fn driver_t_child_got_driver_wrapper(
-    device: *mut device_t,
-    child_device: *mut device_t,
-) {
-    let driver = unsafe { recombine_driver::<dyn BaseDriver>(device) };
-    let child_device = unsafe { BaseDevice::from_raw_ref(child_device) };
-    driver.child_got_driver(child_device);
-}
-
-/// [optional] Called before a direct child device gets removed from a driver.
-/// Always called before `child_removed`.
-pub unsafe extern "C" fn driver_t_child_lost_driver_wrapper(
-    device: *mut device_t,
-    child_device: *mut device_t,
-) {
-    let driver = unsafe { recombine_driver::<dyn BaseDriver>(device) };
-    let child_device = unsafe { BaseDevice::from_raw_ref(child_device) };
-    driver.child_lost_driver(child_device);
-}
-
-/// [optional] Called before a direct child device is removed with [`Device::remove`].
-pub unsafe extern "C" fn driver_t_child_removed_wrapper(
-    device: *mut device_t,
-    child_device: *mut device_t,
-) {
-    let driver = unsafe { recombine_driver::<dyn BaseDriver>(device) };
-    let child_device = unsafe { BaseDevice::from_raw_ref(child_device) };
-    driver.child_removed(child_device);
-}
-
-/// Device interrupt handler; also responsible for any potential forwarding of interrupts.
-/// Only called from an interrupt context.
-/// Returns true if this handled an interrupt request.
-pub unsafe extern "C" fn driver_t_interrupt_wrapper(device: *mut device_t, irqno: irqno_t) -> bool {
-    let driver = unsafe { recombine_driver::<dyn BaseDriver>(device) };
-    driver.interrupt(irqno)
-}
-
-/// Enable a certain interrupt output.
-/// Can be called with interrupts disabled.
-pub unsafe extern "C" fn driver_t_enable_irq_out_wrapper(
-    device: *mut device_t,
-    out_irqno: irqno_t,
-    enable: bool,
-) -> errno_t {
-    let driver = unsafe { recombine_driver::<dyn BaseDriver>(device) };
-    Errno::extract(driver.enable_irq_out(out_irqno, enable))
-}
-
-/// [optional] Enable an incoming interrupt.
-/// Can be called with interrupts disabled.
-pub unsafe extern "C" fn driver_t_enable_irq_in_wrapper(
-    device: *mut device_t,
-    in_irqno: irqno_t,
-    enable: bool,
-) -> errno_t {
-    let driver = unsafe { recombine_driver::<dyn BaseDriver>(device) };
-    Errno::extract(driver.enable_irq_in(in_irqno, enable))
-}
-
-/// [optional] Cascade-enable interrupts from some input designator.
-/// Can be called with interrupts disabled.
-pub unsafe extern "C" fn driver_t_cascase_enable_irq_wrapper(
-    device: *mut device_t,
-    in_irqno: irqno_t,
-) -> errno_t {
-    let driver = unsafe { recombine_driver::<dyn BaseDriver>(device) };
-    Errno::extract(driver.cascase_enable_irq(in_irqno))
+/// Helper macro for filling in driver fields.
+#[macro_export]
+macro_rules! abstract_driver_struct {
+    ($type: ty, $class: expr, $match_: expr, $add: expr) => {{
+        use crate::bindings::{error::*, device::*, raw::*};
+        use ::alloc::boxed::Box;
+        use ::core::ffi::c_void;
+        driver_t {
+            dev_class: $class,
+            match_: {
+                /// Convert the types and call the matching function.
+                extern "C" fn match_wrapper(info: *mut device_info_t) -> bool {
+                    $match_(unsafe { DeviceInfoView::from(&*info) })
+                }
+                Some(match_wrapper)
+            },
+            add: {
+                /// Convert the types and call the driver's add function and unbox the object if successful.
+                extern "C" fn add_wrapper(
+                    device: *mut device_t,
+                ) -> errno_t {
+                    let res: EResult<Box<$type>> = $add(unsafe { Device::from_raw_ref(device) });
+                    match res {
+                        Ok(b) => {
+                            let ptr = Box::into_raw(b);
+                            unsafe {
+                                (*device).cookie = ptr as *mut c_void;
+                            }
+                            0
+                        }
+                        Err(errno) => -(errno as u32 as i32),
+                    }
+                }
+                Some(add_wrapper)
+            },
+            remove: {
+                unsafe extern "C" fn remove_wrapper(device: *mut device_t) {
+                    let ptr = unsafe{&mut *((*device).cookie as *mut $type)};
+                    ptr.remove()
+                }
+                Some(remove_wrapper)
+            },
+            child_added: {
+                unsafe extern "C" fn child_added_wrapper(device: *mut device_t, child: *mut device_t) -> errno_t {
+                    let ptr = unsafe{&mut *((*device).cookie as *mut $type)};
+                    let child = unsafe {BaseDevice::from_raw_ref(child)};
+                    Errno::extract(ptr.child_added(child))
+                }
+                Some(child_added_wrapper)
+            },
+            child_activated: {
+                unsafe extern "C" fn child_activated_wrapper(device: *mut device_t, child: *mut device_t) {
+                    let ptr = unsafe{&mut *((*device).cookie as *mut $type)};
+                    let child = unsafe {BaseDevice::from_raw_ref(child)};
+                    ptr.child_activated(child)
+                }
+                Some(child_activated_wrapper)
+            },
+            child_got_driver: {
+                unsafe extern "C" fn child_got_driver_wrapper(device: *mut device_t, child: *mut device_t) {
+                    let ptr = unsafe{&mut *((*device).cookie as *mut $type)};
+                    let child = unsafe {BaseDevice::from_raw_ref(child)};
+                    ptr.child_got_driver(child)
+                }
+                Some(child_got_driver_wrapper)
+            },
+            child_lost_driver: {
+                unsafe extern "C" fn child_lost_driver_wrapper(device: *mut device_t, child: *mut device_t) {
+                    let ptr = unsafe{&mut *((*device).cookie as *mut $type)};
+                    let child = unsafe {BaseDevice::from_raw_ref(child)};
+                    ptr.child_lost_driver(child)
+                }
+                Some(child_lost_driver_wrapper)
+            },
+            child_removed: {
+                unsafe extern "C" fn child_removed_wrapper(device: *mut device_t, child: *mut device_t) {
+                    let ptr = unsafe{&mut *((*device).cookie as *mut $type)};
+                    let child = unsafe {BaseDevice::from_raw_ref(child)};
+                    ptr.child_removed(child)
+                }
+                Some(child_removed_wrapper)
+            },
+            interrupt: {
+                unsafe extern "C" fn interrupt_wrapper(device: *mut device_t, irqno: irqno_t) -> bool {
+                    let ptr = unsafe{&mut *((*device).cookie as *mut $type)};
+                    ptr.interrupt(irqno)
+                }
+                Some(interrupt_wrapper)
+            },
+            enable_irq_out: {
+                unsafe extern "C" fn enable_irq_out_wrapper(device: *mut device_t, irqno: irqno_t, enable: bool) -> errno_t {
+                    let ptr = unsafe{&mut *((*device).cookie as *mut $type)};
+                    Errno::extract(ptr.enable_irq_out(irqno, enable))
+                }
+                Some(enable_irq_out_wrapper)
+            },
+            enable_irq_in: {
+                unsafe extern "C" fn enable_irq_in_wrapper(device: *mut device_t, irqno: irqno_t, enable: bool) -> errno_t {
+                    let ptr = unsafe{&mut *((*device).cookie as *mut $type)};
+                    Errno::extract(ptr.enable_irq_in(irqno, enable))
+                }
+                Some(enable_irq_in_wrapper)
+            },
+            cascase_enable_irq: {
+                unsafe extern "C" fn cascase_enable_irq_wrapper(device: *mut device_t, irqno: irqno_t) -> errno_t {
+                    let ptr = unsafe{&mut *((*device).cookie as *mut $type)};
+                    Errno::extract(ptr.cascase_enable_irq(irqno))
+                }
+                Some(cascase_enable_irq_wrapper)
+            },
+            create_devnodes: None,
+        }
+    }};
 }
 
 /// Helper macro for filling in base driver fields.
 #[macro_export]
-macro_rules! base_driver {
-    ($class: expr, $match_: expr, $add: expr) => {
-    crate::bindings::raw::driver_t {
-        dev_class: $class,
-        match_: {
-            /// Convert the types and call the matching function.
-            extern "C" fn wrapper(info: *mut crate::bindings::raw::device_info_t) -> bool {
-                $match_(unsafe { crate::bindings::device::DeviceInfoView::from(&*info) })
-            }
-            Some(wrapper)
-        },
-        add: {
-            /// Convert the types and call the driver's add function and unbox the trait object if successful.
-            extern "C" fn wrapper(
-                device: *mut crate::bindings::raw::device_t,
-            ) -> crate::bindings::raw::errno_t {
-                unsafe { crate::bindings::raw::device_push_ref(device) };
-                let res = $add(unsafe { crate::bindings::device::Device::from_raw(device) });
-                match res {
-                    Ok(b) => {
-                        let ptr = Box::into_raw(b);
-                        unsafe {
-                            (*device).cookie = ptr as *mut core::ffi::c_void;
-                            (*device).cookie2 =
-                                core::mem::transmute(core::ptr::metadata::<
-                                    dyn crate::bindings::device::BaseDriver,
-                                >(&*ptr));
-                        }
-                        0
-                    }
-                    Err(errno) => -(errno as u32 as i32),
-                }
-            }
-            Some(wrapper)
-        },
-        remove: Some(crate::bindings::device::driver_t_remove_wrapper),
-        child_added: Some(crate::bindings::device::driver_t_child_added_wrapper),
-        child_activated: Some(crate::bindings::device::driver_t_child_activated_wrapper),
-        child_got_driver: Some(crate::bindings::device::driver_t_child_got_driver_wrapper),
-        child_lost_driver: Some(crate::bindings::device::driver_t_child_lost_driver_wrapper),
-        child_removed: Some(crate::bindings::device::driver_t_child_removed_wrapper),
-        interrupt: Some(crate::bindings::device::driver_t_interrupt_wrapper),
-        enable_irq_out: Some(crate::bindings::device::driver_t_enable_irq_out_wrapper),
-        enable_irq_in: Some(crate::bindings::device::driver_t_enable_irq_in_wrapper),
-        cascase_enable_irq: Some(crate::bindings::device::driver_t_cascase_enable_irq_wrapper),
-        create_devnodes: None,
-    }
+macro_rules! base_driver_struct {
+    ($type: ty, $match_: expr, $add: expr) => {
+        crate::abstract_driver_struct!(
+            $type,
+            crate::bindings::raw::dev_class_t_DEV_CLASS_UNKNOWN,
+            $match_,
+            $add
+        )
     };
 }
 
