@@ -125,6 +125,7 @@ static void sw_handle_sched_flags(timestamp_us_t now, int cur_cpu, sched_cpuloca
         atomic_store_explicit(&info->load_estimate, 0, memory_order_relaxed);
         atomic_fetch_sub_explicit(&running_sched_count, 1, memory_order_relaxed);
         atomic_fetch_and_explicit(&info->flags, ~(SCHED_RUNNING | SCHED_EXITING), memory_order_relaxed);
+        rcu_sched_func_callback(&isr_ctx_get()->cpulocal->rcu);
 
         // Hand all threads over to other CPUs.
         spinlock_take(&info->queue_lock);
