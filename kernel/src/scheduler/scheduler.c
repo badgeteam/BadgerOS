@@ -16,6 +16,7 @@
 #include "panic.h"
 #include "process/sighandler.h"
 #include "process/types.h"
+#include "rcu.h"
 #include "scheduler/cpu.h"
 #include "scheduler/isr.h"
 #include "scheduler/types.h"
@@ -26,7 +27,7 @@
 
 
 // Number of CPUs with running schedulers.
-static atomic_int        running_sched_count;
+atomic_int               running_sched_count;
 // Maximum CPU to check for work stealing / handoff.
 static atomic_int        max_cpu_up = 1;
 // CPU-local scheduler structs.
@@ -92,6 +93,7 @@ static void set_switch(sched_cpulocal_t *info, sched_thread_t *thread) {
     time_set_next_task_switch(timeout);
 
     assert_dev_drop(!!(tflags & THREAD_PRIVILEGED) == !!(next->flags & ISR_CTX_FLAG_KERNEL));
+    rcu_sched_func_callback(&next->cpulocal->rcu);
 
     // Run arch-specific pre-task-switch code.
     sched_arch_task_switch(thread);
@@ -109,11 +111,12 @@ static void sw_handle_sched_flags(timestamp_us_t now, int cur_cpu, sched_cpuloca
     if (!(sched_fl & (SCHED_RUNNING | SCHED_STARTING))) {
         // Mark as starting in the first cycle.
         atomic_fetch_or(&info->flags, SCHED_STARTING);
+        atomic_fetch_add_explicit(&running_sched_count, 1, memory_order_relaxed);
+        rcu_sched_init_callback(&isr_ctx_get()->cpulocal->rcu);
 
     } else if (sched_fl & SCHED_STARTING) {
         // Mark as running afterwards so CPU0 can free the stack.
         atomic_fetch_xor_explicit(&info->flags, SCHED_RUNNING | SCHED_STARTING, memory_order_relaxed);
-        atomic_fetch_add_explicit(&running_sched_count, 1, memory_order_relaxed);
 
     } else if (sched_fl & SCHED_EXITING) {
         // Exit the scheduler on this CPU.

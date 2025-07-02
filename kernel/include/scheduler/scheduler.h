@@ -23,6 +23,9 @@ typedef int (*sched_entry_t)(void *arg);
 // CPU-local scheduler data.
 typedef struct sched_cpulocal sched_cpulocal_t;
 
+// Number of CPUs with running schedulers.
+extern atomic_int running_sched_count;
+
 // Time usage information.
 typedef struct {
     // Time spent running in user-space.

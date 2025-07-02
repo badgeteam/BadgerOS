@@ -5,6 +5,7 @@
 
 #include "cpu/arch_cpulocal.h"
 #include "device/class/irqctl.h"
+#include "rcu.h"
 #include "time_private.h"
 
 #include <stddef.h>
@@ -26,6 +27,8 @@ typedef struct cpulocal {
     size_t            isr_stack_bottom;
     // CPU-local scheduler data.
     sched_cpulocal_t *sched;
+    // CPU-local RCU data.
+    rcu_cpulocal_t    rcu;
     // CPU-local timer data.
     time_cpulocal_t   time;
     // Arch-specific CPU-local data.

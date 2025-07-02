@@ -115,6 +115,7 @@ set(kernel_src
     ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/mutex.c
     ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/num_to_str.c
     ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/panic.c
+    ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/rcu.c
     ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/radixtree.c
     ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/rawprint.c
     ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/semaphore.c
