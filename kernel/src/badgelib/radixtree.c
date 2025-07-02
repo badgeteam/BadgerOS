@@ -7,8 +7,10 @@
 
 #include "cpu/interrupt.h"
 #include "errno.h"
+#include "housekeeping.h"
 #include "malloc.h"
 #include "rawprint.h"
+#include "scheduler/scheduler.h"
 #include "spinlock.h"
 #include "time.h"
 #include "todo.h"
@@ -46,6 +48,62 @@ void *rtree_get(rtree_t *tree, uint64_t key) {
 
 // Garbage-collect nodes along the path to `key`.
 static void rtree_gc_key(rtree_t *tree, uint64_t key) {
+    size_t        to_free_len = 0;
+    rtree_node_t *to_free[63 / RTREE_BITS_PER_NODE + 1];
+    bool          ie = irq_disable();
+    spinlock_take(&tree->lock);
+
+    // Walk down the tree to the target node as far as possible, locking on the way.
+    rtree_node_t *node = tree->root;
+    if (!node || (key >> node->height) >= RTREE_ENTS_PER_NODE) {
+        spinlock_release(&tree->lock);
+        irq_enable_if(ie);
+        return;
+    }
+    while (1) {
+        spinlock_take(&node->lock);
+        if (node->height == 0) {
+            break;
+        }
+        size_t        index = (key >> node->height) % RTREE_ENTS_PER_NODE;
+        rtree_node_t *child = node->children[index];
+        if (child == NULL) {
+            break;
+        }
+        node = child;
+    }
+
+    // Walk back up to the highest freeable node and atomically unlink it.
+    while (node && node->occupancy == 0) {
+        to_free[to_free_len++] = node;
+        node                   = node->parent;
+        if (node) {
+            node->occupancy--;
+            size_t index = (key >> node->height) % RTREE_ENTS_PER_NODE;
+            atomic_store_explicit(&node->children[index], NULL, memory_order_release);
+        } else {
+            atomic_store_explicit(&tree->root, NULL, memory_order_release);
+        }
+    }
+
+    // Unlock the parent node and upwards.
+    // The nodes to be freed won't be seen by other writers so they don't need to be unlocked.
+    while (node) {
+        spinlock_release(&node->lock);
+        node = node->parent;
+    }
+
+    spinlock_release(&tree->lock);
+    irq_enable_if(ie);
+
+    // After an RCU grace period, free the nodes.
+    if (to_free_len) {
+        timestamp_us_t lim = time_us() + 50;
+        while (time_us() < lim);
+        for (size_t i = 0; i < to_free_len; i++) {
+            free(to_free[i]);
+        }
+    }
 }
 
 // Create a new span of the radix tree from `max_height` downto 0, along the path for `key`.
@@ -163,6 +221,7 @@ static errno_ptr_t rtree_xchg(rtree_t *tree, uint64_t key, void *old_value, void
                 } else {
                     // Create new leaf node.
                     next                 = rtree_create_subtree(key, new_value, cur->height - RTREE_BITS_PER_NODE);
+                    next->parent         = cur;
                     cur->children[index] = next;
                     cur->occupancy++;
                     spinlock_release(next_lock);
@@ -194,8 +253,43 @@ errno_ptr_t rtree_cmpxchg(rtree_t *tree, uint64_t key, void *old_value, void *ne
     return rtree_xchg(tree, key, old_value, new_value, true);
 }
 
+// Recursive implementation of locking for `rtree_clear`.
+static void rtree_clear_lock(rtree_node_t *node) {
+    spinlock_take(&node->lock);
+    if (node->height) {
+        for (size_t i = 0; i < RTREE_ENTS_PER_NODE; i++) {
+            rtree_clear_lock(node->children[i]);
+        }
+    }
+}
+
+// Recursive implementation of freeing for `rtree_clear`.
+static void rtree_clear_free(rtree_node_t *node) {
+    if (node->height) {
+        for (size_t i = 0; i < RTREE_ENTS_PER_NODE; i++) {
+            rtree_clear_free(node->children[i]);
+        }
+    }
+    free(node);
+}
+
 // Clear the radix tree.
 void rtree_clear(rtree_t *tree) {
+    bool ie = irq_disable();
+    spinlock_take(&tree->lock);
+    rtree_node_t *root = atomic_exchange_explicit(&tree->root, NULL, memory_order_acq_rel);
+    if (root) {
+        // Lock all so we wait for any pending writes to complete.
+        rtree_clear_lock(root);
+    }
+    irq_enable_if(ie);
+
+    if (root) {
+        // After an RCU grace period, free the nodes.
+        timestamp_us_t lim = time_us() + 50;
+        while (time_us() < lim);
+        rtree_clear_free(root);
+    }
 }
 
 
