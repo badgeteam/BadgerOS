@@ -10,6 +10,7 @@
 #include "housekeeping.h"
 #include "malloc.h"
 #include "rawprint.h"
+#include "rcu.h"
 #include "scheduler/scheduler.h"
 #include "spinlock.h"
 #include "time.h"
@@ -28,21 +29,29 @@ void rtree_init(rtree_t *tree) {
 
 // Get a value from the radix tree.
 void *rtree_get(rtree_t *tree, uint64_t key) {
+    bool ie = irq_disable();
+    rcu_crit_enter();
     rtree_node_t *cur = atomic_load_explicit(&tree->root, memory_order_acquire);
     if (!cur || (cur->height < 64 && (key >> cur->height) >= RTREE_BITS_PER_NODE)) {
         // No content or the key is not covered by the root node.
+        rcu_crit_exit();
+        irq_enable_if(ie);
         return NULL;
     }
 
     while (cur) {
         size_t index = (key >> cur->height) % RTREE_ENTS_PER_NODE;
         if (cur->height == 0) {
+            rcu_crit_exit();
+            irq_enable_if(ie);
             return atomic_load_explicit(&cur->data[index], memory_order_acquire);
         } else {
             cur = atomic_load_explicit(&cur->children[index], memory_order_acquire);
         }
     }
 
+    rcu_crit_exit();
+    irq_enable_if(ie);
     return NULL;
 }
 
@@ -98,8 +107,7 @@ static void rtree_gc_key(rtree_t *tree, uint64_t key) {
 
     // After an RCU grace period, free the nodes.
     if (to_free_len) {
-        timestamp_us_t lim = time_us() + 50;
-        while (time_us() < lim);
+        rcu_sync();
         for (size_t i = 0; i < to_free_len; i++) {
             free(to_free[i]);
         }
@@ -286,8 +294,7 @@ void rtree_clear(rtree_t *tree) {
 
     if (root) {
         // After an RCU grace period, free the nodes.
-        timestamp_us_t lim = time_us() + 50;
-        while (time_us() < lim);
+        rcu_sync();
         rtree_clear_free(root);
     }
 }
@@ -296,11 +303,13 @@ void rtree_clear(rtree_t *tree) {
 
 // Get the first entry in the radix tree.
 rtree_iter_t rtree_first(rtree_t *tree) {
+    rcu_crit_assert();
     TODO();
 }
 
 // Get the next entry in the radix tree.
 rtree_iter_t rtree_next(rtree_t *tree, rtree_iter_t cur) {
+    rcu_crit_assert();
     TODO();
 }
 
