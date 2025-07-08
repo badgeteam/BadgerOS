@@ -8,7 +8,6 @@
 #include "arrays.h"
 #include "assertions.h"
 #include "badge_strings.h"
-#include "cache.h"
 #include "cpu/interrupt.h"
 #include "device/class/block.h"
 #include "device/class/union.h"
@@ -464,7 +463,7 @@ void device_pop_ref(device_t *device_base) {
         case DEV_CLASS_UNKNOWN: /* NOLINT; no action required. */ break;
         case DEV_CLASS_BLOCK: {
             if (!device->block.no_cache) {
-                cache_clear(&device->block.cache);
+                rtree_clear(&device->block.cache);
             }
         } break;
         case DEV_CLASS_IRQCTL: /* NOLINT; no action required. */ break;

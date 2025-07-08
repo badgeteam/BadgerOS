@@ -183,30 +183,6 @@ static void kernel_init() {
     }
     set_clear(&kinit_join_threads);
 
-    rtree_t tree;
-    rtree_init(&tree);
-    for (uint64_t i = 0; i < 32; i++) {
-        rtree_set(&tree, i, (void *)i);
-    }
-    for (uint64_t i = 62; i < 65; i++) {
-        rtree_set(&tree, i, (void *)i);
-    }
-    for (uint64_t i = 8192; i < 8200; i++) {
-        rtree_set(&tree, i, (void *)i);
-    }
-    rtree_dump(&tree, NULL);
-    for (uint64_t i = 5; i < 30; i++) {
-        rtree_set(&tree, i, NULL);
-    }
-    for (uint64_t i = 62; i < 65; i++) {
-        rtree_set(&tree, i, NULL);
-    }
-    for (uint64_t i = 8193; i < 8199; i++) {
-        rtree_set(&tree, i, NULL);
-    }
-    rtree_dump(&tree, NULL);
-    while (1);
-
     dev_filter_t filter = {
         .match_class = true,
         .class       = DEV_CLASS_BLOCK,
@@ -239,8 +215,6 @@ static void kernel_init() {
         device_pop_ref(dev);
     }
     set_clear(&devs);
-
-    rtree_dump(NULL, NULL);
 
     // Temporary filesystem image.
     errno_t res;

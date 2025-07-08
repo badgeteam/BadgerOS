@@ -3,15 +3,15 @@ use core::ffi::c_void;
 use crate::bindings::{
     device::{AbstractDevice, BaseDriver},
     error::{EResult, Errno},
-    raw::{self, blkdev_erase_t, device_block_t},
+    raw::{self, device_block_t},
 };
 
 /// Specialization for block devices.
 pub type BlockDevice = AbstractDevice<device_block_t>;
 impl BlockDevice {
-    /// Device block size, must be power of 2.
-    pub fn block_size(&self) -> u64 {
-        unsafe { (*self.inner.as_ptr()).block_size }
+    /// Log-base 2 of device block size.
+    pub fn block_size_exp(&self) -> u8 {
+        unsafe { (*self.inner.as_ptr()).block_size_exp }
     }
     /// Number of blocks.
     pub fn block_count(&self) -> u64 {
@@ -39,15 +39,15 @@ impl BlockDevice {
     /// Write device blocks.
     /// The alignment for DMA is handled by this function.
     pub fn write_blocks(&self, start: u64, data: &[u8]) -> EResult<()> {
-        let blksize = self.block_size();
-        if data.len() as u64 & (blksize - 1) != 0 {
+        let blksize_exp = self.block_size_exp();
+        if data.len() as u64 & ((1u64 << blksize_exp) - 1) != 0 {
             return Err(Errno::EINVAL);
         }
         Errno::check(unsafe {
             raw::device_block_write_blocks(
                 self.as_raw_ptr(),
                 start,
-                data.len() as u64 / blksize,
+                data.len() as u64 >> blksize_exp,
                 data.as_ptr() as *const c_void,
             )
         })
@@ -56,25 +56,23 @@ impl BlockDevice {
     /// Read device blocks.
     /// The alignment for DMA is handled by this function.
     pub fn read_blocks(&self, start: u64, data: &mut [u8]) -> EResult<()> {
-        let blksize = self.block_size();
-        if data.len() as u64 & (blksize - 1) != 0 {
+        let blksize_exp = self.block_size_exp();
+        if data.len() as u64 & ((1u64 << blksize_exp) - 1) != 0 {
             return Err(Errno::EINVAL);
         }
         Errno::check(unsafe {
             raw::device_block_read_blocks(
                 self.as_raw_ptr(),
                 start,
-                data.len() as u64 / blksize,
+                data.len() as u64 >> blksize_exp,
                 data.as_mut_ptr() as *mut c_void,
             )
         })
     }
 
     /// Erase blocks.
-    pub fn erase_blocks(&self, start: u64, count: u64, mode: blkdev_erase_t) -> EResult<()> {
-        Errno::check(unsafe {
-            raw::device_block_erase_blocks(self.as_raw_ptr(), start, count, mode)
-        })
+    pub fn erase_blocks(&self, start: u64, count: u64) -> EResult<()> {
+        Errno::check(unsafe { raw::device_block_erase_blocks(self.as_raw_ptr(), start, count) })
     }
 
     /// Write block device bytes.
@@ -104,10 +102,8 @@ impl BlockDevice {
     }
 
     /// Erase block device bytes.
-    pub fn erase_bytes(&self, offset: u64, size: u64, mode: blkdev_erase_t) -> EResult<()> {
-        Errno::check(unsafe {
-            raw::device_block_erase_bytes(self.as_raw_ptr(), offset, size, mode)
-        })
+    pub fn erase_bytes(&self, offset: u64, size: u64) -> EResult<()> {
+        Errno::check(unsafe { raw::device_block_erase_bytes(self.as_raw_ptr(), offset, size) })
     }
 
     /// Apply all pending changes.
@@ -144,7 +140,7 @@ pub trait BlockDriver: BaseDriver {
     /// Test whether a single block is erased with native erase value.
     fn is_block_erased(&self, start: u64) -> EResult<bool>;
     /// Erase blocks.
-    fn erase_blocks(&self, start: u64, count: u64, mode: blkdev_erase_t) -> EResult<()>;
+    fn erase_blocks(&self, start: u64, count: u64) -> EResult<()>;
     /// [optional] Write device bytes.
     fn write_bytes(&self, _offset: u64, _data: &[u8]) -> EResult<()> {
         Err(Errno::ENOTSUP)
@@ -154,7 +150,7 @@ pub trait BlockDriver: BaseDriver {
         Err(Errno::ENOTSUP)
     }
     /// [optional] Erase bytes.
-    fn erase_bytes(&self, _offset: u64, _count: u64, _mode: blkdev_erase_t) -> EResult<()> {
+    fn erase_bytes(&self, _offset: u64, _count: u64) -> EResult<()> {
         Err(Errno::ENOTSUP)
     }
 }
@@ -186,7 +182,7 @@ macro_rules! block_driver_struct {
                     Errno::extract(ptr.write_blocks(start, count, unsafe {
                         &*slice_from_raw_parts(
                             data as *const u8,
-                            count as usize * (*device).block_size as usize,
+                            (count as usize) << (*device).block_size_exp as usize,
                         )
                     }))
                 }
@@ -203,7 +199,7 @@ macro_rules! block_driver_struct {
                     Errno::extract(ptr.read_blocks(start, count, unsafe {
                         &mut *slice_from_raw_parts_mut(
                             data as *mut u8,
-                            count as usize * (*device).block_size as usize,
+                            (count as usize) << (*device).block_size_exp as usize,
                         )
                     }))
                 }
@@ -224,10 +220,9 @@ macro_rules! block_driver_struct {
                     device: *mut device_block_t,
                     start: u64,
                     count: u64,
-                    mode: blkdev_erase_t,
                 ) -> errno_t {
                     let ptr = unsafe { &mut *((*device).base.cookie as *mut $type) };
-                    Errno::extract(ptr.erase_blocks(start, count, mode))
+                    Errno::extract(ptr.erase_blocks(start, count))
                 }
                 Some(erase_blocks_wrapper)
             },
@@ -264,10 +259,9 @@ macro_rules! block_driver_struct {
                     device: *mut device_block_t,
                     offset: u64,
                     len: u64,
-                    mode: blkdev_erase_t,
                 ) -> errno_t {
                     let ptr = unsafe { &mut *((*device).base.cookie as *mut $type) };
-                    Errno::extract(ptr.erase_bytes(offset, len, mode))
+                    Errno::extract(ptr.erase_bytes(offset, len))
                 }
                 Some(erase_bytes_wrapper)
             },

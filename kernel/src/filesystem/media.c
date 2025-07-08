@@ -40,7 +40,7 @@ errno_t fs_media_write(fs_media_t const *media, uint64_t offset, void const *wri
 errno_t fs_media_erase(fs_media_t const *media, uint64_t offset, size_t len) {
     prelude(erase);
     switch (media->type) {
-        case FS_MEDIA_BLKDEV: return device_block_erase_bytes(media->blkdev, offset, len, BLKDEV_ERASE_NATIVE);
+        case FS_MEDIA_BLKDEV: return device_block_erase_bytes(media->blkdev, offset, len);
         case FS_MEDIA_RAM: return 0;
         default: TODO();
     }

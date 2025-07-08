@@ -5,28 +5,20 @@
 
 #pragma once
 
-#include "cache.h"
 #include "device/device.h"
+#include "radixtree.h"
 
 
-
-// Block device erase mode.
-typedef enum {
-    // Erase with device's native erase value.
-    BLKDEV_ERASE_NATIVE,
-    // Erase and fill with zeroes.
-    BLKDEV_ERASE_ZERO,
-} blkdev_erase_t;
 
 // Block device.
 typedef struct {
     device_t base;
-    // Device block size, must be power of 2.
-    uint64_t block_size;
     // Number of blocks.
     uint64_t block_count;
     // Device DMA alignment requirement; no more than block size.
     size_t   dma_align;
+    // Log-base-2 of device block size.
+    uint8_t  block_size_exp;
     // Native erased byte value.
     uint8_t  erase_value;
     // Fast read; do not cache read data, only write data; requires byte read access.
@@ -36,7 +28,7 @@ typedef struct {
     // If `false`, all accesses use entire blocks.
     bool     no_cache;
     // Block cache, if any.
-    cache_t  cache;
+    rtree_t  cache;
 } device_block_t;
 
 // Block device driver functions.
@@ -51,13 +43,13 @@ typedef struct {
     // Test whether a single block is erased with native erase value.
     errno_t (*is_block_erased)(device_block_t *device, uint64_t start);
     // Erase blocks.
-    errno_t (*erase_blocks)(device_block_t *device, uint64_t start, uint64_t count, blkdev_erase_t mode);
+    errno_t (*erase_blocks)(device_block_t *device, uint64_t start, uint64_t count);
     // [optional] Write device bytes.
     errno_t (*write_bytes)(device_block_t *device, uint64_t start, uint64_t count, void const *data);
     // [optional] Read device bytes.
     errno_t (*read_bytes)(device_block_t *device, uint64_t start, uint64_t count, void *data);
     // [optional] Erase bytes.
-    errno_t (*erase_bytes)(device_block_t *device, uint64_t start, uint64_t count, blkdev_erase_t mode);
+    errno_t (*erase_bytes)(device_block_t *device, uint64_t start, uint64_t count);
 } driver_block_t;
 
 
@@ -78,7 +70,7 @@ errno_t device_block_write_blocks(device_block_t *device, uint64_t start, uint64
 // The alignment for DMA is handled by this function.
 errno_t device_block_read_blocks(device_block_t *device, uint64_t start, uint64_t count, void *data);
 // Erase blocks.
-errno_t device_block_erase_blocks(device_block_t *device, uint64_t start, uint64_t count, blkdev_erase_t mode);
+errno_t device_block_erase_blocks(device_block_t *device, uint64_t start, uint64_t count);
 // Write block device bytes.
 // The alignment for DMA is handled by this function.
 errno_t device_block_write_bytes(device_block_t *device, uint64_t offset, uint64_t size, void const *data);
@@ -86,7 +78,7 @@ errno_t device_block_write_bytes(device_block_t *device, uint64_t offset, uint64
 // The alignment for DMA is handled by this function.
 errno_t device_block_read_bytes(device_block_t *device, uint64_t offset, uint64_t size, void *data);
 // Erase block device bytes.
-errno_t device_block_erase_bytes(device_block_t *device, uint64_t offset, uint64_t size, blkdev_erase_t mode);
+errno_t device_block_erase_bytes(device_block_t *device, uint64_t offset, uint64_t size);
 
 // Apply all pending changes.
 // If `flush` is `true`, will remove the cache entries.

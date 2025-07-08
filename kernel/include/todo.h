@@ -6,6 +6,10 @@
 #include "log.h"
 #include "panic.h"
 
+#ifndef __FILE_NAME__
+#define __FILE_NAME__ __FILE__
+#endif
+
 
 
 #define TODO()                                                                                                         \

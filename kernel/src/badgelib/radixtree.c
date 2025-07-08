@@ -255,10 +255,49 @@ errno_ptr_t rtree_set(rtree_t *tree, uint64_t key, void *value) {
     return rtree_xchg(tree, key, NULL, value, false);
 }
 
+// Optimization of `rtree_cmpxchg` where `old_value` is not NULL.
+static void *rtree_cmpxchg_nonzero(rtree_t *tree, uint64_t key, void *old_value, void *new_value) {
+    bool ie = irq_disable();
+    rcu_crit_enter();
+    rtree_node_t *cur = atomic_load_explicit(&tree->root, memory_order_acquire);
+    if (!cur || (cur->height < 64 && (key >> cur->height) >= RTREE_BITS_PER_NODE)) {
+        // No content or the key is not covered by the root node.
+        rcu_crit_exit();
+        irq_enable_if(ie);
+        return NULL;
+    }
+
+    while (cur) {
+        size_t index = (key >> cur->height) % RTREE_ENTS_PER_NODE;
+        if (cur->height == 0) {
+            rcu_crit_exit();
+            irq_enable_if(ie);
+            atomic_compare_exchange_strong_explicit(
+                &cur->data[index],
+                &old_value,
+                new_value,
+                memory_order_acq_rel,
+                memory_order_acquire
+            );
+            return old_value;
+        } else {
+            cur = atomic_load_explicit(&cur->children[index], memory_order_acquire);
+        }
+    }
+
+    rcu_crit_exit();
+    irq_enable_if(ie);
+    return NULL;
+}
+
 // Compare-exchange a value in radix tree.
 // Returns the old value regardless of success.
 errno_ptr_t rtree_cmpxchg(rtree_t *tree, uint64_t key, void *old_value, void *new_value) {
-    return rtree_xchg(tree, key, old_value, new_value, true);
+    if (old_value) {
+        return rtree_xchg(tree, key, old_value, new_value, true);
+    } else {
+        return (errno_ptr_t){rtree_cmpxchg_nonzero(tree, key, old_value, new_value), 0};
+    }
 }
 
 // Recursive implementation of locking for `rtree_clear`.

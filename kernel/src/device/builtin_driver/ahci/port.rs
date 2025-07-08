@@ -15,7 +15,7 @@ use crate::{
         device::{
             BaseDriver, Device, DeviceInfoView, HasBaseDevice,
             addr::DevAddr,
-            class::block::{BlockDevice, BlockDriver},
+            class::block::{self, BlockDevice, BlockDriver},
         },
         error::{EResult, Errno},
         mutex::Mutex,
@@ -192,11 +192,13 @@ impl SataDriver {
         let dev_blk = unsafe { &mut *this.device.as_raw_ptr() };
         this.supports_48bit = id[83] & (1 << 10) != 0;
         if id[106] & (1 << 14) == 0 {
-            dev_blk.block_size = 512;
+            dev_blk.block_size_exp = 9; // 512 bytes
         } else {
-            dev_blk.block_size = id[117] as u64 + (id[118] as u64) << 16;
-            if dev_blk.block_size == 0 {
-                dev_blk.block_size = 512;
+            let block_size = id[117] as u64 + (id[118] as u64) << 16;
+            if block_size == 0 {
+                dev_blk.block_size_exp = 9; // 512 bytes
+            } else {
+                dev_blk.block_size_exp = block_size.trailing_zeros() as u8;
             }
         }
         dev_blk.block_count = (id[100] as u64)
@@ -208,7 +210,7 @@ impl SataDriver {
             LogLevel::Debug,
             "48-bit: {}; sec. size: {}; sec. count: {}",
             if this.supports_48bit { 'y' } else { 'n' },
-            dev_blk.block_size,
+            1u64 << dev_blk.block_size_exp,
             dev_blk.block_count
         );
 
@@ -370,7 +372,7 @@ impl SataDriver {
         }
         if let Some(data) = data {
             if count
-                .checked_mul(self.device.block_size())
+                .checked_shl(self.device.block_size_exp() as u32)
                 .map(|x| x != data.len() as u64)
                 .unwrap_or(true)
             {
@@ -379,7 +381,7 @@ impl SataDriver {
                     "Mismatch between data length ({}) and block size ({}x {}b block)",
                     data.len(),
                     count,
-                    self.device.block_size()
+                    1u64 << self.device.block_size_exp()
                 );
                 return Err(Errno::EIO);
             }
@@ -433,12 +435,7 @@ impl BlockDriver for SataDriver {
         Ok(false)
     }
 
-    fn erase_blocks(
-        &self,
-        _start: u64,
-        _count: u64,
-        _mode: crate::bindings::raw::blkdev_erase_t,
-    ) -> EResult<()> {
+    fn erase_blocks(&self, _start: u64, _count: u64) -> EResult<()> {
         Ok(())
     }
 }
