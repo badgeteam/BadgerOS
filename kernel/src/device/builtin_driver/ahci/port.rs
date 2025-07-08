@@ -15,7 +15,7 @@ use crate::{
         device::{
             BaseDriver, Device, DeviceInfoView, HasBaseDevice,
             addr::DevAddr,
-            class::block::{self, BlockDevice, BlockDriver},
+            class::block::{BlockDevice, BlockDriver},
         },
         error::{EResult, Errno},
         mutex::Mutex,
@@ -41,8 +41,8 @@ register_structs! {
         /// Reserved.
         (0x540 => _resvd0:      [u8; 64]),
         /// Physical region descriptor table.
-        (0x580 => pub prdt:     [hms::PRDT; 65536]),
-        (0x100580 => @END),
+        (0x580 => pub prdt:     [hms::PRDT; 168]),
+        (0x1000 => @END),
     }
 }
 
@@ -228,7 +228,7 @@ impl SataDriver {
         let data = data.into_const_slice();
 
         // Ensure data is aligned to at least 2 bytes.
-        if &data[0] as *const u8 as usize & 1 != 0 {
+        if data.as_ptr() as usize & 1 != 0 {
             logk(
                 LogLevel::Error,
                 "Misaligned address for SataDriver::do_raw_cmd",
@@ -283,7 +283,7 @@ impl SataDriver {
         guard.mmio.cmd_issue.set(1);
 
         // TODO: This is an incorrect way to wait for the command.
-        let lim = time_us() + 100000;
+        let lim = time_us() + 10000000;
         loop {
             if guard.mmio.cmd_issue.get() & 1 == 0 {
                 return Ok(());
@@ -396,6 +396,7 @@ impl BlockDriver for SataDriver {
     fn write_blocks(&self, start: u64, count: u64, data: &[u8]) -> EResult<()> {
         // Bounds check is required because do_ata_cmd doesn't check.
         self.access_bounds_check(start, count, Some(data))?;
+        logkf!(LogLevel::Debug, "Writing {} blocks at {}", count, start);
         unsafe {
             self.do_ata_cmd(
                 if self.supports_48bit {
@@ -415,6 +416,7 @@ impl BlockDriver for SataDriver {
     fn read_blocks(&self, start: u64, count: u64, data: &mut [u8]) -> EResult<()> {
         // Bounds check is required because do_ata_cmd doesn't check.
         self.access_bounds_check(start, count, Some(data))?;
+        logkf!(LogLevel::Debug, "Reading {} blocks at {}", count, start);
         unsafe {
             self.do_ata_cmd(
                 if self.supports_48bit {
@@ -437,6 +439,25 @@ impl BlockDriver for SataDriver {
 
     fn erase_blocks(&self, _start: u64, _count: u64) -> EResult<()> {
         Ok(())
+    }
+
+    fn sync_blocks(&self, _start: u64, _count: u64) -> EResult<()> {
+        logkf!(LogLevel::Debug, "Flushing cache");
+        let dummy: [u8; 0] = [];
+        unsafe {
+            self.do_ata_cmd(
+                if self.supports_48bit {
+                    ata::Command::FlushCacheExt
+                } else {
+                    ata::Command::FlushCache
+                },
+                1 << 6,
+                0,
+                0,
+                0,
+                ConstOrMutSlice::Const(&dummy),
+            )
+        }
     }
 }
 

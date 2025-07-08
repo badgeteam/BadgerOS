@@ -10,5 +10,7 @@ pub enum Command {
     ReadDmaExt = 0x25,
     WriteDma = 0xca,
     WriteDmaExt = 0x35,
+    FlushCache = 0xe7,
+    FlushCacheExt = 0xea,
     IdentDev = 0xec,
 }

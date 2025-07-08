@@ -7,11 +7,9 @@
 
 #include "cpu/interrupt.h"
 #include "errno.h"
-#include "housekeeping.h"
 #include "malloc.h"
 #include "rawprint.h"
 #include "rcu.h"
-#include "scheduler/scheduler.h"
 #include "spinlock.h"
 #include "time.h"
 #include "todo.h"
@@ -340,16 +338,59 @@ void rtree_clear(rtree_t *tree) {
 
 
 
+// Implementation of `rtree_first` and `rtree_next`.
+static rtree_iter_t rtree_iter_impl(rtree_t *tree, rtree_iter_t cur) {
+    rtree_node_t const *const root = atomic_load_explicit(&tree->root, memory_order_acquire);
+    uint8_t  max_key_bits          = root->height + RTREE_BITS_PER_NODE < 64 ? root->height + RTREE_BITS_PER_NODE : 64;
+    uint64_t max_key               = (1llu << max_key_bits) - 1;
+    while (cur.node) {
+        size_t index = (cur.key >> cur.node->height) % RTREE_ENTS_PER_NODE;
+        if (cur.node->height == 0) {
+            void *const value = atomic_load_explicit(&cur.node->data[index], memory_order_acquire);
+            if (value) {
+                cur.value = value;
+                return cur;
+            } else {
+                cur.key++;
+                if (index == RTREE_ENTS_PER_NODE - 1) {
+                    cur.node = cur.node->parent;
+                }
+            }
+        } else {
+            rtree_node_t const *const next = atomic_load_explicit(&cur.node->children[index], memory_order_acquire);
+            if (next) {
+                cur.node = next;
+            } else {
+                cur.key += 1llu << cur.node->height;
+                if (cur.key == max_key) {
+                    break;
+                } else if (index == RTREE_ENTS_PER_NODE - 1) {
+                    cur.node = cur.node->parent;
+                }
+            }
+        }
+    }
+    return (rtree_iter_t){NULL, 0, NULL};
+}
+
 // Get the first entry in the radix tree.
-rtree_iter_t rtree_first(rtree_t *tree) {
+rtree_iter_t rtree_first(rtree_t *tree, uint64_t min_key) {
     rcu_crit_assert();
-    TODO();
+    rtree_node_t const *const root = atomic_load_explicit(&tree->root, memory_order_acquire);
+    if (root->height < 64 && min_key >> root->height >= RTREE_ENTS_PER_NODE) {
+        return (rtree_iter_t){NULL, 0, NULL};
+    }
+    return rtree_iter_impl(tree, (rtree_iter_t){root, min_key, NULL});
 }
 
 // Get the next entry in the radix tree.
 rtree_iter_t rtree_next(rtree_t *tree, rtree_iter_t cur) {
     rcu_crit_assert();
-    TODO();
+    if (cur.key % RTREE_ENTS_PER_NODE == RTREE_ENTS_PER_NODE - 1) {
+        cur.node = cur.node->parent;
+    }
+    cur.key++;
+    return rtree_iter_impl(tree, cur);
 }
 
 static void print_ptr(int indent, void *value) {

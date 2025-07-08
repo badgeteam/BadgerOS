@@ -14,7 +14,7 @@ qemu-debug: $(BUILDDIR)/cache/OVMF_RISCV64.fd build
 		-device pcie-root-port,bus=pcie.0,id=pcisw0 \
 		-device qemu-xhci,bus=pcisw0 -device usb-kbd \
 		-drive if=pflash,unit=0,format=raw,file=$(BUILDDIR)/cache/OVMF_RISCV64.fd \
-		-drive if=none,id=hd0,format=raw,file=$(OUTPUT)/image.iso \
+		-drive if=none,id=hd0,format=raw,file=$(OUTPUT)/image.iso,cache=none \
 		-device ahci,id=achi0 \
 		-device ide-hd,drive=hd0,bus=achi0.0 \
 		-serial mon:stdio -nographic \
@@ -28,7 +28,7 @@ qemu: $(BUILDDIR)/cache/OVMF_RISCV64.fd build
 		-device pcie-root-port,bus=pcie.0,id=pcisw0 \
 		-device qemu-xhci,bus=pcisw0 -device usb-kbd \
 		-drive if=pflash,unit=0,format=raw,file=$(BUILDDIR)/cache/OVMF_RISCV64.fd \
-		-drive if=none,id=hd0,format=raw,file=$(OUTPUT)/image.iso \
+		-drive if=none,id=hd0,format=raw,file=$(OUTPUT)/image.iso,cache=none \
 		-device ahci,id=achi0 \
 		-device ide-hd,drive=hd0,bus=achi0.0 \
 		-serial mon:stdio -nographic \

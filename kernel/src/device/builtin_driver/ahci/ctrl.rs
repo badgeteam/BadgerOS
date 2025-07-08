@@ -9,13 +9,13 @@ use crate::{
     bindings::{
         self,
         device::{
-            BaseDevice, BaseDriver, Device, DeviceInfo, DeviceInfoView, HasBaseDevice,
+            BaseDriver, Device, DeviceInfo, DeviceInfoView, HasBaseDevice,
             addr::{AhciAddr, DevAddr, PciAddr},
             class::pcictl::{MappedBar, PciCtlDevice},
         },
         error::{EResult, Errno},
         raw::{
-            dev_class_t_DEV_CLASS_UNKNOWN, driver_t, irqno_t, pci_bclass_t_PCI_BCLASS_STORAGE,
+            driver_t, irqno_t, pci_bclass_t_PCI_BCLASS_STORAGE,
             pci_progif_storage_sata_t_PCI_PROGIF_STORAGE_SATA_AHCI,
             pci_subclass_storage_t_PCI_SUBCLASS_STORAGE_SATA, pcie_hdr_com_t,
         },

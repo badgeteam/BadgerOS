@@ -37,7 +37,7 @@ build: cmake-configure
 
 .PHONY: clean
 clean:
-	rm -rf "$(BUILDDIR)"
+	rm -rf '$(BUILDDIR)' '$(OUTPUT)'
 
 .PHONY: clang-format-check
 clang-format-check: cmake-configure

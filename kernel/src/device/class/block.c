@@ -18,18 +18,25 @@
 
 #include <stdint.h>
 
+// Batch size for syncing blocks.
+#define BLK_SYNC_BATCH_SIZE 32
+
 // Untag a block cache pointer.
-#define BLK_UNTAG(ptr)      ((__typeof__(ptr))(((size_t)ptr) & ~(size_t)3))
+#define BLK_UNTAG(ptr)      ((__typeof__(ptr))(((size_t)ptr) & ~(size_t)7))
 // Tag a block cache pointer as locked.
 #define BLK_TAG_LOCKED(ptr) ((__typeof__(ptr))((size_t)(ptr) | 1))
 // Tag a block cache pointer as dirty.
 #define BLK_TAG_DIRTY(ptr)  ((__typeof__(ptr))((size_t)(ptr) | 2))
+// Tag a block cache pointer as being synced.
+#define BLK_TAG_SYNC(ptr)   ((__typeof__(ptr))((size_t)(ptr) | 4))
 // NULL pointer tagged as locked.
 #define BLK_LOCKED_NULL     BLK_TAG_LOCKED(NULL)
 // Whether a block cache pointer is tagged as locked.
 #define BLK_IS_LOCKED(ptr)  (((size_t)(ptr) & 1) != 0)
 // Whether a block cache pointer is tagged as dirty.
 #define BLK_IS_DIRTY(ptr)   (((size_t)(ptr) & 2) != 0)
+// Whether a block cache pointer is tagged as being synced.
+#define BLK_IS_SYNC(ptr)    (((size_t)(ptr) & 4) != 0)
 
 
 
@@ -165,7 +172,7 @@ static errno_t iterate_block_ranges(
                 // Successfully read everything, now update the entry in the cache to this newly read one.
                 irq_disable();
                 rcu_crit_enter();
-                rtree_set(&device->cache, block, BLK_TAG_DIRTY(value));
+                rtree_set(&device->cache, block, mark_dirty ? BLK_TAG_DIRTY(value) : value);
                 break;
             }
         }
@@ -268,6 +275,41 @@ errno_t device_block_sync_all(device_block_t *device, bool flush) {
     return device_block_sync_blocks(device, 0, device->block_count, flush);
 }
 
+// Helper function that tries to sync all the blocks.
+static errno_t
+    sync_blocks_helper(device_block_t *device, size_t to_sync_len, uint64_t *to_sync_blocks, uint8_t **to_sync_data) {
+    driver_block_t const *const driver = (void *)device->base.driver;
+    rcu_crit_exit();
+    irq_enable();
+
+    for (size_t i = 0; i < to_sync_len; i++) {
+        errno_t res = driver->write_blocks(device, to_sync_blocks[i], 1, BLK_UNTAG(to_sync_data[i]));
+        if (res < 0) {
+            // Failed to sync so write the remainder back as non-sync dirty.
+            for (size_t x = i; x < to_sync_len; x++) {
+                rtree_set(&device->cache, to_sync_blocks[x], BLK_TAG_DIRTY(BLK_UNTAG(to_sync_data[x])));
+            }
+            // Free only the entries that were actually synced.
+            rcu_sync();
+            for (size_t x = 0; x < i; x++) {
+                free(BLK_UNTAG(to_sync_data[i]));
+            }
+            return res;
+        }
+        rtree_set(&device->cache, to_sync_blocks[i], NULL);
+    }
+
+    // Sync succeeded, free all the entries.
+    rcu_sync();
+    for (size_t i = 0; i < to_sync_len; i++) {
+        free(BLK_UNTAG(to_sync_data[i]));
+    }
+
+    irq_disable();
+    rcu_crit_enter();
+    return 0;
+}
+
 // Apply pending changes in a range of blocks.
 errno_t device_block_sync_blocks(device_block_t *device, uint64_t start, uint64_t count, bool flush) {
     mutex_acquire_shared(&device->base.driver_mtx, TIMESTAMP_US_MAX);
@@ -275,12 +317,99 @@ errno_t device_block_sync_blocks(device_block_t *device, uint64_t start, uint64_
         mutex_release_shared(&device->base.driver_mtx);
         return -ENOENT;
     }
+    driver_block_t const *const driver = (void *)device->base.driver;
+
+    // Number of blocks to sync.
+    size_t   to_sync_len = 0;
+    // Blocks that are going to be synced.
+    uint64_t to_sync_blocks[BLK_SYNC_BATCH_SIZE];
+    // Data arrays that are going to be synced.
+    // Safe to use outside of RCU because the entries in the cache will be tagged as syncing.
+    uint8_t *to_sync_data[BLK_SYNC_BATCH_SIZE];
+
+    assert_dev_keep(irq_disable());
+    rcu_crit_enter();
+
+    rtree_iter_t iter = rtree_first(&device->cache, start);
+    while (iter.node) {
+        if (BLK_IS_LOCKED(iter.value) || BLK_IS_SYNC(iter.value) || (!flush && !BLK_IS_DIRTY(iter.value))) {
+            iter = rtree_next(&device->cache, iter);
+            continue;
+        }
+
+        // Evict clean entries if `flush` is `true`.
+        if (flush && !BLK_IS_DIRTY(iter.value)) {
+            // Must yield to proceed to the next RCU generation so garbage collection in `rtree_cmpxchg` doesn't hang.
+            rcu_crit_exit();
+            thread_yield();
+            irq_disable();
+            rcu_crit_enter();
+            rtree_cmpxchg(&device->cache, iter.key, iter.value, NULL);
+            iter = rtree_first(&device->cache, iter.key + 1);
+            continue;
+        }
+
+        // Mark this block as syncing.
+        if (iter.value != rtree_cmpxchg(&device->cache, iter.key, iter.value, BLK_TAG_SYNC(iter.value)).ptr) {
+            // Pointer in the cache changed; try again.
+            rcu_crit_exit();
+            thread_yield();
+            irq_disable();
+            rcu_crit_enter();
+            iter = rtree_first(&device->cache, iter.key);
+            continue;
+        }
+
+        // Add it to the buffer of things that must sync.
+        to_sync_data[to_sync_len]   = iter.value;
+        to_sync_blocks[to_sync_len] = iter.key;
+        to_sync_len++;
+        if (to_sync_len < BLK_SYNC_BATCH_SIZE) {
+            iter = rtree_next(&device->cache, iter);
+            continue;
+        }
+
+        // Buffer filled up, sync more now.
+        RETURN_ON_ERRNO(sync_blocks_helper(device, to_sync_len, to_sync_blocks, to_sync_data), {
+            driver->sync_blocks(device, start, count);
+            mutex_release_shared(&device->base.driver_mtx);
+        });
+
+        // Finally, continue looking for blocks to sync after this one.
+        rtree_cmpxchg(&device->cache, iter.key, iter.value, NULL);
+        iter        = rtree_first(&device->cache, iter.key + 1);
+        to_sync_len = 0;
+    }
+
+    errno_t res = 0;
+    if (to_sync_len) {
+        res = sync_blocks_helper(device, to_sync_len, to_sync_blocks, to_sync_data);
+    }
+
+    rcu_crit_exit();
+    irq_enable();
+
+    if (driver->sync_blocks(device, start, count) < 0 && res >= 0) {
+        res = -EIO;
+    }
     mutex_release_shared(&device->base.driver_mtx);
-    return 0;
+    return res;
 }
 
 // Apply pending changes in a range of bytes.
 errno_t device_block_sync_bytes(device_block_t *device, uint64_t offset, uint64_t size, bool flush) {
+    if (device->no_cache) {
+        mutex_acquire_shared(&device->base.driver_mtx, TIMESTAMP_US_MAX);
+        if (!device->base.driver) {
+            mutex_release_shared(&device->base.driver_mtx);
+            return -ENOENT;
+        }
+        driver_block_t const *const driver = (void *)device->base.driver;
+        errno_t                     res    = driver->sync_bytes(device, offset, size);
+        mutex_release_shared(&device->base.driver_mtx);
+        return res;
+    }
+
     uint64_t const block_size  = 1llu << device->block_size_exp;
     size                      += offset & (block_size - 1);
     offset                    -= offset & (block_size - 1);

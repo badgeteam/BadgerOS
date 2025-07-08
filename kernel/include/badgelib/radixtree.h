@@ -69,7 +69,7 @@ struct rtree_iter {
 
 // Iterate a radix tree by key and value.
 #define rtree_foreach(iter_name, tree)                                                                                 \
-    for (rtree_iter_t iter_name = rtree_first((tree), NULL); iter_name.node; iter_name = rtree_next((tree), &iter_name))
+    for (rtree_iter_t iter_name = rtree_first((tree), 0); iter_name.node; iter_name = rtree_next((tree), iter_name))
 
 
 
@@ -85,8 +85,8 @@ errno_ptr_t rtree_cmpxchg(rtree_t *tree, uint64_t key, void *old_value, void *ne
 // Clear the entire radix tree to NULL.
 void        rtree_clear(rtree_t *tree);
 
-// Get the first entry in the radix tree.
-rtree_iter_t rtree_first(rtree_t *tree);
+// Get the first entry in the radix tree starting at a certain key.
+rtree_iter_t rtree_first(rtree_t *tree, uint64_t min_key);
 // Get the next entry in the radix tree.
 rtree_iter_t rtree_next(rtree_t *tree, rtree_iter_t cur);
 

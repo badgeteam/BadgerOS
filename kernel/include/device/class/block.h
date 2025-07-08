@@ -41,7 +41,9 @@ typedef struct {
     // The caller must ensure that `data` is aligned at least as much as needed for DMA.
     errno_t (*read_blocks)(device_block_t *device, uint64_t start, uint64_t count, void *data);
     // Test whether a single block is erased with native erase value.
-    errno_t (*is_block_erased)(device_block_t *device, uint64_t start);
+    errno_t (*is_block_erased)(device_block_t *device, uint64_t block);
+    // Sync disk's write caches for blocks.
+    errno_t (*sync_blocks)(device_block_t *device, uint64_t start, uint64_t count);
     // Erase blocks.
     errno_t (*erase_blocks)(device_block_t *device, uint64_t start, uint64_t count);
     // [optional] Write device bytes.
@@ -50,6 +52,8 @@ typedef struct {
     errno_t (*read_bytes)(device_block_t *device, uint64_t start, uint64_t count, void *data);
     // [optional] Erase bytes.
     errno_t (*erase_bytes)(device_block_t *device, uint64_t start, uint64_t count);
+    // [optional] Sync disk's write caches for bytes.
+    errno_t (*sync_bytes)(device_block_t *device, uint64_t start, uint64_t count);
 } driver_block_t;
 
 

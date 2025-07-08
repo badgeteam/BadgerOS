@@ -141,6 +141,8 @@ pub trait BlockDriver: BaseDriver {
     fn is_block_erased(&self, start: u64) -> EResult<bool>;
     /// Erase blocks.
     fn erase_blocks(&self, start: u64, count: u64) -> EResult<()>;
+    /// Sync disk's write caches for blocks.
+    fn sync_blocks(&self, start: u64, count: u64) -> EResult<()>;
     /// [optional] Write device bytes.
     fn write_bytes(&self, _offset: u64, _data: &[u8]) -> EResult<()> {
         Err(Errno::ENOTSUP)
@@ -151,6 +153,10 @@ pub trait BlockDriver: BaseDriver {
     }
     /// [optional] Erase bytes.
     fn erase_bytes(&self, _offset: u64, _count: u64) -> EResult<()> {
+        Err(Errno::ENOTSUP)
+    }
+    /// [optional] Sync disk's write caches for bytes.
+    fn sync_bytes(&self, _offset: u64, _count: u64) -> EResult<()> {
         Err(Errno::ENOTSUP)
     }
 }
@@ -226,6 +232,17 @@ macro_rules! block_driver_struct {
                 }
                 Some(erase_blocks_wrapper)
             },
+            sync_blocks: {
+                unsafe extern "C" fn sync_blocks_wrapper(
+                    device: *mut device_block_t,
+                    start: u64,
+                    count: u64,
+                ) -> errno_t {
+                    let ptr = unsafe { &mut *((*device).base.cookie as *mut $type) };
+                    Errno::extract(ptr.sync_blocks(start, count))
+                }
+                Some(sync_blocks_wrapper)
+            },
             write_bytes: {
                 unsafe extern "C" fn write_bytes_wrapper(
                     device: *mut device_block_t,
@@ -264,6 +281,17 @@ macro_rules! block_driver_struct {
                     Errno::extract(ptr.erase_bytes(offset, len))
                 }
                 Some(erase_bytes_wrapper)
+            },
+            sync_bytes: {
+                unsafe extern "C" fn sync_bytes_wrapper(
+                    device: *mut device_block_t,
+                    offset: u64,
+                    len: u64,
+                ) -> errno_t {
+                    let ptr = unsafe { &mut *((*device).base.cookie as *mut $type) };
+                    Errno::extract(ptr.sync_bytes(offset, len))
+                }
+                Some(sync_bytes_wrapper)
             },
         }
     }};
