@@ -107,12 +107,13 @@ static errno_t iterate_block_ranges(
     uint64_t       end_block   = ((start_byte + byte_count - 1) >> device->block_size_exp) + 1;
     uint64_t const block_size  = 1llu << device->block_size_exp;
 
+    size_t byte_offset = 0;
     for (uint64_t block = start_block; block < end_block; block++) {
         // Get sub-block offsets.
         uint64_t sub_offset;
         uint64_t sub_size;
         if (block == start_block) {
-            sub_offset = start_byte & (device->block_size_exp - 1);
+            sub_offset = start_byte & (block_size - 1);
             sub_size   = byte_count < block_size - sub_offset ? byte_count : block_size - sub_offset;
         } else {
             sub_offset = 0;
@@ -178,9 +179,10 @@ static errno_t iterate_block_ranges(
         }
 
         // Run the callback function with the acquired cache entry.
-        callback(value + sub_offset, sub_size, start_byte, cookie);
-        start_byte += sub_size;
-        byte_count -= sub_size;
+        callback(value + sub_offset, sub_size, byte_offset, cookie);
+        byte_offset += sub_size;
+        start_byte  += sub_size;
+        byte_count  -= sub_size;
     }
 
     rcu_crit_exit();

@@ -215,6 +215,14 @@ static void kernel_init() {
         }
         rtree_dump(&blkdev->cache, NULL);
 
+        logk(LOG_DEBUG, "Reading the device again");
+        res = device_block_read_bytes(blkdev, 0, 512, buf);
+        if (res < 0) {
+            logkf(LOG_ERROR, "Failed to read: %{d} (%{cs})", -res, errno_get_name(-res));
+        }
+        logk_hexdump_vaddr(LOG_DEBUG, "First block after write:", buf, 512, 0);
+        rtree_dump(&blkdev->cache, NULL);
+
         logk(LOG_DEBUG, "Done!");
         device_pop_ref(dev);
     }

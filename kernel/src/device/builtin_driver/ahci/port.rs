@@ -221,48 +221,55 @@ impl SataDriver {
     unsafe fn do_raw_cmd(
         &self,
         make_cmd: impl FnOnce(*mut ()) -> u32,
-        data: ConstOrMutSlice<'_>,
+        data: Option<ConstOrMutSlice<'_>>,
     ) -> EResult<()> {
         let mut guard = self.mem.lock();
-        let is_write = !data.is_mut();
-        let data = data.into_const_slice();
+        let is_write = data.as_ref().map(|x| !x.is_mut()).unwrap_or(false);
+        let data = data.map(|x| x.into_const_slice());
 
         // Ensure data is aligned to at least 2 bytes.
-        if data.as_ptr() as usize & 1 != 0 {
-            logk(
-                LogLevel::Error,
-                "Misaligned address for SataDriver::do_raw_cmd",
-            );
-            return Err(Errno::EINVAL);
-        } else if data.len() & 1 != 0 {
-            logk(LogLevel::Error, "Odd size for SataDriver::do_raw_cmd");
-            return Err(Errno::EINVAL);
+        if let Some(data) = data {
+            if data.as_ptr() as usize & 1 != 0 {
+                logk(
+                    LogLevel::Error,
+                    "Misaligned address for SataDriver::do_raw_cmd",
+                );
+                return Err(Errno::EINVAL);
+            } else if data.len() & 1 != 0 {
+                logk(LogLevel::Error, "Odd size for SataDriver::do_raw_cmd");
+                return Err(Errno::EINVAL);
+            }
         }
 
         // Copy in the command.
         let fis_len = make_cmd(&raw mut guard.hms.cmd_fis as *mut ());
 
-        // Do virt2phys lookup and write PRDT entries.
-        let mut offset = 0usize;
-        let mut prdt = 0usize;
-        while offset < data.len() {
-            let v2p = unsafe {
-                bindings::raw::memprotect_virt2phys(
-                    &raw mut mpu_global_ctx,
-                    &data[offset] as *const u8 as usize,
-                )
-            };
-            let len = v2p.page_size + v2p.page_paddr - v2p.paddr;
-            let len = len.min(data.len() - offset);
+        let prdt = if let Some(data) = data {
+            // Do virt2phys lookup and write PRDT entries.
+            let mut offset = 0usize;
+            let mut prdt = 0usize;
+            while offset < data.len() {
+                let v2p = unsafe {
+                    bindings::raw::memprotect_virt2phys(
+                        &raw mut mpu_global_ctx,
+                        &data[offset] as *const u8 as usize,
+                    )
+                };
+                let len = v2p.page_size + v2p.page_paddr - v2p.paddr;
+                let len = len.min(data.len() - offset);
 
-            guard.hms.prdt[prdt].paddr.set(v2p.paddr as u64);
-            guard.hms.prdt[prdt]
-                .dbc
-                .write(hms::DBC::count.val(len as u32 - 1));
+                guard.hms.prdt[prdt].paddr.set(v2p.paddr as u64);
+                guard.hms.prdt[prdt]
+                    .dbc
+                    .write(hms::DBC::count.val(len as u32 - 1));
 
-            prdt += 1;
-            offset += len;
-        }
+                prdt += 1;
+                offset += len;
+            }
+            prdt
+        } else {
+            0usize
+        };
 
         // Write command descriptor.
         guard.hms.cmd_list[0].desc.write(
@@ -306,7 +313,7 @@ impl SataDriver {
         sec_count: u16,
         feature: u16,
         lba: u64,
-        data: ConstOrMutSlice<'_>,
+        data: Option<ConstOrMutSlice<'_>>,
     ) -> EResult<()> {
         let lba = lba.to_le_bytes();
         unsafe {
@@ -321,7 +328,8 @@ impl SataDriver {
                     fis.lba_exp[2].set(lba[5]);
                     fis.fis_type.set(fis::Type::RegisterH2D as u8);
                     fis.command.set(cmd as u8);
-                    fis.device.set(ctrl);
+                    fis.device.set(0x40);
+                    fis.control.set(ctrl);
                     fis.features.set(feature as u8);
                     fis.features_exp.set((feature >> 8) as u8);
                     fis.pmc.write(
@@ -350,7 +358,7 @@ impl SataDriver {
                 0,
                 0,
                 0,
-                ConstOrMutSlice::Mut(bytemuck::cast_slice_mut(id_out)),
+                Some(ConstOrMutSlice::Mut(bytemuck::cast_slice_mut(id_out))),
             )
         }
     }
@@ -400,15 +408,15 @@ impl BlockDriver for SataDriver {
         unsafe {
             self.do_ata_cmd(
                 if self.supports_48bit {
-                    ata::Command::ReadDmaExt
+                    ata::Command::WriteDmaExt
                 } else {
-                    ata::Command::ReadDma
+                    ata::Command::WriteDma
                 },
-                1 << 6,
+                0,
                 count.try_into().map_err(|_| Errno::E2BIG)?,
                 0,
                 start,
-                ConstOrMutSlice::Const(data),
+                Some(ConstOrMutSlice::Const(data)),
             )
         }
     }
@@ -424,11 +432,11 @@ impl BlockDriver for SataDriver {
                 } else {
                     ata::Command::ReadDma
                 },
-                1 << 6,
+                0,
                 count.try_into().map_err(|_| Errno::E2BIG)?,
                 0,
                 start,
-                ConstOrMutSlice::Mut(data),
+                Some(ConstOrMutSlice::Mut(data)),
             )
         }
     }
@@ -451,11 +459,11 @@ impl BlockDriver for SataDriver {
                 } else {
                     ata::Command::FlushCache
                 },
-                1 << 6,
                 0,
                 0,
                 0,
-                ConstOrMutSlice::Const(&dummy),
+                0,
+                None,
             )
         }
     }
