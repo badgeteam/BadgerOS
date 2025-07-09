@@ -162,7 +162,7 @@ static errno64_t read_fat_ent(vfs_t *vfs, uint32_t index) {
             mutex_acquire_shared(&FATFS(vfs).fat12_mutex, TIMESTAMP_US_MAX);
             // Read FAT12 entry.
             uint8_t raw[2];
-            errno_t res = fs_media_read(vfs->media, base + index * 3 / 2, raw, 2);
+            errno_t res = fs_media_read(&vfs->media, base + index * 3 / 2, raw, 2);
             if (res < 0) {
                 mutex_release_shared(&FATFS(vfs).fat12_mutex);
                 return res;
@@ -187,7 +187,7 @@ static errno64_t read_fat_ent(vfs_t *vfs, uint32_t index) {
         case FAT16: {
             // Read FAT16 entry.
             uint8_t raw[2];
-            errno_t res = fs_media_read(vfs->media, base + 2 * index, raw, 2);
+            errno_t res = fs_media_read(&vfs->media, base + 2llu * index, raw, 2);
             if (res < 0) {
                 return res;
             }
@@ -204,7 +204,7 @@ static errno64_t read_fat_ent(vfs_t *vfs, uint32_t index) {
         case FAT32: {
             // Read FAT32 entry.
             uint8_t raw[4];
-            errno_t res = fs_media_read(vfs->media, base + 4 * index, raw, 4);
+            errno_t res = fs_media_read(&vfs->media, base + 4llu * index, raw, 4);
             if (res < 0) {
                 return res;
             }
@@ -231,7 +231,7 @@ static errno_t write_fat_ent(vfs_t *vfs, uint32_t index, uint32_t entry) {
 
             // Read existing data.
             uint8_t raw[2];
-            errno_t res = fs_media_read(vfs->media, base + index * 3 / 2, raw, 2);
+            errno_t res = fs_media_read(&vfs->media, base + index * 3 / 2, raw, 2);
             if (res < 0) {
                 mutex_release(&FATFS(vfs).fat12_mutex);
                 return res;
@@ -247,7 +247,7 @@ static errno_t write_fat_ent(vfs_t *vfs, uint32_t index, uint32_t entry) {
             }
 
             // Write back.
-            res = fs_media_write(vfs->media, base + index * 3 / 2, raw, 2);
+            res = fs_media_write(&vfs->media, base + index * 3 / 2, raw, 2);
             mutex_release(&FATFS(vfs).fat12_mutex);
 
             return res;
@@ -262,13 +262,13 @@ static errno_t write_fat_ent(vfs_t *vfs, uint32_t index, uint32_t entry) {
             uint8_t raw[2] = {entry & 0xff, entry >> 8};
 
             // Write new entry.
-            return fs_media_write(vfs->media, base + 2 * index, raw, 2);
+            return fs_media_write(&vfs->media, base + 2llu * index, raw, 2);
         } break;
 
         case FAT32: {
             // Convert to byte array.
             uint8_t raw[4];
-            errno_t res = fs_media_read(vfs->media, base + 4 * index, raw, 1);
+            errno_t res = fs_media_read(&vfs->media, base + 4llu * index, raw, 1);
             if (res < 0) {
                 return res;
             }
@@ -279,7 +279,7 @@ static errno_t write_fat_ent(vfs_t *vfs, uint32_t index, uint32_t entry) {
             raw[3] = (raw[3] & 0xf0) | ((entry >> 24) & 0x0f);
 
             // Write new entry.
-            return fs_media_write(vfs->media, base + 4 * index, raw, 4);
+            return fs_media_write(&vfs->media, base + 4llu * index, raw, 4);
         } break;
 
         default: __builtin_unreachable();
@@ -368,7 +368,7 @@ static errno_bool_t find_fat_dirent(
 // Free a chain of clusters.
 static errno_t free_cluster_chain(vfs_t *vfs, uint32_t cluster) {
     // Get block device parameters for erasing blocks.
-    uint64_t bytes_per_cluster = FATFS(vfs).sectors_per_cluster * FATFS(vfs).bytes_per_sector;
+    uint64_t bytes_per_cluster = (uint64_t)FATFS(vfs).sectors_per_cluster * (uint64_t)FATFS(vfs).bytes_per_sector;
 
     while (cluster != FS_FAT_FAT_EOF) {
         if (cluster < 2 || cluster >= FATFS(vfs).cluster_count) {
@@ -377,7 +377,7 @@ static errno_t free_cluster_chain(vfs_t *vfs, uint32_t cluster) {
         }
 
         // Erase all blocks in the current cluster.
-        errno_t res = fs_media_erase(vfs->media, (cluster - 2) * bytes_per_cluster, bytes_per_cluster);
+        errno_t res = fs_media_erase(&vfs->media, (cluster - 2) * bytes_per_cluster, bytes_per_cluster);
         if (res < 0) {
             return res;
         }
@@ -385,7 +385,7 @@ static errno_t free_cluster_chain(vfs_t *vfs, uint32_t cluster) {
         // Get next cluster index.
         errno64_t next = read_fat_ent(vfs, cluster);
         if (next < 0) {
-            return next;
+            return (errno_t)next;
         }
 
         // Mark the cluster as free.
@@ -423,7 +423,7 @@ static errno_t read_cluster_chain(vfs_t *vfs, vfs_file_obj_t *file, uint32_t clu
         // Get the next cluster.
         errno64_t next = read_fat_ent(vfs, cluster);
         if (next < 0 || FS_FAT_IS_FAT_EOF(next)) {
-            return next;
+            return (errno_t)next;
         }
 
         // Assert that cluster is not already in the chain.
@@ -447,7 +447,7 @@ static errno_t read_cluster_chain(vfs_t *vfs, vfs_file_obj_t *file, uint32_t clu
 // Try to mount a FAT filesystem.
 errno_t fs_fat_mount(vfs_t *vfs) {
     // Do FAT filesystem sanity checks.
-    if (!fs_fat_detect(vfs->media)) {
+    if (!fs_fat_detect(&vfs->media)) {
         return -EINVAL;
     }
 
@@ -457,7 +457,7 @@ errno_t fs_fat_mount(vfs_t *vfs) {
     }
 
     fat_bpb_t bpb;
-    errno_t   res = fs_media_read(vfs->media, 0, (void *)&bpb, sizeof(fat_bpb_t));
+    errno_t   res = fs_media_read(&vfs->media, 0, (void *)&bpb, sizeof(fat_bpb_t));
     if (res < 0) {
         free(vfs->cookie);
         return res;
@@ -466,13 +466,13 @@ errno_t fs_fat_mount(vfs_t *vfs) {
     fat16_header_t hdr16;
 
     if (!bpb.sector_count_32) {
-        res = fs_media_read(vfs->media, sizeof(fat_bpb_t), (void *)&hdr32, sizeof(fat32_header_t));
+        res = fs_media_read(&vfs->media, sizeof(fat_bpb_t), (void *)&hdr32, sizeof(fat32_header_t));
         if (res < 0) {
             free(vfs->cookie);
             return res;
         }
         res = fs_media_read(
-            vfs->media,
+            &vfs->media,
             sizeof(fat_bpb_t) + sizeof(fat32_header_t),
             (void *)&hdr16,
             sizeof(fat16_header_t)
@@ -483,7 +483,7 @@ errno_t fs_fat_mount(vfs_t *vfs) {
         }
         FATFS(vfs).fat32_root_cluster = hdr32.first_root_cluster;
     } else {
-        res = fs_media_read(vfs->media, sizeof(fat_bpb_t), (void *)&hdr16, sizeof(fat16_header_t));
+        res = fs_media_read(&vfs->media, sizeof(fat_bpb_t), (void *)&hdr16, sizeof(fat16_header_t));
         if (res < 0) {
             free(vfs->cookie);
             return res;
@@ -527,7 +527,7 @@ errno_t fs_fat_mount(vfs_t *vfs) {
         if (ent < 0) {
             free(FATFS(vfs).free_bitmap);
             free(vfs->cookie);
-            return ent;
+            return (errno_t)ent;
         }
         if (FS_FAT_IS_FAT_FREE(ent)) {
             size_t idx                   = i / sizeof(size_t);
@@ -593,7 +593,8 @@ static errno64_t alloc_dirent(vfs_t *vfs, vfs_file_obj_t *dir) {
     // Find a free dirent.
     for (uint32_t i = 0; i < dir->size / sizeof(fat_dirent_t); i++) {
         uint8_t tmp;
-        errno_t res = fs_fat_file_read(vfs, dir, i * sizeof(fat_dirent_t) + offsetof(fat_dirent_t, name), &tmp, 1);
+        errno_t res =
+            fs_fat_file_read(vfs, dir, (fileoff_t)(i * sizeof(fat_dirent_t) + offsetof(fat_dirent_t, name)), &tmp, 1);
         if (res < 0) {
             return res;
         }
@@ -630,8 +631,9 @@ static errno64_t alloc_dirent(vfs_t *vfs, vfs_file_obj_t *dir) {
     // Only the first byte needs to be cleared; the rest will then be ignored.
     uint8_t zero = 0;
     errno_t res  = fs_media_write(
-        vfs->media,
-        (FATFS(vfs).data_sector + (cluster - 2) * FATFS(vfs).sectors_per_cluster) * FATFS(vfs).bytes_per_sector,
+        &vfs->media,
+        (FATFS(vfs).data_sector + (uint64_t)(cluster - 2) * FATFS(vfs).sectors_per_cluster) *
+            FATFS(vfs).bytes_per_sector,
         &zero,
         1
     );
@@ -692,7 +694,7 @@ static errno64_t alloc_dirent(vfs_t *vfs, vfs_file_obj_t *dir) {
     }
 
     uint32_t ent_no  = dir->size / sizeof(fat_dirent_t);
-    dir->size       += FATFS(vfs).sectors_per_cluster * FATFS(vfs).bytes_per_sector;
+    dir->size       += (fileoff_t)FATFS(vfs).sectors_per_cluster * (fileoff_t)FATFS(vfs).bytes_per_sector;
 
     return ent_no;
 }
@@ -729,14 +731,14 @@ static errno_t create_file_impl(vfs_t *vfs, vfs_file_obj_t *dir, char const *nam
 
     // Write the new dirent.
     uint8_t cur;
-    errno_t res = fs_fat_file_read(vfs, dir, index * sizeof(fat_dirent_t), &cur, 1);
+    errno_t res = fs_fat_file_read(vfs, dir, (fileoff_t)(index * sizeof(fat_dirent_t)), &cur, 1);
     if (res < 0) {
         if (is_dir) {
             free_cluster(vfs, cluster);
         }
         return res;
     }
-    res = fs_fat_file_write(vfs, dir, index * sizeof(fat_dirent_t), (void *)&ent, sizeof(fat_dirent_t));
+    res = fs_fat_file_write(vfs, dir, (fileoff_t)(index * sizeof(fat_dirent_t)), (void *)&ent, sizeof(fat_dirent_t));
     if (res < 0) {
         if (is_dir) {
             free_cluster(vfs, cluster);
@@ -747,7 +749,7 @@ static errno_t create_file_impl(vfs_t *vfs, vfs_file_obj_t *dir, char const *nam
     // Preserve NULL terminating entry.
     uint8_t const zero = 0;
     if (cur == 0 && (fileoff_t)((index + 1) * sizeof(fat_dirent_t)) < dir->size) {
-        res = fs_fat_file_write(vfs, dir, (index + 1) * sizeof(fat_dirent_t), &zero, 1);
+        res = fs_fat_file_write(vfs, dir, (fileoff_t)((index + 1) * sizeof(fat_dirent_t)), &zero, 1);
         if (res < 0) {
             return res;
         }
@@ -758,8 +760,8 @@ static errno_t create_file_impl(vfs_t *vfs, vfs_file_obj_t *dir, char const *nam
         if (res < 0) {
             return res;
         }
-        uint64_t bytes_per_clus = FATFS(vfs).bytes_per_sector * FATFS(vfs).sectors_per_cluster;
-        uint64_t data_off       = FATFS(vfs).data_sector * FATFS(vfs).bytes_per_sector;
+        uint64_t bytes_per_clus = (uint64_t)FATFS(vfs).bytes_per_sector * (uint64_t)FATFS(vfs).sectors_per_cluster;
+        uint64_t data_off       = (uint64_t)FATFS(vfs).data_sector * (uint64_t)FATFS(vfs).bytes_per_sector;
 
         // Write . entry.
         fat_dirent_t ent2 = {0};
@@ -769,7 +771,7 @@ static errno_t create_file_impl(vfs_t *vfs, vfs_file_obj_t *dir, char const *nam
         ent2.first_cluster_lo = cluster;
         ent2.first_cluster_hi = cluster >> 16;
         res =
-            fs_media_write(vfs->media, (cluster - 2) * bytes_per_clus + data_off, (void *)&ent2, sizeof(fat_dirent_t));
+            fs_media_write(&vfs->media, (cluster - 2) * bytes_per_clus + data_off, (void *)&ent2, sizeof(fat_dirent_t));
         if (res < 0) {
             return res;
         }
@@ -784,7 +786,7 @@ static errno_t create_file_impl(vfs_t *vfs, vfs_file_obj_t *dir, char const *nam
         ent2.first_cluster_lo = parent_cluster;
         ent2.first_cluster_hi = parent_cluster >> 16;
         res                   = fs_media_write(
-            vfs->media,
+            &vfs->media,
             (cluster - 2) * bytes_per_clus + data_off + sizeof(fat_dirent_t),
             (void *)&ent2,
             sizeof(fat_dirent_t)
@@ -795,7 +797,7 @@ static errno_t create_file_impl(vfs_t *vfs, vfs_file_obj_t *dir, char const *nam
 
         // Write the NULL terminating entry.
         return fs_media_write(
-            vfs->media,
+            &vfs->media,
             (cluster - 2) * bytes_per_clus + data_off + 2 * sizeof(fat_dirent_t),
             &zero,
             1
@@ -816,10 +818,10 @@ errno_t fs_fat_create_dir(vfs_t *vfs, vfs_file_obj_t *dir, char const *name, siz
 }
 
 // Helper that checks the directory (except first two dirents) is empty.
-static errno_bool_t is_dir_empty(vfs_t *vfs, uint32_t _cluster) {
-    errno64_t cluster        = _cluster;
+static errno_bool_t is_dir_empty(vfs_t *vfs, uint32_t cluster0) {
+    errno64_t cluster        = cluster0;
     uint32_t  ent            = 2;
-    uint64_t  bytes_per_clus = FATFS(vfs).bytes_per_sector * FATFS(vfs).sectors_per_cluster;
+    uint64_t  bytes_per_clus = (uint64_t)FATFS(vfs).bytes_per_sector * (uint64_t)FATFS(vfs).sectors_per_cluster;
     uint32_t  ents_per_clus  = bytes_per_clus / sizeof(fat_dirent_t);
 
     while (cluster != FS_FAT_FAT_EOF) {
@@ -827,7 +829,7 @@ static errno_bool_t is_dir_empty(vfs_t *vfs, uint32_t _cluster) {
         for (; ent < ents_per_clus; ent++) {
             uint8_t data;
             errno_t res =
-                fs_media_read(vfs->media, (cluster - 2) * bytes_per_clus + ent * sizeof(fat_dirent_t), &data, 1);
+                fs_media_read(&vfs->media, (cluster - 2) * bytes_per_clus + ent * sizeof(fat_dirent_t), &data, 1);
             if (res < 0) {
                 return res;
             }
@@ -843,7 +845,7 @@ static errno_bool_t is_dir_empty(vfs_t *vfs, uint32_t _cluster) {
         // Go to the next cluster.
         cluster = read_fat_ent(vfs, cluster);
         if (cluster < 0) {
-            return cluster;
+            return (errno_bool_t)cluster;
         }
     }
 
@@ -887,7 +889,7 @@ errno_t fs_fat_unlink(vfs_t *vfs, vfs_file_obj_t *dir, char const *name, size_t 
         free_cluster_chain(vfs, first_cluster);
     }
     uint8_t data = 0xe9;
-    return fs_fat_file_write(vfs, dir, sizeof(fat_dirent_t) * ent_no, &data, 1);
+    return fs_fat_file_write(vfs, dir, (fileoff_t)ent_no * (fileoff_t)sizeof(fat_dirent_t), &data, 1);
 }
 
 // FAT doesn't support this; returns -ENOTSUP.
@@ -934,7 +936,7 @@ errno_t fs_fat_mkfifo(vfs_t *vfs, vfs_file_obj_t *dir, char const *name, size_t 
 static void fat_dirent_conv(fat_dirent_t const *fat_ent, dirent_t *ent) {
     size_t name_len_tmp;
     fat_demangle_name(fat_ent->name, fat_ent->attr2, ent->name, &name_len_tmp);
-    ent->name_len   = name_len_tmp;
+    ent->name_len   = (fileoff_t)name_len_tmp;
     ent->inode      = fat_ent->first_cluster_lo | (fat_ent->first_cluster_hi << 16);
     ent->is_dir     = fat_ent->attr & FAT_ATTR_DIRECTORY;
     ent->is_symlink = false;
@@ -1027,18 +1029,19 @@ errno_t fs_fat_file_open(vfs_t *vfs, vfs_file_obj_t *dir, vfs_file_obj_t *file, 
     // Get on-disk position of dirent; this will serve as the inode number of files and non-root dirs.
     uint64_t dirent_pos;
     if (FATFS(vfs).type == FAT32) {
-        uint64_t dirents_per_clus = FATFS(vfs).bytes_per_sector * FATFS(vfs).sectors_per_cluster / sizeof(fat_dirent_t);
+        uint64_t dirents_per_clus =
+            (uint64_t)FATFS(vfs).bytes_per_sector * (uint64_t)FATFS(vfs).sectors_per_cluster / sizeof(fat_dirent_t);
 
         dirent_pos = FATFILE(dir).clusters[FATFILE(file).dirent_no / dirents_per_clus] +
-                     FATFILE(file).dirent_no * sizeof(fat_dirent_t) +
-                     FATFS(vfs).data_sector * FATFS(vfs).bytes_per_sector;
+                     (uint64_t)FATFILE(file).dirent_no * sizeof(fat_dirent_t) +
+                     (uint64_t)FATFS(vfs).data_sector * (uint64_t)FATFS(vfs).bytes_per_sector;
     } else {
-        dirent_pos = FATFS(vfs).legacy_root_sector * FATFS(vfs).bytes_per_sector +
-                     FATFILE(file).dirent_no * sizeof(fat_dirent_t);
+        dirent_pos = (uint64_t)FATFS(vfs).legacy_root_sector * (uint64_t)FATFS(vfs).bytes_per_sector +
+                     (uint64_t)FATFILE(file).dirent_no * sizeof(fat_dirent_t);
     }
 
     // Enter FAT infomation into file object.
-    file->inode            = dirent_pos / sizeof(fat_dirent_t);
+    file->inode            = (inode_t)(dirent_pos / sizeof(fat_dirent_t));
     file->type             = ent.attr & FAT_ATTR_DIRECTORY ? FILETYPE_DIR : FILETYPE_FILE;
     file->is_vfs_root      = false;
     file->links            = 1;
@@ -1055,7 +1058,8 @@ errno_t fs_fat_file_open(vfs_t *vfs, vfs_file_obj_t *dir, vfs_file_obj_t *file, 
 
     // File size differs between files and directories.
     if (file->type == FILETYPE_DIR) {
-        file->size = FATFS(vfs).sectors_per_cluster * FATFS(vfs).bytes_per_sector * FATFILE(file).clusters_len;
+        file->size = (fileoff_t)FATFS(vfs).sectors_per_cluster * (fileoff_t)FATFS(vfs).bytes_per_sector *
+                     (fileoff_t)FATFILE(file).clusters_len;
     } else {
         file->size = ent.size;
     }
@@ -1085,8 +1089,8 @@ errno_t fs_fat_file_read(vfs_t *vfs, vfs_file_obj_t *file, fileoff_t offset, uin
     if (file->is_vfs_root && FATFS(vfs).type != FAT32) {
         // Special case: FAT12/FAT16 root directory.
         return fs_media_read(
-            vfs->media,
-            FATFS(vfs).legacy_root_sector * FATFS(vfs).bytes_per_sector + offset,
+            &vfs->media,
+            (uint64_t)FATFS(vfs).legacy_root_sector * (uint64_t)FATFS(vfs).bytes_per_sector + offset,
             readbuf,
             readlen
         );
@@ -1109,7 +1113,7 @@ errno_t fs_fat_file_read(vfs_t *vfs, vfs_file_obj_t *file, fileoff_t offset, uin
             max = readlen;
         }
         errno_t res = fs_media_read(
-            vfs->media,
+            &vfs->media,
             FATFS(vfs).data_sector * FATFS(vfs).bytes_per_sector + (cluster - 2) * bytes_per_cluster +
                 offset % bytes_per_cluster,
             readbuf,
@@ -1135,8 +1139,8 @@ static errno_t fs_fat_file_write_unsafe(
     if (file->is_vfs_root && FATFS(vfs).type != FAT32) {
         // Special case: FAT12/FAT16 root directory.
         return fs_media_write(
-            vfs->media,
-            FATFS(vfs).legacy_root_sector * FATFS(vfs).bytes_per_sector + offset,
+            &vfs->media,
+            (uint64_t)FATFS(vfs).legacy_root_sector * (uint64_t)FATFS(vfs).bytes_per_sector + offset,
             writebuf,
             writelen
         );
@@ -1159,7 +1163,7 @@ static errno_t fs_fat_file_write_unsafe(
             max = writelen;
         }
         errno_t res = fs_media_write(
-            vfs->media,
+            &vfs->media,
             FATFS(vfs).data_sector * FATFS(vfs).bytes_per_sector + (cluster - 2) * bytes_per_cluster +
                 offset % bytes_per_cluster,
             writebuf,
@@ -1196,8 +1200,8 @@ errno_t fs_fat_file_resize(vfs_t *vfs, vfs_file_obj_t *file, fileoff_t new_size)
     }
 
     // Calculate the new number of clusters.
-    uint32_t new_clusters = (new_size + FATFS(vfs).sectors_per_cluster * FATFS(vfs).bytes_per_sector - 1) /
-                            (FATFS(vfs).sectors_per_cluster * FATFS(vfs).bytes_per_sector);
+    uint32_t new_clusters = (new_size + (uint64_t)FATFS(vfs).sectors_per_cluster * FATFS(vfs).bytes_per_sector - 1) /
+                            ((uint64_t)FATFS(vfs).sectors_per_cluster * FATFS(vfs).bytes_per_sector);
     uint32_t old_clusters = FATFILE(file).clusters_len;
 
     if (new_clusters > FATFILE(file).clusters_len) {

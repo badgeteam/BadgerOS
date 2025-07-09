@@ -30,6 +30,17 @@ impl<T, const SHARED: bool> Mutex<T, SHARED> {
 }
 
 impl<T, const SHARED: bool> Mutex<T, SHARED> {
+    /// Create a new mutex statically; you must only use this to initialize the `.data` section.
+    pub const unsafe fn new_static(data: T) -> Self {
+        Self {
+            inner: UnsafeCell::new(mutex_t {
+                is_shared: SHARED,
+                shares: 0,
+                waiting_list: unsafe { core::mem::zeroed() },
+            }),
+            data: UnsafeCell::new(data),
+        }
+    }
     /// Create a new mutex.
     pub fn new(data: T) -> Self {
         let mut inner: mutex_t = unsafe { MaybeUninit::zeroed().assume_init() };

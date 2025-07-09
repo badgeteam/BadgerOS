@@ -933,17 +933,19 @@ errno_t device_devtmpfs_mounted(file_t devtmpfs_root) {
     mutex_acquire_shared(&devs_mtx, TIMESTAMP_US_MAX);
     map_foreach(ent, &devs_by_id) {
         device_t *dev = ent->value;
-        char      buf[9];
-        npf_snprintf(buf, sizeof(buf), "%08x", (int)dev->id);
-        fs_mkdir(devtmpfs_root, buf, 8);
+        char      buf[32];
+        npf_snprintf(buf, sizeof(buf), "by_id/%u", dev->id);
+        RETURN_ON_ERRNO(fs_mkdir(devtmpfs_root, buf, 8), mutex_release_shared(&devs_mtx));
 
         // TODO: Some infos here maybe?
 
         mutex_acquire_shared(&dev->driver_mtx, TIMESTAMP_US_MAX);
         if (dev->driver && dev->driver->create_devnodes) {
             file_t devnode_dir = fs_dir_open(devtmpfs_root, buf, 8, 0);
-            dev->driver->create_devnodes(dev, devtmpfs_root, devnode_dir);
-            fs_dir_close(devnode_dir);
+            if (devnode_dir >= 0) {
+                dev->driver->create_devnodes(dev, devtmpfs_root, devnode_dir);
+                fs_dir_close(devnode_dir);
+            }
         }
         mutex_release_shared(&dev->driver_mtx);
     }

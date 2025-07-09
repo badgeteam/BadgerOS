@@ -1,6 +1,6 @@
 use core::{error::Error, fmt::Display, str};
 
-use alloc::alloc::AllocError;
+use alloc::{alloc::AllocError, collections::TryReserveError};
 
 use super::raw;
 
@@ -246,6 +246,14 @@ impl Errno {
         }
     }
     /// Create an `EResult` from some integer.
+    pub fn check_u64(errno: i64) -> EResult<u64> {
+        if errno < 0 {
+            Err(unsafe { core::mem::transmute((-errno) as u32) })
+        } else {
+            Ok(errno as u64)
+        }
+    }
+    /// Create an `EResult` from some integer.
     pub fn check(errno: i32) -> EResult<()> {
         if errno < 0 {
             Err(unsafe { core::mem::transmute(-errno) })
@@ -258,6 +266,13 @@ impl Errno {
         match res {
             Ok(x) => x as i32,
             Err(x) => -(x as u32 as i32),
+        }
+    }
+    /// Convert an `EResult` into an integer.
+    pub fn extract_u64(res: EResult<u32>) -> i64 {
+        match res {
+            Ok(x) => x as i64,
+            Err(x) => -(x as u64 as i64),
         }
     }
     /// Convert an `EResult` into an integer.
@@ -300,6 +315,12 @@ impl Error for Errno {
 
 impl From<AllocError> for Errno {
     fn from(_: AllocError) -> Self {
+        Errno::ENOMEM
+    }
+}
+
+impl From<TryReserveError> for Errno {
+    fn from(_: TryReserveError) -> Self {
         Errno::ENOMEM
     }
 }

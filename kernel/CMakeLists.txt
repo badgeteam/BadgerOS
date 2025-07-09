@@ -222,7 +222,7 @@ add_custom_target(
     cargo +nightly build -Z build-std=core,alloc --target=${rust_target}
 )
 add_dependencies(${target} rust.target)
-target_link_libraries(${target} PRIVATE ${rust_lib})
+target_link_libraries(${target} PRIVATE -Wl,--whole-archive ${rust_lib} -Wl,--no-whole-archive)
 
 # Add libraries.
 add_subdirectory(../common/badgelib badgelib)
@@ -241,7 +241,7 @@ add_custom_command(
     OUTPUT badger-os.stripped.elf
     ALL
     COMMAND cp badger-os.elf badger-os.stripped.elf
-    COMMAND ${CONFIG_PREFIX}strip -g badger-os.stripped.elf
+    COMMAND ${CONFIG_PREFIX}strip -g -s badger-os.stripped.elf
     DEPENDS badger-os.elf
 )
 install(FILES ${CMAKE_BINARY_DIR}/badger-os.stripped.elf DESTINATION .)

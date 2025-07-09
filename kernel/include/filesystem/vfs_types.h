@@ -32,6 +32,7 @@ typedef struct {
 } errno_fd_t;
 
 #include "filesystem.h"
+#include "filesystem/media.h"
 #include "filesystem/vfs_vtable.h"
 #include "mutex.h"
 
@@ -100,8 +101,10 @@ struct vfs {
     char              *mountpoint;
     // Read-only flag.
     bool               readonly;
+    // Has a block device.
+    bool               has_media;
     // Associated block device.
-    fs_media_t        *media;
+    fs_media_t         media;
     // Filesystem type.
     fs_driver_t const *driver;
     // Inode number given to the root directory.
@@ -152,8 +155,12 @@ struct devfile_vtable {
 
 // Device special file data.
 struct devfile {
+    // Device file vtable.
     devfile_vtable_t const *vtable;
+    // Cookie for `vtable`.
     void                   *cookie;
+    // Paired device, if any.
+    device_t               *device;
 };
 
 // Declare a filesystem driver.

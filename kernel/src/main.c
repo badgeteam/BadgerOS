@@ -10,6 +10,7 @@
 #include "device/device.h"
 #include "errno.h"
 #include "filesystem.h"
+#include "filesystem/partition.h"
 #include "housekeeping.h"
 #include "interrupt.h"
 #include "isr_ctx.h"
@@ -148,14 +149,19 @@ void dummy_print(int indent, void *ptr) {
 }
 
 static void dumpdir(file_t at, char const *path, int indent) {
-    if (cstr_equals(path, ".") || cstr_equals(path, ".."))
+    if (cstr_equals(path, ".") || cstr_equals(path, "..")) {
         return;
+    }
     file_t fd = fs_dir_open(at, path, cstr_length(path), 0);
     for (int i = 0; i < indent; i++) rawprint("  ");
     rawprint(path);
+    if (fd >= 0 && !cstr_equals(path, "/")) {
+        rawputc('/');
+    }
     rawputc('\n');
-    if (!fd)
+    if (fd < 0) {
         return;
+    }
     errno_dirent_list_t list = fs_dir_read(fd);
     if (list.errno >= 0) {
         dirent_t *ent = list.list.mem;
@@ -190,40 +196,7 @@ static void kernel_init() {
     set_t devs = device_get_filtered(&filter);
     set_foreach(device_t, dev, &devs) {
         device_block_t *blkdev = (void *)dev;
-        rtree_dump(&blkdev->cache, NULL);
-
-        logk(LOG_DEBUG, "Doing a read of the block device");
-        uint8_t buf[512];
-        errno_t res = device_block_read_bytes(blkdev, 0, 512, buf);
-        if (res < 0) {
-            logkf(LOG_ERROR, "Failed to read: %{d} (%{cs})", -res, errno_get_name(-res));
-        }
-        logk_hexdump_vaddr(LOG_DEBUG, "First block:", buf, 512, 0);
-        rtree_dump(&blkdev->cache, NULL);
-
-        logk(LOG_DEBUG, "Doing a write of the block device");
-        res = device_block_write_bytes(blkdev, 9, 36, "This is some destructive write data.");
-        if (res < 0) {
-            logkf(LOG_ERROR, "Failed to write: %{d} (%{cs})", -res, errno_get_name(-res));
-        }
-        rtree_dump(&blkdev->cache, NULL);
-
-        logk(LOG_DEBUG, "Doing a sync of the block device");
-        res = device_block_sync_all(blkdev, false);
-        if (res < 0) {
-            logkf(LOG_ERROR, "Failed to sync: %{d} (%{cs})", -res, errno_get_name(-res));
-        }
-        rtree_dump(&blkdev->cache, NULL);
-
-        logk(LOG_DEBUG, "Reading the device again");
-        res = device_block_read_bytes(blkdev, 0, 512, buf);
-        if (res < 0) {
-            logkf(LOG_ERROR, "Failed to read: %{d} (%{cs})", -res, errno_get_name(-res));
-        }
-        logk_hexdump_vaddr(LOG_DEBUG, "First block after write:", buf, 512, 0);
-        rtree_dump(&blkdev->cache, NULL);
-
-        logk(LOG_DEBUG, "Done!");
+        get_volume_info(blkdev);
         device_pop_ref(dev);
     }
     set_clear(&devs);

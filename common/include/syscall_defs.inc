@@ -35,7 +35,7 @@
 SYSCALL_DEF_V(1, SYSCALL_THREAD_YIELD, syscall_thread_yield)
 
 // Sleep for a certain amount of time.
-SYSCALL_DEF_V(2, SYSCALL_THREAD_SLEEP, syscall_thread_sleep, int64_t delay)
+SYSCALL_DEF_V(53, SYSCALL_THREAD_SLEEP, syscall_thread_sleep, int64_t delay)
 
 // Create a new thread.
 // Returns thread ID or -errno.

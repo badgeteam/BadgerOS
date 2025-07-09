@@ -261,7 +261,7 @@ static bool is_dir_empty(fs_ramfs_inode_t *dir) {
 // Try to mount a ramfs filesystem.
 errno_t fs_ramfs_mount(vfs_t *vfs) {
     // RAMFS does not use a block device.
-    if (vfs->media) {
+    if (vfs->has_media) {
         return -EINVAL;
     }
 

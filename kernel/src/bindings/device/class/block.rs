@@ -3,8 +3,10 @@ use core::ffi::c_void;
 use crate::bindings::{
     device::{AbstractDevice, BaseDriver},
     error::{EResult, Errno},
-    raw::{self, device_block_t},
+    raw::{self, device_block_t, driver_block_t},
 };
+
+unsafe impl Sync for driver_block_t {}
 
 /// Specialization for block devices.
 pub type BlockDevice = AbstractDevice<device_block_t>;
@@ -164,10 +166,10 @@ pub trait BlockDriver: BaseDriver {
 /// Helper macro for filling in block driver fields.
 #[macro_export]
 macro_rules! block_driver_struct {
-    ($type: ty, $match_: expr, $add: expr) => {{
+    ($type: ty, $match_: expr, $add: expr, $blk_node_name: ident) => {{
         use crate::bindings::{device::class::block::*, error::*, raw::*};
         use ::core::{
-            ffi::c_void,
+            ffi::{CStr, c_void},
             ptr::{slice_from_raw_parts, slice_from_raw_parts_mut},
         };
         driver_block_t {
@@ -177,6 +179,12 @@ macro_rules! block_driver_struct {
                 $match_,
                 $add
             },
+            blk_node_name: unsafe {
+                CStr::from_bytes_with_nul_unchecked(
+                    concat!(stringify!($blk_node_name), "\0").as_bytes(),
+                )
+            }
+            .as_ptr(),
             write_blocks: {
                 unsafe extern "C" fn write_blocks_wrapper(
                     device: *mut device_block_t,

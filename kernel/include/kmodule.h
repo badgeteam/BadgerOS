@@ -38,9 +38,6 @@ typedef struct {
 
 
 
-// Register a kernel module.
+// Register a built-in kernel module.
 #define REGISTER_KMODULE(kmodule_id)                                                                                   \
     __attribute__((section(".kmodules"))) kmodule_t const *kmodule_id##_kmodule_table_entry = &(kmodule_id);
-
-// Run the init functions for built-in modules.
-void kmodule_init_builtin();

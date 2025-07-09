@@ -9,6 +9,8 @@ test = false
 
 [dependencies]
 bytemuck = "1.23.0"
+crc = "3.3.0"
+static_assertions = "1.1.0"
 tock-registers = "0.9.0"
 
 [build-dependencies]

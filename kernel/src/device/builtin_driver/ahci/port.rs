@@ -451,7 +451,6 @@ impl BlockDriver for SataDriver {
 
     fn sync_blocks(&self, _start: u64, _count: u64) -> EResult<()> {
         logkf!(LogLevel::Debug, "Flushing cache");
-        let dummy: [u8; 0] = [];
         unsafe {
             self.do_ata_cmd(
                 if self.supports_48bit {
@@ -471,4 +470,4 @@ impl BlockDriver for SataDriver {
 
 /// The SATA drive driver struct.
 pub(super) static SATA_DRIVER: driver_block_t =
-    block_driver_struct!(SataDriver, sata_match, SataDriver::new);
+    block_driver_struct!(SataDriver, sata_match, SataDriver::new, sata);

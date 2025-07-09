@@ -69,7 +69,7 @@ typedef long inode_t;
 // Value used for absent file / directory handle.
 #define FILE_NONE ((file_t) - 1)
 // Type used for file / directory handles in the kernel.
-typedef long    file_t;
+typedef int     file_t;
 // Type used for file offsets.
 typedef int64_t fileoff_t;
 // Type used for file modes.
@@ -177,6 +177,7 @@ typedef struct fs_media fs_media_t;
 
 // Try to mount a filesystem.
 // Some filesystems (like RAMFS) do not use a block device, for which `media` must be NULL.
+// If `media` is not NULL, this takes ownership of it.
 // Filesystems which do use a block device can often be automatically detected.
 errno_t fs_mount(char const *type, fs_media_t *media, file_t at, char const *path, size_t path_len, mountflags_t flags);
 // Try to unmount a filesystem.

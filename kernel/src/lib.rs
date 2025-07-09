@@ -10,6 +10,10 @@
 #![feature(negative_impls)]
 #![feature(ptr_metadata)]
 #![feature(box_vec_non_null)]
+#![feature(vec_into_raw_parts)]
+#![feature(try_with_capacity)]
+#![feature(str_from_utf16_endian)]
+#![feature(ascii_char)]
 
 extern crate alloc;
 
@@ -19,6 +23,9 @@ pub use core::{include, option::Option, result::Result};
 pub mod bindings;
 pub mod config;
 pub mod device;
+pub mod filesystem;
+pub mod kparam;
+pub mod util;
 
 use core::{alloc::GlobalAlloc, ffi::c_void, ops::Deref, panic::PanicInfo};
 

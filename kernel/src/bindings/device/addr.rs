@@ -1,4 +1,4 @@
-use core::{num::NonZero, ops::Index};
+use core::num::NonZero;
 
 use crate::bindings::raw;
 

@@ -86,7 +86,7 @@ static walk_t walk(vfs_file_obj_t *dirfd, char const *path, size_t path_len, boo
             if (out.parent) {
                 vfs_file_pop_ref(out.parent);
                 out.parent = NULL;
-                out.errno  = -ENOTDIR;
+                out.errno  = !dirfd ? -ENOENT : -ENOTDIR;
             }
             return out;
         }
@@ -202,7 +202,10 @@ static errno_t mount_at(vfs_t *vfs, fs_media_t *media, char const *type, mountfl
     }
 
     vfs->driver    = driver;
-    vfs->media     = media;
+    vfs->has_media = media != NULL;
+    if (media) {
+        vfs->media = *media;
+    }
     vfs->readonly  = flags & MOUNTFLAGS_READONLY;
     vfs->vtable    = *driver->vtable;
     vfs->n_open_fd = 0;
@@ -224,6 +227,7 @@ static errno_t mount_at(vfs_t *vfs, fs_media_t *media, char const *type, mountfl
 
 // Try to mount a filesystem.
 // Some filesystems (like RAMFS) do not use a block device, for which `media` must be NULL.
+// If `media` is not NULL, this takes ownership of it.
 // Filesystems which do use a block device can often be automatically detected.
 errno_t
     fs_mount(char const *type, fs_media_t *media, file_t at, char const *path, size_t path_len, mountflags_t flags) {
@@ -757,6 +761,9 @@ errno_t fs_mkfifo(file_t at, char const *path, size_t path_len) {
 errno_t fs_mkdevfile(file_t at, char const *path, size_t path_len, devfile_t devfile) {
     if (!root_mounted) {
         logk(LOG_ERROR, "Filesystem op run without a filesystem mounted");
+        if (devfile.device) {
+            device_pop_ref(devfile.device);
+        }
         return -EAGAIN;
     }
 
@@ -768,6 +775,9 @@ errno_t fs_mkdevfile(file_t at, char const *path, size_t path_len, devfile_t dev
     } else {
         errno_fd_t at_fd = get_dir_fd_ptr(at);
         if (at_fd.errno < 0) {
+            if (devfile.device) {
+                device_pop_ref(devfile.device);
+            }
             return at_fd.errno;
         }
         at_obj = at_fd.fd->obj;

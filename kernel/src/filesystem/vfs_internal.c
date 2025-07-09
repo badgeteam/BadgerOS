@@ -24,12 +24,12 @@ static vfs_file_obj_t **objs;
 
 #define CHECK_EIO(vfs, value)                                                                                          \
     ({                                                                                                                 \
-        errno_t errno = (value);                                                                                       \
-        if (errno == -EIO) {                                                                                           \
+        errno_t check_eio_errno__ = (value);                                                                           \
+        if (check_eio_errno__ == -EIO) {                                                                               \
             logkf(LOG_ERROR, "I/O error (in %{cs}); remounting %{cs} as read-only", __FUNCTION__, (vfs)->mountpoint);  \
             (vfs)->readonly = true;                                                                                    \
         }                                                                                                              \
-        errno;                                                                                                         \
+        check_eio_errno__;                                                                                             \
     })
 
 
@@ -126,11 +126,14 @@ errno_fobj_t vfs_root_open(vfs_t *vfs) {
 
 // Create a new empty file.
 errno_fobj_t vfs_mkfile(vfs_file_obj_t *dir, char const *name, size_t name_len) {
-    if (dir->vfs->readonly) {
-        return (errno_fobj_t){-EROFS, NULL};
-    }
     if (dir->type != FILETYPE_DIR) {
         return (errno_fobj_t){-ENOTDIR, NULL};
+    }
+    while (dir->mounted_fs) {
+        dir = dir->mounted_fs->root_dir_obj;
+    }
+    if (dir->vfs->readonly) {
+        return (errno_fobj_t){-EROFS, NULL};
     }
 
     errno_t res = CHECK_EIO(dir->vfs, dir->vfs->vtable.create_file(dir->vfs, dir, name, name_len));
@@ -142,11 +145,14 @@ errno_fobj_t vfs_mkfile(vfs_file_obj_t *dir, char const *name, size_t name_len) 
 
 // Insert a new directory into the given directory.
 errno_t vfs_mkdir(vfs_file_obj_t *dir, char const *name, size_t name_len) {
-    if (dir->vfs->readonly) {
-        return -EROFS;
-    }
     if (dir->type != FILETYPE_DIR) {
         return -ENOTDIR;
+    }
+    while (dir->mounted_fs) {
+        dir = dir->mounted_fs->root_dir_obj;
+    }
+    if (dir->vfs->readonly) {
+        return -EROFS;
     }
     return CHECK_EIO(dir->vfs, dir->vfs->vtable.create_dir(dir->vfs, dir, name, name_len));
 }
@@ -154,11 +160,14 @@ errno_t vfs_mkdir(vfs_file_obj_t *dir, char const *name, size_t name_len) {
 // Unlink a file from the given directory.
 // If this is the last reference to an inode, the inode is deleted.
 errno_t vfs_unlink(vfs_file_obj_t *dir, char const *name, size_t name_len) {
-    if (dir->vfs->readonly) {
-        return -EROFS;
-    }
     if (dir->type != FILETYPE_DIR) {
         return -ENOTDIR;
+    }
+    while (dir->mounted_fs) {
+        dir = dir->mounted_fs->root_dir_obj;
+    }
+    if (dir->vfs->readonly) {
+        return -EROFS;
     }
 
     // Find the dirent.
@@ -181,11 +190,14 @@ errno_t vfs_unlink(vfs_file_obj_t *dir, char const *name, size_t name_len) {
 // Fails if `old_path` names a directory.
 errno_t vfs_link(vfs_file_obj_t *old_obj, vfs_file_obj_t *new_dir, char const *new_name, size_t new_name_len) {
     // No need to check for pipes at `old_obj` because BadgerOS doesn't allow linking nameless files.
-    if (new_dir->vfs->readonly) {
-        return -EROFS;
-    }
     if (new_dir->type != FILETYPE_DIR) {
         return -ENOTDIR;
+    }
+    while (new_dir->mounted_fs) {
+        new_dir = new_dir->mounted_fs->root_dir_obj;
+    }
+    if (new_dir->vfs->readonly) {
+        return -EROFS;
     }
 
     if (old_obj->type == FILETYPE_DIR) {
@@ -205,11 +217,14 @@ errno_t vfs_symlink(
     char const     *link_name,
     size_t          link_name_len
 ) {
-    if (link_dir->vfs->readonly) {
-        return -EROFS;
-    }
     if (link_dir->type != FILETYPE_DIR) {
         return -ENOTDIR;
+    }
+    while (link_dir->mounted_fs) {
+        link_dir = link_dir->mounted_fs->root_dir_obj;
+    }
+    if (link_dir->vfs->readonly) {
+        return -EROFS;
     }
     return CHECK_EIO(
         link_dir->vfs,
@@ -219,34 +234,59 @@ errno_t vfs_symlink(
 
 // Create a new named FIFO at a path relative to a dir handle.
 errno_t vfs_mkfifo(vfs_file_obj_t *dir, char const *name, size_t name_len) {
-    if (dir->vfs->readonly) {
-        return -EROFS;
-    }
     if (dir->type != FILETYPE_DIR) {
         return -ENOTDIR;
+    }
+    while (dir->mounted_fs) {
+        dir = dir->mounted_fs->root_dir_obj;
+    }
+    if (dir->vfs->readonly) {
+        return -EROFS;
     }
     return dir->vfs->vtable.mkfifo(dir->vfs, dir, name, name_len);
 }
 
 // Make a device special file; only works on certain filesystem types.
 errno_t vfs_mkdevfile(vfs_file_obj_t *dir, char const *name, size_t name_len, devfile_t devfile) {
-    if (dir->vfs->readonly) {
-        return -EROFS;
-    }
     if (dir->type != FILETYPE_DIR) {
+        if (devfile.device) {
+            device_pop_ref(devfile.device);
+        }
         return -ENOTDIR;
+    }
+    while (dir->mounted_fs) {
+        dir = dir->mounted_fs->root_dir_obj;
+    }
+    if (dir->vfs->readonly) {
+        if (devfile.device) {
+            device_pop_ref(devfile.device);
+        }
+        return -EROFS;
     }
     if (!dir->vfs->driver->supports_devfiles) {
         logkf(LOG_ERROR, "%{cs} does not support device special files", dir->vfs->driver->id);
+        if (devfile.device) {
+            device_pop_ref(devfile.device);
+        }
         return -ENOTSUP;
     }
-    return CHECK_EIO(dir->vfs, dir->vfs->vtable.mkdevfile(dir, name, name_len, devfile));
+    errno_t errno = dir->vfs->vtable.mkdevfile(dir, name, name_len, devfile);
+    if (errno < 0 && devfile.device) {
+        device_pop_ref(devfile.device);
+    }
+    return CHECK_EIO(dir->vfs, errno);
 }
 
 // Remove a directory if it is empty.
 errno_t vfs_rmdir(vfs_file_obj_t *dir, char const *name, size_t name_len) {
     if (dir->type != FILETYPE_DIR) {
         return -ENOTDIR;
+    }
+    while (dir->mounted_fs) {
+        dir = dir->mounted_fs->root_dir_obj;
+    }
+    if (dir->vfs->readonly) {
+        return -EROFS;
     }
 
     // Find the dirent.
@@ -275,7 +315,7 @@ errno_dirent_list_t vfs_dir_read(vfs_file_obj_t *dir) {
     if (dir->type != FILETYPE_DIR) {
         return (errno_dirent_list_t){-ENOTDIR, (dirent_list_t){0}};
     }
-    if (dir->mounted_fs) {
+    while (dir->mounted_fs) {
         dir = dir->mounted_fs->root_dir_obj;
     }
     errno_dirent_list_t res = dir->vfs->vtable.dir_read(dir->vfs, dir);
@@ -289,7 +329,7 @@ errno_bool_t vfs_dir_find_ent(vfs_file_obj_t *dir, dirent_t *ent, char const *na
     if (dir->type != FILETYPE_DIR) {
         return -ENOTDIR;
     }
-    if (dir->mounted_fs) {
+    while (dir->mounted_fs) {
         dir = dir->mounted_fs->root_dir_obj;
     }
     return CHECK_EIO(dir->vfs, dir->vfs->vtable.dir_find_ent(dir->vfs, dir, ent, name, name_len));
@@ -298,6 +338,9 @@ errno_bool_t vfs_dir_find_ent(vfs_file_obj_t *dir, dirent_t *ent, char const *na
 
 // Stat a file object.
 errno_t vfs_stat(vfs_file_obj_t *file, stat_t *stat_out) {
+    while (file->mounted_fs) {
+        file = file->mounted_fs->root_dir_obj;
+    }
     if (!file->vfs) {
         // Special case: Stat on an unnamed pipe.
         mem_set(stat_out, 0, sizeof(stat_t));
@@ -331,7 +374,6 @@ errno_fobj_t vfs_file_open(vfs_file_obj_t *dir, char const *name, size_t name_le
         return (errno_fobj_t){-ENOTDIR, NULL};
     }
 
-
     // Current dir entry needs no lookup.
     if (name_len == 1 && name[0] == '.') {
         vfs_file_push_ref(dir);
@@ -339,8 +381,10 @@ errno_fobj_t vfs_file_open(vfs_file_obj_t *dir, char const *name, size_t name_le
     }
 
     // If an FS is mounted here, redirect to its root directory, unless the filename is `..`.
-    if (dir->mounted_fs && !(name_len == 2 && name[0] == '.' && name[1] == '.')) {
-        dir = dir->mounted_fs->root_dir_obj;
+    if (!(name_len == 2 && name[0] == '.' && name[1] == '.')) {
+        while (dir->mounted_fs) {
+            dir = dir->mounted_fs->root_dir_obj;
+        }
     }
 
     // Find the dirent.
@@ -498,6 +542,9 @@ errno_t vfs_file_resize(vfs_file_obj_t *file, fileoff_t new_size) {
 // Commit all pending writes on a file to disk.
 // The filesystem, if it does caching, must always sync everything to disk at once.
 errno_t vfs_file_flush(vfs_file_obj_t *file) {
+    if (file->type == FILETYPE_DIR) {
+        return -EISDIR;
+    }
     return CHECK_EIO(file->vfs, file->vfs->vtable.file_flush(file->vfs, file));
 }
 

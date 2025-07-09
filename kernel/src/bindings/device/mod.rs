@@ -1,8 +1,9 @@
-use crate::{LogLevel, bindings::raw::timestamp_us_t, logkf};
-use core::{
-    num::NonZero,
-    ptr::{DynMetadata, NonNull, Pointee},
+use crate::{
+    LogLevel,
+    bindings::{filesystem::File, raw::timestamp_us_t},
+    logkf,
 };
+use core::{num::NonZero, ptr::NonNull};
 
 use addr::DevAddr;
 use alloc::vec::Vec;
@@ -18,7 +19,7 @@ use super::{
     raw::{
         self, dev_addr_t, dev_class_t_DEV_CLASS_BLOCK, dev_class_t_DEV_CLASS_PCICTL,
         dev_class_t_DEV_CLASS_UNKNOWN, dev_state_t, device_block_t, device_info_t, device_pcictl_t,
-        device_t, driver_t, dtb_handle_t, dtb_node_t, errno_t, file_t, irqno_t,
+        device_t, driver_t, dtb_handle_t, dtb_node_t, irqno_t,
     },
 };
 
@@ -411,7 +412,7 @@ pub trait BaseDriver: Sync {
     }
     /// [optional] Create additional device node files.
     /// Called when a new `devtmpfs` is mounted OR after registered to the driver.
-    fn create_devnodes(&mut self, _devtmpfs_root: file_t, _devnode_dir: file_t) -> EResult<()> {
+    fn create_devnodes(&mut self, _devtmpfs_root: File, _devnode_dir: File) -> EResult<()> {
         Ok(())
     }
 }
@@ -420,7 +421,7 @@ pub trait BaseDriver: Sync {
 #[macro_export]
 macro_rules! abstract_driver_struct {
     ($type: ty, $class: expr, $match_: expr, $add: expr) => {{
-        use crate::bindings::{error::*, device::*, raw::*};
+        use crate::bindings::{error::*, device::*, raw::*, filesystem::*};
         use ::alloc::boxed::Box;
         use ::core::ffi::c_void;
         driver_t {
@@ -526,7 +527,13 @@ macro_rules! abstract_driver_struct {
                 }
                 Some(cascase_enable_irq_wrapper)
             },
-            create_devnodes: None,
+            create_devnodes: {
+                unsafe extern "C" fn create_devnodes_wrapper(device: *mut device_t, devtmpfs_root: i32, devnode_dir: i32) -> errno_t {
+                    let ptr = unsafe{&mut *((*device).cookie as *mut $type)};
+                    Errno::extract(ptr.create_devnodes(File::from_raw(devtmpfs_root).unwrap(), File::from_raw(devnode_dir).unwrap()))
+                }
+                Some(create_devnodes_wrapper)
+            },
         }
     }};
 }

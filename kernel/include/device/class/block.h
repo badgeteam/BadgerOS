@@ -33,7 +33,9 @@ typedef struct {
 
 // Block device driver functions.
 typedef struct {
-    driver_t base;
+    driver_t    base;
+    // Name under which block nodes in a devtmpfs are created.
+    char const *blk_node_name;
     // Write device blocks.
     // The caller must ensure that `data` is aligned at least as much as needed for DMA.
     errno_t (*write_blocks)(device_block_t *device, uint64_t start, uint64_t count, void const *data);
