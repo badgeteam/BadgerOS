@@ -1,6 +1,9 @@
 use crate::{
     LogLevel,
-    bindings::{filesystem::File, raw::timestamp_us_t},
+    bindings::{
+        filesystem::File,
+        raw::{dev_class_t, dev_filter_t, set_ent_t, timestamp_us_t},
+    },
     logkf,
 };
 use core::{num::NonZero, ptr::NonNull};
@@ -115,17 +118,10 @@ impl<T> Clone for AbstractDevice<T> {
     }
 }
 
-impl<T> AbstractDevice<T> {
-    /// Leak the device, returning the raw pointer.
-    /// This does not decrement the refcount.
-    pub fn leak(self) -> NonNull<T> {
-        let ptr = self.inner;
-        core::mem::forget(self);
-        ptr
-    }
+impl<T> DeviceFromRaw<T, AbstractDevice<T>> for AbstractDevice<T> {
     /// Create from a raw pointer (doesn't check type).
     /// Increments the refcount.
-    pub unsafe fn from_raw_ref(inner: *mut T) -> Self {
+    unsafe fn from_raw_ref(inner: *mut T) -> Self {
         unsafe {
             raw::device_push_ref(inner as *mut device_t);
             Self {
@@ -135,12 +131,22 @@ impl<T> AbstractDevice<T> {
     }
     /// Create from a raw pointer (doesn't check type).
     /// Doesn't increment the refcount.
-    pub unsafe fn from_raw(inner: *mut T) -> Self {
+    unsafe fn from_raw(inner: *mut T) -> Self {
         unsafe {
             Self {
                 inner: NonNull::from_mut(&mut *inner),
             }
         }
+    }
+}
+
+impl<T> AbstractDevice<T> {
+    /// Leak the device, returning the raw pointer.
+    /// This does not decrement the refcount.
+    pub fn leak(self) -> NonNull<T> {
+        let ptr = self.inner;
+        core::mem::forget(self);
+        ptr
     }
     /// Get the raw pointer.
     pub unsafe fn as_raw_ptr(&self) -> *mut T {
@@ -166,6 +172,17 @@ impl<T> HasBaseDevice for AbstractDevice<T> {
 }
 
 pub type BaseDevice = AbstractDevice<device_t>;
+impl BaseDevice {
+    /// Get a list of devices using a filter.
+    pub fn filter(filters: DeviceFilters) -> EResult<Vec<BaseDevice>> {
+        unsafe {
+            Device::filter_impl::<device_t, BaseDevice, true>(
+                filters,
+                dev_class_t_DEV_CLASS_UNKNOWN,
+            )
+        }
+    }
+}
 
 /// Helper trait to implement base device functions.
 pub trait HasBaseDevice {
@@ -174,6 +191,17 @@ pub trait HasBaseDevice {
     /// Get the raw pointer to the base struct.
     fn base_ptr(&self) -> *mut device_t;
 
+    /// Get the parent device, if any.
+    fn parent(&self) -> Option<Device> {
+        self.info().parent()
+    }
+    /// Get the device's children.
+    fn children(&self) -> EResult<Vec<Device>> {
+        Device::filter(DeviceFilters {
+            parent: Some(self.id().into()),
+            ..Default::default()
+        })
+    }
     /// Get device info view.
     fn info<'a>(&'a self) -> DeviceInfoView<'a> {
         unsafe {
@@ -250,6 +278,55 @@ pub trait HasBaseDevice {
     }
 }
 
+/// Represents a bit-masked filter for device addresses.
+#[derive(Clone, Copy, Debug)]
+pub struct DevAddrFilter {
+    pub addr: DevAddr,
+    pub mask: Option<DevAddr>,
+}
+
+/// A set of filters that can be used to look for devices.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct DeviceFilters {
+    /// Match devices with similar addresses.
+    pub addr: Option<DevAddrFilter>,
+    /// Match devices with this as their parent.
+    pub parent: Option<u32>,
+    /// Match devices with this as their driver.
+    pub driver: Option<NonNull<driver_t>>,
+}
+
+impl Into<dev_filter_t> for DeviceFilters {
+    fn into(self) -> dev_filter_t {
+        let mut filters: dev_filter_t = unsafe { core::mem::zeroed() };
+        if let Some(addr) = self.addr {
+            filters.match_addr = true;
+            filters.addr = addr.addr.into();
+            if let Some(mask) = addr.mask {
+                filters.use_addr_mask = true;
+                filters.addr_mask = mask.into();
+            }
+        }
+        if let Some(parent) = self.parent {
+            filters.match_parent = true;
+            filters.parent_id = parent;
+        }
+        if let Some(driver) = self.driver {
+            filters.driver = driver.as_ptr();
+        }
+        filters
+    }
+}
+
+pub trait DeviceFromRaw<S: Sized, T: Sized> {
+    /// Create a device  from a raw pointer.
+    /// Doesn't increment the refcount.
+    unsafe fn from_raw(ptr: *mut S) -> T;
+    /// Create a device enum from a raw pointer.
+    /// Increments the refcount.
+    unsafe fn from_raw_ref(inner: *mut S) -> T;
+}
+
 /// Enum that encapsulates all types of device.
 #[derive(Clone)]
 #[repr(u32, C)]
@@ -259,21 +336,10 @@ pub enum Device {
     PciCtl(PciCtlDevice) = dev_class_t_DEV_CLASS_PCICTL,
 }
 
-impl Device {
-    /// Leak the device, returning the raw pointer.
-    /// This does not decrement the refcount.
-    pub fn leak(self) -> NonNull<device_t> {
-        unsafe {
-            match self {
-                Device::Unknown(x) => x.leak(),
-                Device::Block(x) => core::mem::transmute(x.leak()),
-                Device::PciCtl(x) => core::mem::transmute(x.leak()),
-            }
-        }
-    }
+impl DeviceFromRaw<device_t, Device> for Device {
     /// Create a device enum from a raw pointer.
     /// Doesn't increment the refcount.
-    pub unsafe fn from_raw(inner: *mut device_t) -> Self {
+    unsafe fn from_raw(inner: *mut device_t) -> Self {
         unsafe {
             #[allow(non_upper_case_globals)]
             match (*inner).dev_class {
@@ -297,10 +363,68 @@ impl Device {
     }
     /// Create a device enum from a raw pointer.
     /// Increments the refcount.
-    pub unsafe fn from_raw_ref(inner: *mut device_t) -> Self {
+    unsafe fn from_raw_ref(inner: *mut device_t) -> Self {
         unsafe {
             raw::device_push_ref(inner);
             Self::from_raw(inner)
+        }
+    }
+}
+
+impl Device {
+    /// Get a list of devices using a filter.
+    unsafe fn filter_impl<S: Sized, F: DeviceFromRaw<S, F>, const CHECK: bool>(
+        filters: DeviceFilters,
+        class: dev_class_t,
+    ) -> EResult<Vec<F>> {
+        unsafe {
+            let mut filters: dev_filter_t = filters.into();
+            filters.match_class = CHECK;
+            filters.class = class;
+            let mut devs = raw::device_get_filtered(&raw const filters);
+            let mut vec = Vec::new();
+            let mut iter = raw::set_next(&raw const devs, 0 as *const set_ent_t);
+            let mut oom = false;
+            while !iter.is_null() {
+                let dev = F::from_raw((*iter).value as *mut S);
+                if !oom && vec.try_reserve(vec.len() + 1).is_err() {
+                    oom = true;
+                }
+                if !oom {
+                    vec.push(dev);
+                }
+                iter = raw::set_next(&raw const devs, iter);
+            }
+            raw::set_clear(&raw mut devs);
+            if oom { Err(Errno::ENOMEM) } else { Ok(vec) }
+        }
+    }
+    /// Get a list of devices using a filter.
+    pub fn filter(filters: DeviceFilters) -> EResult<Vec<Device>> {
+        unsafe {
+            Self::filter_impl::<device_t, Device, false>(filters, dev_class_t_DEV_CLASS_UNKNOWN)
+        }
+    }
+    /// Try to get a device by ID.
+    pub fn by_id(id: u32) -> Option<BaseDevice> {
+        unsafe {
+            let res = raw::device_by_id(id);
+            if res.is_null() {
+                None
+            } else {
+                Some(BaseDevice::from_raw(res))
+            }
+        }
+    }
+    /// Leak the device, returning the raw pointer.
+    /// This does not decrement the refcount.
+    pub fn leak(self) -> NonNull<device_t> {
+        unsafe {
+            match self {
+                Device::Unknown(x) => x.leak(),
+                Device::Block(x) => core::mem::transmute(x.leak()),
+                Device::PciCtl(x) => core::mem::transmute(x.leak()),
+            }
         }
     }
     /// Add a new device.

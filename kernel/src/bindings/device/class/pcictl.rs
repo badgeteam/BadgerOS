@@ -1,9 +1,11 @@
 use core::mem::MaybeUninit;
 
+use alloc::vec::Vec;
+
 use crate::bindings::{
-    device::{AbstractDevice, addr::PciAddr},
+    device::{AbstractDevice, Device, DeviceFilters, addr::PciAddr},
     error::{EResult, Errno},
-    raw::{self, device_pcictl_t, mpu_global_ctx, pci_bar_info_t},
+    raw::{self, dev_class_t_DEV_CLASS_PCICTL, device_pcictl_t, mpu_global_ctx, pci_bar_info_t},
 };
 
 /// Representation of some mapped PCIe BAR memory.
@@ -31,6 +33,15 @@ impl Drop for MappedBar {
 /// Specialization for PCI/PCIe controller devices.
 pub type PciCtlDevice = AbstractDevice<device_pcictl_t>;
 impl PciCtlDevice {
+    /// Get a list of devices using a filter.
+    pub fn filter(filters: DeviceFilters) -> EResult<Vec<PciCtlDevice>> {
+        unsafe {
+            Device::filter_impl::<device_pcictl_t, PciCtlDevice, true>(
+                filters,
+                dev_class_t_DEV_CLASS_PCICTL,
+            )
+        }
+    }
     /// Is a PCIe controller (as opposed to a PCI controller).
     pub fn is_pcie(&self) -> bool {
         unsafe { (*self.as_raw_ptr()).is_pcie }

@@ -122,7 +122,7 @@ mod c_api {
     use crate::{
         LogLevel,
         bindings::{
-            device::class::block::BlockDevice,
+            device::{DeviceFromRaw, class::block::BlockDevice},
             raw::{device_block_t, get_volume_info_t},
         },
     };

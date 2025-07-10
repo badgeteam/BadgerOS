@@ -18,6 +18,7 @@ dependencies = [
  "bindgen",
  "bytemuck",
  "crc",
+ "limine",
  "static_assertions",
  "tock-registers",
 ]
@@ -130,6 +131,15 @@ checksum = "6a793df0d7afeac54f95b471d3af7f0d4fb975699f972341a4b76988d49cdf0c"
 dependencies = [
  "cfg-if",
  "windows-targets",
+]
+
+[[package]]
+name = "limine"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "af6d2ee42712e7bd2c787365cd1dab06ef59a61becbf87bec7b32b970bd2594b"
+dependencies = [
+ "bitflags",
 ]
 
 [[package]]

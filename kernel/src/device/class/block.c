@@ -40,21 +40,37 @@
 
 
 
-// Initialize this block device's cache.
-// Must be called by all block devices, during the `driver->add` function, if the device does not have `no_cache` set.
-void device_block_init_cache(device_block_t *device) {
-    rtree_init(&device->cache);
+// [Implemented in Rust] Get the volume information for a particular drive.
+get_volume_info_t get_volume_info(device_block_t *device);
+
+
+
+// Called after a block device is activated.
+errno_t device_block_activated(device_block_t *device) {
+    if (!device->no_cache) {
+        rtree_init(&device->cache);
+    }
+    mutex_init(&device->volume_info_mtx, true);
+    mem_set(&device->volume_info, 0, sizeof(device->volume_info));
+    return 0;
+}
+
+// Called before a block device is removed.
+void device_block_remove(device_block_t *device) {
 }
 
 
+// (Re-)scan partitions for this drive.
+errno_t device_block_scan_parts(device_block_t *device) {
+    mutex_acquire(&device->volume_info_mtx, TIMESTAMP_US_MAX);
+    get_volume_info_t res = get_volume_info(device);
 
-// Create a block device file with a certain prefix.
-// The prefix must not end in a digit because disks are disambiguated by appending a number.
-// Similarly, partitions are disambiguated by appending 'p' and then a number.
-errno_t device_block_create_blkfile(device_block_t *device) {
-    return -ENOSYS;
+    if (res.errno >= 0) {
+    }
+
+    mutex_release(&device->volume_info_mtx);
+    return res.errno;
 }
-
 
 
 // Write device blocks.

@@ -32,6 +32,13 @@
 
 
 
+// Called after a block device is activated.
+errno_t device_block_activated(device_block_t *device);
+// Called before a block device is removed.
+void    device_block_remove(device_block_t *device);
+
+
+
 // ID -> device map.
 static map_t    devs_by_id      = PTR_MAP_EMPTY;
 // Phandle -> device map.
@@ -141,19 +148,10 @@ static void device_deinit(device_union_t *device) {
 
 
 // Called after a driver's add function succeeds.
-static void driver_add_succeeded(device_union_t *device) {
+static errno_t driver_add_succeeded(device_union_t *device) {
     switch (device->base.dev_class) {
-        case DEV_CLASS_UNKNOWN: break;
-        case DEV_CLASS_BLOCK: {
-            if (!device->block.no_cache) {
-                device_block_init_cache(&device->block);
-            }
-        } break;
-        case DEV_CLASS_IRQCTL:
-        case DEV_CLASS_TTY:
-        case DEV_CLASS_PCICTL:
-        case DEV_CLASS_I2CCTL:
-        case DEV_CLASS_AHCI: break;
+        case DEV_CLASS_BLOCK: return device_block_activated(&device->block);
+        default: return 0;
     }
 }
 
@@ -194,7 +192,20 @@ static bool device_add_to_driver(device_t *device, driver_t const *driver) {
             spinlock_release(&irqconn_lock);
             irq_enable();
 
-            driver_add_succeeded((device_union_t *)device);
+            res = driver_add_succeeded((device_union_t *)device);
+            if (res < 0) {
+                logkf(LOG_ERROR, "Failed to finish post-driver init for device %{d}", device->id);
+                driver->remove(device);
+
+                assert_dev_keep(irq_disable());
+                spinlock_take(&irqconn_lock);
+                device->driver = NULL;
+                spinlock_release(&irqconn_lock);
+                irq_enable();
+
+                mutex_release(&device->driver_mtx);
+                return true;
+            }
 
             device_t *parent = device->info.parent;
             if (parent) {
@@ -405,6 +416,9 @@ static uint32_t device_remove_impl(uint32_t id) {
 
 // Remove a device and its children.
 bool device_remove(uint32_t id) {
+    // TODO: requires a mutex so that this blocks until this device's `device_activate` finishes.
+    TODO();
+
     // Recursively remove devices.
     mutex_acquire(&devs_mtx, TIMESTAMP_US_MAX);
     bool success = device_remove_impl(id);
@@ -902,6 +916,10 @@ errno_t driver_add(driver_t const *driver) {
 
 // Remove a driver.
 errno_t driver_remove(driver_t const *driver) {
+    // TODO: requires a mutex to be thread-safe with things like e.g. scanning partitions just before `device_activate`
+    // returns.
+    TODO();
+
     mutex_acquire(&drivers_mtx, TIMESTAMP_US_MAX);
     if (!set_remove(&drivers, driver)) {
         mutex_release(&drivers_mtx);

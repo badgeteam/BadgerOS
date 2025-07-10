@@ -175,6 +175,9 @@ typedef struct fs_media fs_media_t;
 
 
 
+// Mount the root filesystem according to kernel parameters.
+errno_t fs_mount_root_fs();
+
 // Try to mount a filesystem.
 // Some filesystems (like RAMFS) do not use a block device, for which `media` must be NULL.
 // If `media` is not NULL, this takes ownership of it.

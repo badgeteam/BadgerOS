@@ -2,15 +2,10 @@
 // SPDX-License-Identifier: MIT
 
 #include "assertions.h"
-#include "badge_strings.h"
 #include "bootp.h"
 #include "cpulocal.h"
-#include "device/class/block.h"
-#include "device/dev_class.h"
-#include "device/device.h"
 #include "errno.h"
 #include "filesystem.h"
-#include "filesystem/partition.h"
 #include "housekeeping.h"
 #include "interrupt.h"
 #include "isr_ctx.h"
@@ -20,8 +15,6 @@
 #include "memprotect.h"
 #include "panic.h"
 #include "process/process.h"
-#include "radixtree.h"
-#include "rawprint.h"
 #include "scheduler/scheduler.h"
 #include "set.h"
 #include "time.h"
@@ -141,37 +134,6 @@ void syscall_sys_shutdown(bool is_reboot) {
 
 
 
-void dummy_print(int indent, void *ptr) {
-    rawprint(ptr);
-    rawputc('\n');
-}
-
-static void dumpdir(file_t at, char const *path, int indent) {
-    if (cstr_equals(path, ".") || cstr_equals(path, "..")) {
-        return;
-    }
-    file_t fd = fs_dir_open(at, path, cstr_length(path), 0);
-    for (int i = 0; i < indent; i++) rawprint("  ");
-    rawprint(path);
-    if (fd >= 0 && !cstr_equals(path, "/")) {
-        rawputc('/');
-    }
-    rawputc('\n');
-    if (fd < 0) {
-        return;
-    }
-    errno_dirent_list_t list = fs_dir_read(fd);
-    if (list.errno >= 0) {
-        dirent_t *ent = list.list.mem;
-        for (size_t i = 0; i < list.list.ent_count; i++) {
-            dumpdir(fd, ent->name, indent + 1);
-            ent = (dirent_t *)((size_t)ent + ent->record_len);
-        }
-        free(list.list.mem);
-    }
-    fs_dir_close(fd);
-}
-
 // After basic runtime initialization, the booting CPU core continues here.
 // This finishes the initialization of all kernel systems, resources and services.
 // When finished, the non-booting CPUs will be started (method and entrypoints to be determined).
@@ -187,17 +149,14 @@ static void kernel_init() {
     }
     set_clear(&kinit_join_threads);
 
-    dev_filter_t filter = {
-        .match_class = true,
-        .class       = DEV_CLASS_BLOCK,
-    };
-    set_t devs = device_get_filtered(&filter);
-    set_foreach(device_t, dev, &devs) {
-        device_block_t *blkdev = (void *)dev;
-        get_volume_info(blkdev);
-        device_pop_ref(dev);
+    /*
+    // Try to mount the root filesystem.
+    errno_t res = fs_mount_root_fs();
+    if (res < 0) {
+        logkf(LOG_FATAL, "Failed to mount root filesystem: %{cs} (%{cs})", errno_get_name(-res),
+    errno_get_desc(-res)); panic_abort();
     }
-    set_clear(&devs);
+    */
 
     // Temporary filesystem image.
     errno_t res;
@@ -208,8 +167,6 @@ static void kernel_init() {
     res = fs_mount("devtmpfs", NULL, FILE_NONE, "/dev", 4, 0);
     assert_always(res >= 0);
     init_ramfs();
-
-    dumpdir(-1, "/", 0);
 }
 
 

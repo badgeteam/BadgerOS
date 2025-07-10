@@ -10,7 +10,6 @@
 #include "errno.h"
 #include "filesystem.h"
 #include "filesystem/media.h"
-#include "filesystem/partition.h"
 #include "interrupt.h"
 #include "klifetime.h"
 #include "kmodule.h"

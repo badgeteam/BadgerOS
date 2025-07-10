@@ -1,9 +1,11 @@
 use core::ffi::c_void;
 
+use alloc::vec::Vec;
+
 use crate::bindings::{
-    device::{AbstractDevice, BaseDriver},
+    device::{AbstractDevice, BaseDriver, Device, DeviceFilters},
     error::{EResult, Errno},
-    raw::{self, device_block_t, driver_block_t},
+    raw::{self, dev_class_t_DEV_CLASS_BLOCK, device_block_t, driver_block_t},
 };
 
 unsafe impl Sync for driver_block_t {}
@@ -11,6 +13,15 @@ unsafe impl Sync for driver_block_t {}
 /// Specialization for block devices.
 pub type BlockDevice = AbstractDevice<device_block_t>;
 impl BlockDevice {
+    /// Get a list of devices using a filter.
+    pub fn filter(filters: DeviceFilters) -> EResult<Vec<BlockDevice>> {
+        unsafe {
+            Device::filter_impl::<device_block_t, BlockDevice, true>(
+                filters,
+                dev_class_t_DEV_CLASS_BLOCK,
+            )
+        }
+    }
     /// Log-base 2 of device block size.
     pub fn block_size_exp(&self) -> u8 {
         unsafe { (*self.inner.as_ptr()).block_size_exp }
