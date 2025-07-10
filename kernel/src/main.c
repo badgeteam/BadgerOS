@@ -164,7 +164,7 @@ static void dumpdir(file_t at, char const *path, int indent) {
     if (list.errno >= 0) {
         dirent_t *ent = list.list.mem;
         for (size_t i = 0; i < list.list.ent_count; i++) {
-            dumpdir(at, ent->name, indent + 1);
+            dumpdir(fd, ent->name, indent + 1);
             ent = (dirent_t *)((size_t)ent + ent->record_len);
         }
         free(list.list.mem);

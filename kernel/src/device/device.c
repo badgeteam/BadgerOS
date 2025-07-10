@@ -621,7 +621,7 @@ __attribute__((always_inline)) static inline errno_size_t
     irqconns_t        dummy = {.irqno = irqno, .connections = DLIST_EMPTY};
     array_binsearch_t res   = array_binsearch(*arr, sizeof(irqconns_t), *len, &dummy, irqconns_irqno_cmp);
     if (res.found) {
-        return res.index;
+        return (errno_size_t)res.index;
     } else if (*cap >= *len + 1) {
         // No need to grow the array; just lock and insert.
         assert_dev_keep(irq_disable());
@@ -633,7 +633,7 @@ __attribute__((always_inline)) static inline errno_size_t
         spinlock_release(&irqconn_lock);
         irq_enable();
 
-        return res.index;
+        return (errno_size_t)res.index;
     }
 
     size_t      new_cap = (*cap ?: 1) * 2;
@@ -653,7 +653,7 @@ __attribute__((always_inline)) static inline errno_size_t
     spinlock_release(&irqconn_lock);
     irq_enable();
 
-    return res.index;
+    return (errno_size_t)res.index;
 }
 
 // Add a device interrupt link; child is the device that generates the interrupt, parent the one that receives it.
@@ -925,6 +925,87 @@ errno_t driver_remove(driver_t const *driver) {
 
 
 
+// Helper function to printf into a file.
+__attribute__((format(printf, 2, 3))) static fileoff_t printf_to_file(file_t fd, char const *fmt, ...) {
+    char    buf[64];
+    va_list l;
+    va_start(l, fmt);
+    int len = npf_vsnprintf(buf, sizeof(buf), fmt, l);
+    va_end(l);
+    return fs_write(fd, buf, len);
+}
+
+// Helper function to print a device info's address.
+static fileoff_t print_addr(file_t fd, dev_addr_t addr) {
+    switch (addr.type) {
+        case DEV_ATYPE_MMIO:
+            return printf_to_file(fd, "addr: mmio: 0x%llx 0x%zx\n", (long long)addr.mmio.paddr, addr.mmio.size);
+        case DEV_ATYPE_PCI:
+            return printf_to_file(fd, "addr: pci: %02x:%02x.%u\n", addr.pci.bus, addr.pci.dev, addr.pci.func);
+        case DEV_ATYPE_I2C: return printf_to_file(fd, "addr: i2c: 0x%x\n", addr.i2c);
+        case DEV_ATYPE_AHCI:
+            if (addr.ahci.pmul) {
+                return printf_to_file(fd, "addr: ahci_pmul: %u %u\n", addr.ahci.port, addr.ahci.pmul_port);
+            } else {
+                return printf_to_file(fd, "addr: ahci: %u\n", addr.ahci.port);
+            }
+    }
+    return 0;
+}
+
+// Helper function to populate devnode dir's `info` file.
+static errno_t populate_info_file(file_t devnode_dir, device_t *device) {
+    file_t fd = RETURN_ON_ERRNO(fs_open(devnode_dir, "info", 4, OFLAGS_WRITEONLY | OFLAGS_CREATE | OFLAGS_TRUNCATE));
+
+    char const *type;
+    switch (device->dev_class) {
+        default: logkf(LOG_WARN, "Unknown device type %{d} in populate_info_file", (int)device->dev_class); break;
+        case DEV_CLASS_UNKNOWN: type = "unknown"; break;
+        case DEV_CLASS_BLOCK: type = "block"; break;
+        case DEV_CLASS_IRQCTL: type = "irqctl"; break;
+        case DEV_CLASS_TTY: type = "tty"; break;
+        case DEV_CLASS_PCICTL: type = "pcictl"; break;
+        case DEV_CLASS_I2CCTL: type = "i2cctl"; break;
+        case DEV_CLASS_AHCI: type = "ahci"; break;
+    }
+    RETURN_ON_ERRNO(printf_to_file(fd, "class: %s\n", type), fs_close(fd));
+
+    RETURN_ON_ERRNO(printf_to_file(fd, "id: %u\n", device->id), fs_close(fd));
+
+    if (device->info.parent) {
+        RETURN_ON_ERRNO(printf_to_file(fd, "parent: %u\n", device->info.parent->id), fs_close(fd));
+    }
+
+    if (device->info.irq_parent) {
+        RETURN_ON_ERRNO(printf_to_file(fd, "irq_parent: %u\n", device->info.irq_parent->id), fs_close(fd));
+    }
+
+    // Print IDs of child devices.
+    dev_filter_t const filter = {
+        .parent_id = device->id,
+    };
+    set_t children = device_get_filtered(&filter);
+    bool  err      = false;
+    set_foreach(device_t, dev, &children) {
+        if (printf_to_file(fd, "child: %u\n", dev->id) < 0) {
+            err = true;
+        }
+        device_pop_ref(dev);
+    }
+    set_clear(&children);
+    if (err) {
+        fs_close(fd);
+        return -EIO;
+    }
+
+    for (size_t i = 0; i < device->info.addrs_len; i++) {
+        RETURN_ON_ERRNO(print_addr(fd, device->info.addrs[i]), fs_close(fd));
+    }
+
+    fs_close(fd);
+    return 0;
+}
+
 // Add device nodes to a new devtmpfs.
 // Called by the VFS after a devtmpfs filesystem is mounted.
 errno_t device_devtmpfs_mounted(file_t devtmpfs_root) {
@@ -934,20 +1015,25 @@ errno_t device_devtmpfs_mounted(file_t devtmpfs_root) {
     map_foreach(ent, &devs_by_id) {
         device_t *dev = ent->value;
         char      buf[32];
-        npf_snprintf(buf, sizeof(buf), "by_id/%u", dev->id);
-        RETURN_ON_ERRNO(fs_mkdir(devtmpfs_root, buf, 8), mutex_release_shared(&devs_mtx));
+        int       len = npf_snprintf(buf, sizeof(buf), "by_id/%u", dev->id);
+        RETURN_ON_ERRNO(fs_mkdir(devtmpfs_root, buf, len), mutex_release_shared(&devs_mtx));
 
-        // TODO: Some infos here maybe?
+        file_t devnode_dir = RETURN_ON_ERRNO(fs_dir_open(devtmpfs_root, buf, len, 0), mutex_release_shared(&devs_mtx));
+
+        RETURN_ON_ERRNO(populate_info_file(devnode_dir, dev), {
+            fs_close(devnode_dir);
+            mutex_release_shared(&devs_mtx);
+        });
 
         mutex_acquire_shared(&dev->driver_mtx, TIMESTAMP_US_MAX);
         if (dev->driver && dev->driver->create_devnodes) {
-            file_t devnode_dir = fs_dir_open(devtmpfs_root, buf, 8, 0);
             if (devnode_dir >= 0) {
                 dev->driver->create_devnodes(dev, devtmpfs_root, devnode_dir);
-                fs_dir_close(devnode_dir);
             }
         }
         mutex_release_shared(&dev->driver_mtx);
+
+        fs_dir_close(devnode_dir);
     }
     mutex_release_shared(&devs_mtx);
 

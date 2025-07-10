@@ -962,6 +962,12 @@ file_t fs_open(file_t at, char const *path, size_t path_len, oflags_t oflags) {
         vfs_fifo_open(res.file->fifo, oflags & OFLAGS_NONBLOCK, oflags & OFLAGS_READONLY, oflags & OFLAGS_WRITEONLY);
     }
 
+    if (res.file->type != FILETYPE_DIR && (oflags & OFLAGS_DIRECTORY)) {
+        atomic_fetch_sub(&res.file->vfs->n_open_fd, 1);
+        vfs_file_pop_ref(res.file);
+        return -ENOTDIR;
+    }
+
     // Create new file handle.
     vfs_file_desc_t *fd = calloc(1, sizeof(vfs_file_desc_t));
     fd->obj             = res.file;
