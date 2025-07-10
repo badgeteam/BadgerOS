@@ -23,7 +23,7 @@ set(CMAKE_C_COMPILER ${CONFIG_COMPILER})
 set(CONFIG_TARGET generic)
 
 # Include port-specific.
-include(port/${CONFIG_TARGET}/CMakeLists.txt)
+# include(port/${CONFIG_TARGET}/CMakeLists.txt)
 include(cpu/${CONFIG_CPU}/CMakeLists.txt)
 
 
@@ -91,10 +91,9 @@ else()
 endif()
 
 # we must pass the same options to GCC and LD when using LTO, as the linker will actually do the codegen
-add_compile_options(${common_compiler_flags} ${cpu_flags} ${port_flags})
+add_compile_options(${common_compiler_flags} ${cpu_flags})
 add_link_options(
-    ${common_compiler_flags} ${cpu_flags} ${port_flags}
-    ${cpu_link} ${port_link}
+    ${common_compiler_flags} ${cpu_flags} ${cpu_link}
     -Wl,--gc-sections -Wl,--build-id=none -nodefaultlibs -nostartfiles
     -T${CMAKE_CURRENT_LIST_DIR}/misc/ld/${CONFIG_SOC}_${CONFIG_CPU}.ld
 )
@@ -171,6 +170,7 @@ set(kernel_src
     ${CMAKE_CURRENT_LIST_DIR}/src/time.c
 )
 set(kernel_include
+    ${CMAKE_CURRENT_LIST_DIR}/lib/limine
     ${CMAKE_CURRENT_LIST_DIR}/lib/nanoprintf
     ${CMAKE_CURRENT_LIST_DIR}/include
     ${CMAKE_CURRENT_LIST_DIR}/include/badgelib
@@ -191,14 +191,11 @@ endif()
 add_executable(${target}
     ${kernel_src}
     ${cpu_src}
-    ${port_src}
 )
 include_directories(
     ${kernel_include}
     ${cpu_include}
-    ${port_include}
 )
-include_directories(SYSTEM ${port_system_include})
 
 # Export configs in a way visible to Rust.
 set(RUST_CONFIG_FILE "")

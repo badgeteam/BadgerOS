@@ -9,7 +9,6 @@
 #include "device/device.h"
 #include "interrupt.h"
 #include "panic.h"
-#include "port/port.h"
 #include "rawprint.h"
 #include "set.h"
 
@@ -259,7 +258,7 @@ void bootp_reclaim_mem() {
 }
 
 // Send a single character to the log output.
-void port_putc(char msg) {
+void bootp_early_putc(char msg) {
     // Artificial delay.
     timestamp_us_t lim = time_us();
     if (lim) {
@@ -272,14 +271,6 @@ void port_putc(char msg) {
 #else
     register char a0 asm("a0") = msg;
     // SBI console putchar.
-    asm("li a7, 1; ecall" ::"r"(a0));
+    asm("li a7, 1; ecall" ::"r"(a0) : "a1", "a7");
 #endif
-}
-
-// Power off.
-void port_poweroff(bool restart) {
-    (void)restart;
-    irq_disable();
-    logkf_from_isr(LOG_INFO, "TODO: port_poweroff() is a stub");
-    while (1) asm("");
 }

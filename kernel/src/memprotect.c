@@ -11,7 +11,6 @@
 #include "isr_ctx.h"
 #include "page_alloc.h"
 #include "panic.h"
-#include "port/port.h"
 #include "spinlock.h"
 
 // Page table walk result.
@@ -601,6 +600,14 @@ void memprotect_impl(mpu_ctx_t *ctx, size_t vpn, size_t ppn, size_t pages, uint3
         flags |= MEMPROTECT_FLAG_R;
     }
 
+    // Read current value here.
+    pt_walk_t walk         = pt_walk(ctx->root_ppn, vpn);
+    bool      needs_ifence = false;
+    if ((mmu_pte_get_flags(walk.pte, walk.level) & MEMPROTECT_FLAG_X) != (flags & MEMPROTECT_FLAG_X)) {
+        needs_ifence = true;
+    }
+    ctx->needs_ifence |= needs_ifence;
+
     // Apply change.
     if (flags & MEMPROTECT_FLAG_RWX) {
         top_mod = pt_map(ctx->root_ppn, mmu_levels - 1, vpn, ppn, pages, flags);
@@ -616,9 +623,6 @@ void memprotect_impl(mpu_ctx_t *ctx, size_t vpn, size_t ppn, size_t pages, uint3
             node = node->next;
         }
     }
-
-    // Perform VMEM fence.
-    mmu_vmem_fence();
 }
 
 // Add a memory protection region for user memory.
@@ -659,8 +663,13 @@ bool memprotect_k(size_t vaddr, size_t paddr, size_t length, uint32_t flags) {
 
 // Commit pending memory protections, if any.
 void memprotect_commit(mpu_ctx_t *ctx) {
-    (void)ctx;
-    // TODO: Run mmu_vmem_fence on other CPUs.
+    // TODO: Run mmu_vmem_fence and ifence on other CPUs.
+    if (ctx->needs_ifence) {
+        ctx->needs_ifence = false;
+#if __riscv
+        asm("fence.i");
+#endif
+    }
     mmu_vmem_fence();
     // TODO: Garbage collection is now safe to do.
 }

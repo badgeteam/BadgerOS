@@ -19,7 +19,6 @@
 #include "malloc.h"
 #include "memprotect.h"
 #include "panic.h"
-#include "port/port.h"
 #include "process/process.h"
 #include "radixtree.h"
 #include "rawprint.h"
@@ -128,11 +127,10 @@ static void kernel_lifetime_func() {
     // Power off.
     if (kernel_shutdown_mode == 2) {
         logkf(LOG_INFO, "Restarting");
-        port_poweroff(true);
     } else {
         logkf(LOG_INFO, "Powering off");
-        port_poweroff(false);
     }
+    while (1);
 }
 
 // Shutdown system call implementation.

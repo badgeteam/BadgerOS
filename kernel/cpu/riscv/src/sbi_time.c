@@ -1,12 +1,10 @@
 
 // SPDX-License-Identifier: MIT
 
-#include "assertions.h"
 #include "cpu/riscv_sbi.h"
 #include "device/dtb/dtb.h"
-#include "interrupt.h"
-#include "port/time.h"
-#include "scheduler/isr.h"
+#include "log.h"
+#include "panic.h"
 #include "time.h"
 #include "time_private.h"
 
@@ -43,7 +41,7 @@ static inline uint64_t time_ticks() {
 // Set the timer for a certain timestamp.
 static void set_timer_ticks(uint64_t timestamp) {
     if (support_sbi_time) {
-        sbi_set_timer(timestamp + base_tick);
+        sbi_set_timer(timestamp - time_ticks());
     } else {
         sbi_legacy_set_timer(timestamp + base_tick);
     }

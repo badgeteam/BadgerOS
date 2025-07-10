@@ -45,6 +45,8 @@ struct mpu_ctx {
     dlist_node_t node;
     // Page table root physical page number.
     size_t       root_ppn;
+    // Whether there are any dirty mappings for code.
+    bool         needs_ifence;
 };
 
 // For systems with VMEM: global MMU context.

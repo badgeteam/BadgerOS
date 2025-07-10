@@ -3,11 +3,13 @@
 
 #pragma once
 
-#include "port/time.h"
-
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+
+#ifdef __riscv
+#include "device/dtb/dtb.h"
+#endif
 
 #define TIMESTAMP_US_MIN INT64_MIN
 #define TIMESTAMP_US_MAX INT64_MAX
@@ -39,3 +41,13 @@ bool           time_add_async_task(timertask_t *task);
 bool           time_cancel_async_task(int64_t taskno);
 // Get current time in microseconds.
 timestamp_us_t time_us();
+
+#ifdef __riscv
+// Initialise timer using the DTB.
+void time_init_dtb(dtb_handle_t *dtb);
+#else
+// Early timer init before ACPI (but not DTB).
+void time_init_before_acpi();
+// Initialise timer using ACPI.
+void time_init_acpi();
+#endif

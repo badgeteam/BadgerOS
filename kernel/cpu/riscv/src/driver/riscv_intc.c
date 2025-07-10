@@ -11,10 +11,8 @@
 #include "log.h"
 #include "panic.h"
 
-#ifdef CPU_RISCV_ENABLE_SBI_TIME
 // Called by the interrupt handler when the CPU-local timer fires.
 void riscv_sbi_timer_interrupt();
-#endif
 
 bool riscv_intc_match(device_info_t *info) {
     return device_test_dtb_compat(info, 1, (char const *const[]){"riscv,cpu-intc"});
@@ -29,14 +27,10 @@ void riscv_intc_remove(device_t *device) {
 }
 
 bool riscv_intc_interrupt(device_t *device, irqno_t pin) {
-    device_irqctl_t *irqctl = (void *)device;
-#ifdef CPU_RISCV_ENABLE_SBI_TIME
     if (pin == RISCV_INT_TIMER) {
         asm("csrc sie, %0" ::"r"(1 << RISCV_INT_TIMER));
         riscv_sbi_timer_interrupt();
-    } else
-#endif
-        if (!device_forward_interrupt(device, pin)) {
+    } else if (!device_forward_interrupt(device, pin)) {
         logkf_from_isr(LOG_FATAL, "Unhandled interrupt 0x%{size;x}", pin);
         panic_abort();
     }

@@ -3,8 +3,8 @@
 
 #include "rawprint.h"
 
+#include "bootp.h"
 #include "num_to_str.h"
-#include "port/port.h"
 #include "time.h"
 
 #include <stddef.h>
@@ -28,15 +28,15 @@ void rawprint(char const *msg) {
 void rawputc(char msg) {
     static char prev = 0;
     if (msg == '\r') {
-        port_putc('\r');
-        port_putc('\n');
+        bootp_early_putc('\r');
+        bootp_early_putc('\n');
     } else if (msg == '\n') {
         if (prev != '\r') {
-            port_putc('\r');
-            port_putc('\n');
+            bootp_early_putc('\r');
+            bootp_early_putc('\n');
         }
     } else {
-        port_putc(msg);
+        bootp_early_putc(msg);
     }
     prev = msg;
 }

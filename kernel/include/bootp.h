@@ -11,3 +11,5 @@ void bootp_early_init();
 void bootp_full_init();
 // Reclaim all reclaimable memory.
 void bootp_reclaim_mem();
+// Early putchar.
+void bootp_early_putc(char c);

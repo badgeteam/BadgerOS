@@ -5,6 +5,8 @@
 
 #include "cpu/riscv.h"
 
+#include <stdint.h>
+
 
 
 // Completed successfully.

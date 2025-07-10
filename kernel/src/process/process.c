@@ -14,7 +14,6 @@
 #include "memprotect.h"
 #include "mutex.h"
 #include "panic.h"
-#include "port/port.h"
 #include "process/internal.h"
 #include "process/sighandler.h"
 #include "process/types.h"
@@ -317,7 +316,6 @@ errno_t proc_start_raw(process_t *process) {
     }
 
     // Create the process' main thread.
-    port_fencei();
     long thread = proc_create_thread_raw_unlocked(process, (size_t)kbelf_dyn_entrypoint(dyn), 0, SCHED_PRIO_NORMAL);
     if (thread < 0) {
         kbelf_dyn_unload(dyn);
