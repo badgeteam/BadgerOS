@@ -45,37 +45,35 @@ typedef struct {
 // Shared between all file handles referring to the same file.
 struct vfs_file_obj {
     // Reference count (how many `vfs_file_desc_t` reference this).
-    atomic_int refcount;
+    atomic_int       refcount;
     // Type of file this is.
-    filetype_t type;
+    filetype_t       type;
     // Current file size.
-    fileoff_t  size;
+    fileoff_t        size;
     // Filesystem-specific information.
-    void      *cookie;
+    void            *cookie;
     // Inode number (gauranteed to be unique per VFS).
     // No file or directory may have the same inode number.
     // Any file or directory is required to name an inode number of 1 or higher.
-    inode_t    inode;
+    inode_t          inode;
     // Link count (how many names reference this inode).
     // When 0 and after the last file object is closed, the file is deleted.
-    uint32_t   links;
+    uint32_t         links;
     // Pointer to the VFS on which this file exists.
-    vfs_t     *vfs;
+    vfs_t           *vfs;
     // Handle mutex for concurrency.
-    mutex_t    mutex;
+    mutex_t          mutex;
     // FS mounted in this directory, if any.
-    vfs_t     *mounted_fs;
+    vfs_t           *mounted_fs;
     // Handle references the root directory of a mounted filesystem.
     // Not to be confused with the mountpoint directory.
-    bool       is_vfs_root;
-    union {
-        // Buffer for pipes and FIFOs.
-        vfs_fifo_obj_t  *fifo;
-        // Handle for device special files.
-        devfile_t const *devfile;
-        // Dirent cache entry for directories.
-        dentcache_t     *dentcache;
-    };
+    bool             is_vfs_root;
+    // Buffer for pipes and FIFOs.
+    vfs_fifo_obj_t  *fifo;
+    // Handle for device special files.
+    devfile_t const *devfile;
+    // Dirent cache entry for directories.
+    dentcache_t     *dentcache;
 };
 
 // VFS opened file handle.
