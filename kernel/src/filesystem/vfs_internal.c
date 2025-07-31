@@ -9,6 +9,7 @@
 #include "filesystem/vfs_fifo.h"
 #include "filesystem/vfs_types.h"
 #include "log.h"
+#include "lstr.h"
 #include "malloc.h"
 #include "mutex.h"
 #include "time.h"
@@ -171,19 +172,31 @@ errno_t vfs_unlink(vfs_file_obj_t *dir, char const *name, size_t name_len) {
     }
 
     // Find the dirent.
-    dirent_t ent;
-    errno_t  res = dir->vfs->vtable.dir_find_ent(dir->vfs, dir, &ent, name, name_len);
-    if (res < 1) {
-        return res ?: -ENOENT;
-    }
-    if (ent.is_dir) {
+    errno_ptr_t  res    = vfs_dir_find_ent(dir, name, name_len);
+    dentcache_t *cached = res.ptr;
+    if (res.errno < 0) {
+        return res.errno;
+    } else if (!res.ptr) {
+        return -ENOENT;
+    } else if (cached->dirent.is_dir) {
+        dentcache_pop_ref(cached);
         return -EISDIR;
     }
 
-    return CHECK_EIO(
-        dir->vfs,
-        dir->vfs->vtable.unlink(dir->vfs, dir, name, name_len, open_existing(dir->vfs, ent.inode))
-    );
+    vfs_file_obj_t *existing = open_existing(dir->vfs, cached->dirent.inode);
+    RETURN_ON_ERRNO(CHECK_EIO(dir->vfs, dir->vfs->vtable.unlink(dir->vfs, dir, name, name_len, existing)));
+
+    // Invalidate the dirent cache entry.
+    mutex_acquire(&existing->dentcache->mtx, TIMESTAMP_US_MAX);
+    map_remove(&existing->dentcache->children, &LSTR_FROM_PTR(name_len, name));
+    cached->parent = NULL;
+    atomic_store(&cached->last_used, -1);
+    mutex_release(&existing->dentcache->mtx);
+
+    dentcache_pop_ref(cached);
+    vfs_file_pop_ref(existing);
+
+    return 0;
 }
 
 // Create a new hard link from one path to another relative to their respective dirs.
@@ -290,23 +303,38 @@ errno_t vfs_rmdir(vfs_file_obj_t *dir, char const *name, size_t name_len) {
     }
 
     // Find the dirent.
-    dirent_t ent;
-    errno_t  res = CHECK_EIO(dir->vfs, dir->vfs->vtable.dir_find_ent(dir->vfs, dir, &ent, name, name_len));
-    if (res < 1) {
-        return res ?: -ENOENT;
-    }
-    if (ent.is_dir) {
-        return -EISDIR;
+    errno_ptr_t  res    = vfs_dir_find_ent(dir, name, name_len);
+    dentcache_t *cached = res.ptr;
+    if (res.errno < 0) {
+        return res.errno;
+    } else if (!res.ptr) {
+        return -ENOENT;
+    } else if (!cached->dirent.is_dir) {
+        dentcache_pop_ref(cached);
+        return -ENOTDIR;
     }
 
     // Assert that no filesystem is mounted here.
-    vfs_file_obj_t *existing = open_existing(dir->vfs, ent.inode);
+    vfs_file_obj_t *existing = open_existing(dir->vfs, cached->dirent.inode);
     if (dir->is_vfs_root) {
+        dentcache_pop_ref(cached);
         vfs_file_pop_ref(existing);
         return -EBUSY;
     }
 
-    return CHECK_EIO(dir->vfs, dir->vfs->vtable.rmdir(dir->vfs, dir, name, name_len, existing));
+    RETURN_ON_ERRNO(CHECK_EIO(dir->vfs, dir->vfs->vtable.rmdir(dir->vfs, dir, name, name_len, existing)));
+
+    // Invalidate the dirent cache entry.
+    mutex_acquire(&existing->dentcache->mtx, TIMESTAMP_US_MAX);
+    map_remove(&existing->dentcache->children, &LSTR_FROM_PTR(name_len, name));
+    cached->parent = NULL;
+    atomic_store(&cached->last_used, -1);
+    mutex_release(&existing->dentcache->mtx);
+
+    dentcache_pop_ref(cached);
+    vfs_file_pop_ref(existing);
+
+    return 0;
 }
 
 
@@ -323,16 +351,69 @@ errno_dirent_list_t vfs_dir_read(vfs_file_obj_t *dir) {
     return res;
 }
 
+// Helper function that tries to push the refcount for `vfs_dir_find_ent`.
+// This is required to avoid race conditions when a dirent cache entry is dropped.
+static bool dentcache_try_push_ref(dentcache_t *ent) {
+    int refcount = atomic_load_explicit(&ent->refcount, memory_order_relaxed);
+    while (1) {
+        if (refcount == 0) {
+            return false;
+        }
+        if (atomic_compare_exchange_weak(&ent->refcount, &refcount, refcount + 1)) {
+            return true;
+        }
+    }
+}
+
 // Read the directory entry with the matching name.
-// Returns true if the entry was found.
-errno_bool_t vfs_dir_find_ent(vfs_file_obj_t *dir, dirent_t *ent, char const *name, size_t name_len) {
+// Returns a new share of the `dentcache_t` returned.
+errno_ptr_t vfs_dir_find_ent(vfs_file_obj_t *dir, char const *name, size_t name_len) {
     if (dir->type != FILETYPE_DIR) {
-        return -ENOTDIR;
+        return (errno_ptr_t){NULL, -ENOTDIR};
     }
     while (dir->mounted_fs) {
         dir = dir->mounted_fs->root_dir_obj;
     }
-    return CHECK_EIO(dir->vfs, dir->vfs->vtable.dir_find_ent(dir->vfs, dir, ent, name, name_len));
+
+    // Check dirent cache first.
+    mutex_acquire_shared(&dir->dentcache->mtx, TIMESTAMP_US_MAX);
+    dentcache_t *cached = map_get(&dir->dentcache->children, &LSTR_FROM_PTR(name_len, name));
+    if (cached && !dentcache_try_push_ref(cached)) {
+        cached = NULL; // Avoid race condition if the refcount is 0 but it hasn't been removed yet.
+    }
+    if (cached) {
+        atomic_store_explicit(&cached->last_used, time_us(), memory_order_relaxed);
+        mutex_release_shared(&dir->dentcache->mtx);
+        return (errno_ptr_t){cached, 0};
+    }
+    mutex_release_shared(&dir->dentcache->mtx);
+
+    // Try to read the directory entry.
+    cached = calloc(1, sizeof(dentcache_t));
+    errno_bool_t res =
+        CHECK_EIO(dir->vfs, dir->vfs->vtable.dir_find_ent(dir->vfs, dir, &cached->dirent, name, name_len));
+    if (res <= 0) {
+        free(cached);
+        return (errno_ptr_t){NULL, res};
+    }
+
+    // Make a new dirent cache node.
+    cached->refcount = 2; // One for returned ref, one too keep cached.
+                          // Note that the map entry doesn't have a ref as it's implicitly removed if refcount hits 0.
+    cached->children = LSTR_MAP_EMPTY;
+    mutex_init(&cached->mtx, true);
+    cached->parent = dir->dentcache;
+
+    // Try to insert into the dirent cache.
+    mutex_acquire(&dir->dentcache->mtx, TIMESTAMP_US_MAX);
+    if (!map_set(&dir->dentcache->children, &LSTR_FROM_PTR(name_len, name), cached)) {
+        mutex_release(&dir->dentcache->mtx);
+        free(cached);
+        return (errno_ptr_t){NULL, -ENOMEM};
+    }
+    mutex_release(&dir->dentcache->mtx);
+
+    return (errno_ptr_t){cached, 0};
 }
 
 
@@ -552,4 +633,31 @@ errno_t vfs_file_flush(vfs_file_obj_t *file) {
 // The filesystem, if it does caching, must always sync everything to disk at once.
 errno_t vfs_flush(vfs_t *vfs) {
     return CHECK_EIO(vfs, vfs->vtable.flush(vfs));
+}
+
+
+
+// Pop the refcount on a `dentcache_t`.
+void dentcache_pop_ref(dentcache_t *ent) {
+    while (ent) {
+        if (atomic_fetch_sub(&ent->refcount, 1) > 1) {
+            // Don't clean up because there's still references.
+            return;
+        }
+
+        // Remove from parent cache.
+        if (ent->parent) {
+            mutex_acquire(&ent->parent->mtx, TIMESTAMP_US_MAX);
+            map_remove(&ent->parent->children, &LSTR_FROM_PTR(ent->dirent.name_len, ent->dirent.name));
+            mutex_release(&ent->parent->mtx);
+        }
+
+        // Children should already be empty.
+        assert_dev_drop(ent->children.len == 0);
+
+        // Free the entry itself.
+        dentcache_t *next = ent->parent;
+        free(ent);
+        ent = next;
+    }
 }

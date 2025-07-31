@@ -6,8 +6,18 @@
 #include "map.h"
 
 #include "badge_strings.h"
+#include "lstr.h"
 #include "malloc.h"
 
+
+
+// Vtable for `lstr_t` maps.
+map_vtable_t const lstr_map_vtable = {
+    .key_cmp  = (int (*)(void const *, void const *))lstr_cmp,
+    .key_del  = free,
+    .key_dup  = (void *(*)(void const *))lstr_clone,
+    .key_hash = (uint32_t (*)(void const *))lstr_hash,
+};
 
 // Vtable for string maps.
 map_vtable_t const str_map_vtable = {
@@ -98,6 +108,10 @@ void map_clear(map_t *map) {
 
 // Get an item from the map.
 void *map_get(map_t const *map, void const *key) {
+    if (!map->len) {
+        return NULL;
+    }
+
     // Figure out which bucket the key is in.
     uint32_t hash   = map->vtable->key_hash(key);
     size_t   bucket = hash & (map->buckets_len - 1);
@@ -186,6 +200,9 @@ bool map_remove(map_t *map, void const *key) {
 
 // Get next item in the map (or first if `ent` is NULL).
 map_ent_t const *map_next(map_t const *map, map_ent_t const *ent) {
+    if (!map->len) {
+        return NULL;
+    }
     size_t bucket;
     if (!ent) {
         bucket = 0;

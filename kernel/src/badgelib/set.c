@@ -104,6 +104,10 @@ void set_clear(set_t *set) {
 
 // Get an item from the set.
 set_get_t set_get(set_t const *set, void const *value) {
+    if (!set->len) {
+        return (set_get_t){false, NULL};
+    }
+
     // Figure out which bucket the value is in.
     uint32_t hash   = set->vtable->val_hash(value);
     size_t   bucket = hash & (set->buckets_len - 1);
@@ -172,6 +176,14 @@ size_t set_addall(set_t *set, set_t const *other) {
         panic_abort();
     }
     size_t added = 0;
+
+    if (!other->len) {
+        return 0;
+    } else if (!set->len) {
+        if (!set_resize(set, other->buckets_len)) {
+            return 0;
+        }
+    }
 
     for (size_t i = 0; i < set->buckets_len; i++) {
         dlist_t tmp = DLIST_EMPTY;
@@ -298,6 +310,9 @@ bool set_remove(set_t *set, void const *value) {
 
 // Get next item in the set (or first if `ent` is NULL).
 set_ent_t const *set_next(set_t const *set, set_ent_t const *ent) {
+    if (!set->len) {
+        return NULL;
+    }
     size_t bucket;
     if (!ent) {
         bucket = 0;

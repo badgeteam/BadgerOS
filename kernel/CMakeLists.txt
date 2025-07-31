@@ -110,6 +110,7 @@ set(kernel_src
     ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/fifo.c
     ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/hash.c
     ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/log.c
+    ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/lstr.c
     ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/map.c
     ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/mutex.c
     ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/num_to_str.c
@@ -132,7 +133,6 @@ set(kernel_src
     ${CMAKE_CURRENT_LIST_DIR}/src/device/builtin_drivers.c
     ${CMAKE_CURRENT_LIST_DIR}/src/device/device.c
     
-    ${CMAKE_CURRENT_LIST_DIR}/src/filesystem/dentcache.c
     ${CMAKE_CURRENT_LIST_DIR}/src/filesystem/filesystem.c
     ${CMAKE_CURRENT_LIST_DIR}/src/filesystem/syscall_impl.c
     ${CMAKE_CURRENT_LIST_DIR}/src/filesystem/fs_fat.c

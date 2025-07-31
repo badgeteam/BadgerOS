@@ -19,6 +19,18 @@ uint32_t hash_cstr(char const *str) {
     return hash;
 }
 
+// Get the hash of a byte vector.
+uint32_t hash_bytes(void const *data, size_t len) {
+    uint8_t const *str  = data;
+    uint32_t       hash = 5381;
+
+    for (size_t i = 0; i < len; i++) {
+        hash = hash * 33 + str[i];
+    }
+
+    return hash;
+}
+
 // Get the hash of a pointer.
 uint32_t hash_ptr(void const *ptr) {
 #if __SIZE_MAX__ == __UINT64_MAX__

@@ -64,7 +64,7 @@ typedef uint32_t oflags_t;
 // Value used for absent inodes.
 #define INODE_NONE ((inode_t)0)
 // Type used for inode numbers.
-typedef long inode_t;
+typedef int64_t inode_t;
 
 // Value used for absent file / directory handle.
 #define FILE_NONE ((file_t) - 1)
@@ -122,7 +122,7 @@ typedef struct {
     bool      is_symlink;
     // Length of the filename.
     fileoff_t name_len;
-    // Filename.
+    // Filename; NULL-terminated despite allowing NULL bytes.
     char      name[FILESYSTEM_NAME_MAX + 1];
 } dirent_t;
 

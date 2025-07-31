@@ -33,8 +33,8 @@ errno_t      vfs_rmdir(vfs_file_obj_t *dir, char const *name, size_t name_len);
 // Read all entries from a directory.
 errno_dirent_list_t vfs_dir_read(vfs_file_obj_t *dir);
 // Read the directory entry with the matching name.
-// Returns 1 if the entry was found, 0 if not, -errno on error.
-errno_bool_t        vfs_dir_find_ent(vfs_file_obj_t *dir, dirent_t *ent, char const *name, size_t name_len);
+// Returns a new share of the `dentcache_t` returned.
+errno_ptr_t         vfs_dir_find_ent(vfs_file_obj_t *dir, char const *name, size_t name_len);
 
 // Stat a file object.
 errno_t vfs_stat(vfs_file_obj_t *file, stat_t *stat);

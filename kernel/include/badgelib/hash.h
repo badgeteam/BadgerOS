@@ -13,6 +13,8 @@
 
 // Get the hash of a C-string.
 uint32_t hash_cstr(char const *str);
+// Get the hash of a byte vector.
+uint32_t hash_bytes(void const *data, size_t len);
 // Get the hash of a pointer.
 uint32_t hash_ptr(void const *ptr);
 
