@@ -39,7 +39,6 @@ void      vfs_fifo_open(vfs_fifo_obj_t *fobj, bool nonblock, bool read, bool wri
 void      vfs_fifo_close(vfs_fifo_obj_t *fobj, bool had_read, bool had_write);
 // Handle a file read for a FIFO.
 // WARNING: May sporadically return 0 in a blocking multi-read scenario.
-// Raises ECAUSE_PIPE_CLOSED if `enforce_open` is true and the write end is closed.
 fileoff_t vfs_fifo_read(vfs_fifo_obj_t *fobj, bool nonblock, uint8_t *readbuf, fileoff_t readlen);
 // Handle a file write for a FIFO.
 // Raises ECAUSE_PIPE_CLOSED if `enforce_open` is true and the read end is closed.

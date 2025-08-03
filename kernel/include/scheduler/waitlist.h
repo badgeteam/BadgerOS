@@ -34,8 +34,8 @@ typedef struct {
 
 
 
-// Block on a waiting list, or until
-// Runs `double_check(cookie)` and unblocks if false to prevent race conditions.
+// Block on a waiting list, or until a timeout is reached.
+// Runs `double_check(cookie)` and unblocks if false to prevent race conditions causing deadlocks.
 void waitlist_block(waitlist_t *list, timestamp_us_t timeout, bool (*double_check)(void *), void *cookie);
-// Try to resume a thread blocked on the waiting list.
+// Resume the first thread from the waiting list, if there is one.
 void waitlist_notify(waitlist_t *list);

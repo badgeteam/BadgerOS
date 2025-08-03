@@ -14,6 +14,10 @@
 #![feature(try_with_capacity)]
 #![feature(str_from_utf16_endian)]
 #![feature(ascii_char)]
+#![feature(atomic_try_update)]
+#![feature(try_blocks)]
+#![feature(likely_unlikely)]
+#![feature(map_try_insert)]
 
 extern crate alloc;
 
@@ -25,6 +29,7 @@ pub mod config;
 pub mod device;
 pub mod filesystem;
 pub mod kparam;
+pub mod time;
 pub mod util;
 
 use core::{alloc::GlobalAlloc, ffi::c_void, ops::Deref, panic::PanicInfo};

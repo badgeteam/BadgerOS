@@ -7,12 +7,12 @@ use core::{
 
 use super::{
     error::{EResult, Errno},
-    raw::{self, mutex_t, timestamp_us_t},
+    raw::{self, mutex_t, spinlock_t, timestamp_us_t},
 };
 
 /// A BadgerOS mutex with a value in it.
 #[repr(C)]
-pub struct Mutex<T, const SHARED: bool> {
+pub struct Mutex<T, const SHARED: bool = true> {
     inner: UnsafeCell<mutex_t>,
     data: UnsafeCell<T>,
 }
@@ -106,7 +106,7 @@ pub struct MutexGuard<'a, T, const SHARED: bool> {
 }
 
 impl<'a, T, const SHARED: bool> MutexGuard<'a, T, SHARED> {
-    /// Try to lock a mutex as shared.
+    /// Try to lock a mutex.
     pub unsafe fn try_new_raw(
         mutex: *mut mutex_t,
         data: &'a mut T,
@@ -122,7 +122,7 @@ impl<'a, T, const SHARED: bool> MutexGuard<'a, T, SHARED> {
                 .ok_or(Errno::ETIMEDOUT)
         }
     }
-    /// Lock a mutex as shared.
+    /// Lock a mutex.
     pub unsafe fn new_raw(mutex: *mut mutex_t, data: &'a mut T) -> Self {
         unsafe { Self::try_new_raw(mutex, data, timestamp_us_t::MAX) }.unwrap()
     }
@@ -207,6 +207,12 @@ impl<'a, T> SharedMutexGuard<'a, T> {
     /// Lock a mutex as shared.
     pub fn new(mutex: &'a Mutex<T, true>) -> Self {
         Self::try_new(mutex, timestamp_us_t::MAX).unwrap()
+    }
+}
+
+impl<'a, T> Drop for SharedMutexGuard<'a, T> {
+    fn drop(&mut self) {
+        unsafe { raw::mutex_release_shared(self.mutex) };
     }
 }
 

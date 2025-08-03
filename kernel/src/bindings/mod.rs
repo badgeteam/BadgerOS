@@ -23,6 +23,7 @@ pub mod mutex;
 pub mod pmm;
 pub mod process;
 pub mod semaphore;
+pub mod spinlock;
 pub mod thread;
 pub mod usercopy;
 

@@ -1,4 +1,5 @@
 use core::{
+    cell::UnsafeCell,
     ffi::{c_char, c_int, c_void},
     str::FromStr,
 };
@@ -7,7 +8,7 @@ use alloc::{boxed::Box, ffi::CString};
 
 use super::{
     error::EResult,
-    raw::{self, SCHED_PRIO_NORMAL, tid_t, timestamp_us_t},
+    raw::{self, SCHED_PRIO_NORMAL, dlist_node_t, dlist_t, tid_t, timestamp_us_t, waitlist_t},
 };
 
 pub struct Thread {
@@ -71,5 +72,51 @@ impl Thread {
 impl Drop for Thread {
     fn drop(&mut self) {
         unsafe { raw::thread_detach(self.handle) };
+    }
+}
+
+pub struct Waitlist {
+    inner: UnsafeCell<waitlist_t>,
+}
+
+impl Waitlist {
+    /// Create a new waitlist.
+    pub const fn new() -> Self {
+        Self {
+            inner: UnsafeCell::new(waitlist_t {
+                lock: 1,
+                list: dlist_t {
+                    len: 0,
+                    head: 0 as *mut dlist_node_t,
+                    tail: 0 as *mut dlist_node_t,
+                },
+            }),
+        }
+    }
+
+    /// Wrapper function that helps with calling the [`FnMut`] for [`Self::block`].
+    unsafe extern "C" fn double_check_wrapper(arg: *mut c_void) -> bool {
+        let arg = arg as *mut &mut dyn FnMut() -> bool;
+        unsafe { (**arg)() }
+    }
+
+    /// Block on a waiting list, or until a timeout is reached.
+    /// Runs `double_check` and unblocks if false to prevent race conditions causing deadlocks.
+    /// Safe to enter interrupts-disabled, but may re-enable them.
+    pub fn block(&self, timeout: timestamp_us_t, mut double_check: &mut dyn FnMut() -> bool) {
+        unsafe {
+            raw::waitlist_block(
+                self.inner.as_mut_unchecked(),
+                timeout,
+                Some(Self::double_check_wrapper),
+                &raw mut double_check as *mut c_void,
+            )
+        }
+    }
+
+    /// Resume the first thread from the waiting list, if there is one.
+    /// Safe to call with interrupts disabled, which it preserves.
+    pub fn notify(&self) {
+        unsafe { raw::waitlist_notify(self.inner.as_mut_unchecked()) }
     }
 }
