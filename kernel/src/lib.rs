@@ -18,6 +18,7 @@
 #![feature(try_blocks)]
 #![feature(likely_unlikely)]
 #![feature(map_try_insert)]
+#![feature(iterator_try_collect)]
 
 extern crate alloc;
 

@@ -6,7 +6,7 @@ macro_rules! register_kmodule {
     ($name: ident, $mod_ver: expr, $init: expr) => {
         #[used]
         #[unsafe(link_section = ".kmodules")]
-        static KMODULE_TABLE_ENTRY: &'static kmodule_t = {
+        static KMODULE_TABLE_ENTRY: &'static crate::bindings::raw::kmodule_t = {
             use ::core::ffi::CStr;
             use $crate::bindings::raw::*;
             let name = unsafe {

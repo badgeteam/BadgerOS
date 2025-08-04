@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: MIT
 
 use core::{
+    any::Any,
     cell::UnsafeCell,
     sync::atomic::{AtomicU64, AtomicUsize, Ordering},
 };
@@ -10,18 +11,21 @@ use core::{
 use alloc::{boxed::Box, collections::btree_map::BTreeMap, sync::Arc, vec::Vec};
 
 use crate::{
+    LogLevel,
     bindings::{
         error::{EResult, Errno},
+        filesystem::Media,
         irq,
         mutex::Mutex,
         spinlock::Spinlock,
     },
+    filesystem::vfs::mflags,
     time::{AtomicTimespec, Timespec},
 };
 
 use super::{
-    Dirent, NewFileSpec, NodeMode, NodeType, Stat,
-    vfs::{VNode, VNodeOps, VfsOps},
+    Dirent, FSDRIVERS, NewFileSpec, NodeMode, NodeType, Stat,
+    vfs::{VNode, VNodeOps, VfsDriver, VfsOps, mflags::MFlags},
 };
 
 /// A filesystem that is entirely resident in RAM.
@@ -78,12 +82,44 @@ impl VfsOps for Arc<RamFS> {
 
     fn rename(
         &self,
-        src_dir: &mut VNode,
+        src_dir: &VNode,
         src_name: &[u8],
-        dest_dir: &mut VNode,
+        dest_dir: &VNode,
         dest_name: &[u8],
     ) -> EResult<()> {
-        todo!()
+        // Downcast trait objects into RamVNode.
+        let mut src_ops = src_dir.ops.lock();
+        let mut dest_ops = dest_dir.ops.lock();
+        let src_ramnode = (&mut *src_ops as &mut dyn Any)
+            .downcast_mut::<RamVNode>()
+            .unwrap();
+        let dest_ramnode = (&mut *dest_ops as &mut dyn Any)
+            .downcast_mut::<RamVNode>()
+            .unwrap();
+
+        // Get RamINode refs.
+        let src_inode = unsafe { src_ramnode.inode.as_mut_unchecked() };
+        let dest_inode = unsafe { dest_ramnode.inode.as_mut_unchecked() };
+
+        // Get the source dirent.
+        let mut entry = src_inode
+            .data
+            .as_directory_mut()
+            .unwrap()
+            .remove(src_name)
+            .ok_or(Errno::ENOENT)?;
+
+        // Check if destination already exists.
+        let dest_dir_map = dest_inode.data.as_directory_mut().unwrap();
+        if dest_dir_map.contains_key(dest_name) {
+            return Err(Errno::EEXIST);
+        }
+
+        // Insert the entry under the new name.
+        entry.name = dest_name.into(); // TODO: OOM handling.
+        dest_dir_map.insert(dest_name.into(), entry);
+
+        Ok(())
     }
 }
 
@@ -139,6 +175,19 @@ impl RamFSData {
         match self {
             Self::Symlink(x) => Some(x),
             _ => None,
+        }
+    }
+
+    /// Get the matching [`NodeType`].
+    fn node_type(&self) -> NodeType {
+        match self {
+            RamFSData::Fifo => NodeType::Fifo,
+            RamFSData::CharDev => NodeType::CharDev,
+            RamFSData::Directory(_) => NodeType::Directory,
+            RamFSData::BlockDev => NodeType::BlockDev,
+            RamFSData::Regular(_) => NodeType::Regular,
+            RamFSData::Symlink(_) => NodeType::Symlink,
+            RamFSData::UnixSocket => NodeType::UnixSocket,
         }
     }
 }
@@ -213,7 +262,10 @@ impl VNodeOps for RamVNode {
     }
 
     fn get_dirents(&self) -> EResult<Vec<Dirent>> {
-        todo!()
+        let inode = unsafe { self.inode.as_ref_unchecked() };
+        let directory = inode.data.as_directory().ok_or(Errno::EINVAL)?;
+        // TODO: OOM handling
+        Ok(directory.values().map(Dirent::clone).collect())
     }
 
     fn unlink(&mut self, name: &[u8], is_rmdir: bool) -> EResult<()> {
@@ -257,7 +309,47 @@ impl VNodeOps for RamVNode {
     }
 
     fn link(&mut self, name: &[u8], inode: &VNode) -> EResult<()> {
-        todo!()
+        let dir_inode = unsafe { self.inode.as_mut_unchecked() };
+        let directory = dir_inode.data.as_directory_mut().ok_or(Errno::EINVAL)?;
+
+        if directory.contains_key(name) {
+            return Err(Errno::EEXIST);
+        }
+
+        let ram_inode = self
+            .vfs
+            .inodes
+            .lock_shared()
+            .get(&inode.inode)
+            .cloned()
+            .ok_or(Errno::EIO)?;
+
+        let ram_inode = unsafe { ram_inode.as_mut_unchecked() };
+        assert!(unsafe { irq::disable() });
+        let link_res = {
+            let mut links = ram_inode.links.lock();
+            assert!(*links > 0);
+            if *links >= u16::MAX {
+                Err(Errno::EMLINK)
+            } else {
+                *links += 1;
+                Ok(())
+            }
+        };
+        unsafe { irq::enable() };
+        link_res?;
+
+        directory.insert(
+            name.into(),
+            Dirent {
+                ino: ram_inode.ino,
+                type_: ram_inode.data.node_type(),
+                name: name.into(),
+                dirent_off: 0,
+            },
+        );
+
+        Ok(())
     }
 
     fn make_file(&mut self, name: &[u8], spec: NewFileSpec) -> EResult<Box<dyn VNodeOps>> {
@@ -293,6 +385,8 @@ impl VNodeOps for RamVNode {
             vfs: self.vfs.clone(),
             inode: new_inode.clone(),
         })?;
+
+        self.vfs.inodes.lock().insert(ino, new_inode.clone());
 
         directory.insert(
             name.into(),
@@ -390,3 +484,35 @@ impl VNodeOps for RamVNode {
         Ok(())
     }
 }
+
+/// The driver struct for [`RamFS`].
+struct RamFSDriver {}
+
+impl VfsDriver for RamFSDriver {
+    fn detect(&self, media: &Media) -> EResult<bool> {
+        Ok(false)
+    }
+
+    fn mount(&self, media: Option<&Media>, mflags: MFlags) -> EResult<Box<dyn VfsOps>> {
+        if mflags & mflags::READ_ONLY != 0 {
+            logkf!(
+                LogLevel::Error,
+                "It doesn't make sense to mount an empty RamFS as READ_ONLY"
+            );
+            return Err(Errno::EINVAL);
+        }
+        if let Some(_) = media {
+            logkf!(LogLevel::Error, "RamFS does not use media");
+            return Err(Errno::EINVAL);
+        }
+        Ok(Box::<dyn VfsOps>::from(Box::try_new(RamFS::new()?)?))
+    }
+}
+
+fn register_ramfs() {
+    FSDRIVERS
+        .lock()
+        .insert("ramfs".into(), Box::new(RamFSDriver {}));
+}
+
+register_kmodule!(ramfs, [1, 0, 0], register_ramfs);

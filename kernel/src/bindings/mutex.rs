@@ -27,9 +27,7 @@ impl<T, const SHARED: bool> Mutex<T, SHARED> {
     unsafe fn data(&self) -> &mut T {
         unsafe { self.data.as_mut_unchecked() }
     }
-}
 
-impl<T, const SHARED: bool> Mutex<T, SHARED> {
     /// Create a new mutex statically; you must only use this to initialize the `.data` section.
     pub const unsafe fn new_static(data: T) -> Self {
         Self {
@@ -41,6 +39,7 @@ impl<T, const SHARED: bool> Mutex<T, SHARED> {
             data: UnsafeCell::new(data),
         }
     }
+
     /// Create a new mutex.
     pub fn new(data: T) -> Self {
         let mut inner: mutex_t = unsafe { MaybeUninit::zeroed().assume_init() };
@@ -50,13 +49,12 @@ impl<T, const SHARED: bool> Mutex<T, SHARED> {
             data: UnsafeCell::new(data),
         }
     }
-}
 
-impl<T, const SHARED: bool> Mutex<T, SHARED> {
     /// Try to lock the mutex.
     pub fn try_lock<'a>(&'a self, timeout: timestamp_us_t) -> EResult<MutexGuard<'a, T, SHARED>> {
         MutexGuard::try_new(self, timeout)
     }
+
     /// Lock the mutex.
     pub fn lock<'a>(&'a self) -> MutexGuard<'a, T, SHARED> {
         MutexGuard::new(self)
@@ -71,6 +69,7 @@ impl<T> Mutex<T, true> {
     ) -> EResult<SharedMutexGuard<'a, T>> {
         SharedMutexGuard::try_new(self, timeout)
     }
+
     /// Lock the mutex as shared.
     pub fn lock_shared<'a>(&'a self) -> SharedMutexGuard<'a, T> {
         SharedMutexGuard::new(self)

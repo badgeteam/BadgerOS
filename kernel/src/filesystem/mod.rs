@@ -3,23 +3,35 @@
 // SPDX-License-Identifier: MIT
 
 use core::{
-    cell::{OnceCell, UnsafeCell},
+    cell::UnsafeCell,
     panic, str,
     sync::atomic::{AtomicU32, AtomicU64},
 };
 
 use access::Access;
-use alloc::{boxed::Box, collections::btree_map::BTreeMap, sync::Arc, vec::Vec};
+use alloc::{
+    boxed::Box,
+    collections::{btree_map::BTreeMap, btree_set::BTreeSet},
+    string::String,
+    sync::Arc,
+    vec::Vec,
+};
+use linkflags::LinkFlags;
 use oflags::OFlags;
 use ramfs::RamFS;
-use vfs::{DentCache, DentCacheDir, DentCacheType, VNode, Vfs, VfsFile, VfsOps};
+use vfs::{
+    DentCache, DentCacheDir, DentCacheType, VNode, Vfs, VfsDriver, VfsFile, VfsOps,
+    mflags::{self, MFlags},
+};
 
 use crate::{
     LogLevel,
     bindings::{
         error::{EResult, Errno},
-        mutex::Mutex,
+        filesystem::Media,
+        mutex::{Mutex, SharedMutexGuard},
     },
+    logkf,
     time::Timespec,
 };
 
@@ -246,57 +258,17 @@ pub enum NewFileSpec {
     UnixSocket,
 }
 
-/// Represents some unresolved file path.
-pub trait PathSpec {
-    /// Get the vnode to be relative to and the path buffer to use.
-    fn path_spec(&self) -> EResult<(Arc<VNode>, &[u8])>;
-}
-
-impl PathSpec for &str {
-    fn path_spec(&self) -> EResult<(Arc<VNode>, &[u8])> {
-        Ok((root_vnode()?, self.as_bytes()))
-    }
-}
-
-impl PathSpec for &[u8] {
-    fn path_spec(&self) -> EResult<(Arc<VNode>, &[u8])> {
-        Ok((root_vnode()?, self))
-    }
-}
-
-impl PathSpec for (&dyn File, &str) {
-    fn path_spec(&self) -> EResult<(Arc<VNode>, &[u8])> {
-        Ok((
-            self.0
-                .get_vnode()
-                .map(|f| Ok(f))
-                .unwrap_or_else(root_vnode)?,
-            self.1.as_bytes(),
-        ))
-    }
-}
-
-impl PathSpec for (&dyn File, &[u8]) {
-    fn path_spec(&self) -> EResult<(Arc<VNode>, &[u8])> {
-        Ok((
-            self.0
-                .get_vnode()
-                .map(|f| Ok(f))
-                .unwrap_or_else(root_vnode)?,
-            self.1,
-        ))
-    }
-}
-
-impl PathSpec for (Arc<VNode>, &str) {
-    fn path_spec(&self) -> EResult<(Arc<VNode>, &[u8])> {
-        Ok((self.0.clone(), self.1.as_bytes()))
-    }
-}
-
-impl PathSpec for (Arc<VNode>, &[u8]) {
-    fn path_spec(&self) -> EResult<(Arc<VNode>, &[u8])> {
-        Ok((self.0.clone(), self.1))
+impl NewFileSpec {
+    pub fn node_type(&self) -> NodeType {
+        match self {
+            NewFileSpec::Fifo => NodeType::Fifo,
+            NewFileSpec::CharDev => NodeType::CharDev,
+            NewFileSpec::Directory => NodeType::Directory,
+            NewFileSpec::BlockDev => NodeType::BlockDev,
+            NewFileSpec::Regular => NodeType::Regular,
+            NewFileSpec::Symlink(_) => NodeType::Symlink,
+            NewFileSpec::UnixSocket => NodeType::UnixSocket,
+        }
     }
 }
 
@@ -324,15 +296,28 @@ pub mod oflags {
     pub const EXCLUSIVE:  u32 = 0x0000_0080;
 }
 
+#[rustfmt::skip]
+pub mod linkflags {
+    pub type LinkFlags = u32;
+    /// Follow symlinks for old path on [`super::link`] and [`super::rename`].
+    pub const FOLLOW_LINKS: u32 = 0x0000_0001;
+}
+
 /// The maximum number of symlinks followed.
 pub const LINK_MAX: usize = 32;
+
 /// The currently mounted root filesystem.
 static ROOT_FS: Mutex<Option<Arc<Vfs>>> = unsafe { Mutex::new_static(None) };
+
 /// Table of mounted filesystems.
 static MOUNT_TABLE: Mutex<BTreeMap<Box<[u8]>, Arc<Vfs>>> =
     unsafe { Mutex::new_static(BTreeMap::new()) };
 
-/// Helper function that gets thr root directory handle.
+/// Table of filesystem drivers.
+pub static FSDRIVERS: Mutex<BTreeMap<String, Box<dyn VfsDriver>>> =
+    unsafe { Mutex::new_static(BTreeMap::new()) };
+
+/// Helper function that gets the root directory handle.
 fn root_vnode() -> EResult<Arc<VNode>> {
     if let Some(fs) = &*ROOT_FS.lock_shared() {
         Ok(fs.root())
@@ -342,6 +327,14 @@ fn root_vnode() -> EResult<Arc<VNode>> {
             "Filesystem op run without a filesystem mounted"
         );
         Err(Errno::EAGAIN)
+    }
+}
+
+/// Helper function that gets the VNode for `at` parameters.
+fn at_vnode(at: Option<&dyn File>) -> EResult<Arc<VNode>> {
+    match at {
+        Some(x) => x.get_vnode().ok_or(Errno::ENOTDIR),
+        None => root_vnode(),
     }
 }
 
@@ -507,7 +500,7 @@ fn o_creat_helper(to_create: Arc<DentCache>, exclusive: bool) -> EResult<Arc<VNo
 }
 
 /// Open a file.
-pub fn open(path: &dyn PathSpec, oflags: OFlags) -> EResult<Arc<dyn File>> {
+pub fn open(at: Option<&dyn File>, path: &[u8], oflags: OFlags) -> EResult<Arc<dyn File>> {
     // Validate oflags.
     if oflags & oflags::DIR_ONLY != 0
         && oflags
@@ -532,7 +525,7 @@ pub fn open(path: &dyn PathSpec, oflags: OFlags) -> EResult<Arc<dyn File>> {
     }
 
     // Find target file.
-    let (at, path) = path.path_spec()?;
+    let at = at_vnode(at)?;
     let cache = walk(
         at.dentcache.clone().ok_or(Errno::ENOTDIR)?,
         path,
@@ -580,42 +573,239 @@ pub fn open(path: &dyn PathSpec, oflags: OFlags) -> EResult<Arc<dyn File>> {
 }
 
 /// Create a new name for a file.
-pub fn link(old_path: &dyn PathSpec, new_path: &dyn PathSpec) -> EResult<()> {
-    todo!();
+pub fn link(
+    old_at: Option<&dyn File>,
+    old_path: &[u8],
+    new_at: Option<&dyn File>,
+    new_path: &[u8],
+    flags: LinkFlags,
+) -> EResult<()> {
+    // Find source and destination.
+    let old_at = at_vnode(old_at)?;
+    let new_at = at_vnode(new_at)?;
+    let old = walk(
+        old_at.dentcache.clone().ok_or(Errno::ENOTDIR)?,
+        old_path,
+        flags & linkflags::FOLLOW_LINKS != 0,
+    )?;
+    let new = walk(
+        new_at.dentcache.clone().ok_or(Errno::ENOTDIR)?,
+        new_path,
+        flags & linkflags::FOLLOW_LINKS != 0,
+    )?;
+
+    if old.type_.as_dir().is_some() {
+        return Err(Errno::EISDIR);
+    }
+
+    // Get parent dirent caches.
+    let old_dir_cache = old.parent.clone().ok_or(Errno::EISDIR)?;
+    let new_dir_cache = old.parent.clone().ok_or(Errno::EISDIR)?;
+
+    let old_guard = old_dir_cache.type_.as_dir().unwrap().lock();
+    let new_guard = (!Arc::ptr_eq(&old_dir_cache, &new_dir_cache))
+        .then(|| new_dir_cache.type_.as_dir().unwrap().lock());
+
+    // Perform link operation on VFS.
+    let dir_vnode = new_dir_cache.open_vnode()?;
+    dir_vnode
+        .ops
+        .lock()
+        .link(&new.dirent.name, &*old.open_vnode()?)?;
+
+    // Invalidate dentcache for new.
+    new_guard
+        .unwrap_or(old_guard)
+        .children
+        .remove(&*new.dirent.name);
+
+    Ok(())
 }
 
 /// Remove a file or directory.
 /// Uses POSIX `rmdir` semantics iff `is_rmdir`, otherwise POSIX unlink semantics.
-pub fn unlink(path: &dyn PathSpec, is_rmdir: bool) -> EResult<()> {
-    todo!();
+pub fn unlink(at: Option<&dyn File>, path: &[u8], is_rmdir: bool) -> EResult<()> {
+    // Find target file.
+    let at = at_vnode(at)?;
+    let to_remove = walk(at.dentcache.clone().ok_or(Errno::ENOTDIR)?, path, false)?;
+
+    // Get parent dirent cache.
+    let dir_cache = to_remove.parent.clone().ok_or(
+        // If no parent, this is the root directory of a VFS.
+        if is_rmdir {
+            Errno::ENOTEMPTY
+        } else {
+            Errno::EISDIR
+        },
+    )?;
+    let mut guard = dir_cache.type_.as_dir().unwrap().lock();
+
+    // If the target is a dir, lock it so it cannot be concurrently modified.
+    let _target_guard = to_remove.type_.as_dir().map(Mutex::lock);
+
+    // Unlink the node.
+    let dir_vnode = dir_cache.open_vnode()?;
+    dir_vnode
+        .ops
+        .lock()
+        .unlink(&to_remove.dirent.name, is_rmdir)?;
+
+    // Delete the dirent cache entry.
+    guard.children.remove(&*to_remove.dirent.name);
+
+    Ok(())
 }
 
 /// Create a new file or directory.
-fn make_file(path: &dyn PathSpec, spec: NewFileSpec) -> EResult<Arc<dyn File>> {
-    todo!();
+pub fn make_file(at: Option<&dyn File>, path: &[u8], spec: NewFileSpec) -> EResult<()> {
+    // Find target file.
+    let at = at_vnode(at)?;
+    let to_create = walk(at.dentcache.clone().ok_or(Errno::ENOTDIR)?, path, false)?;
+
+    let dir_cache = to_create.parent.clone().ok_or(Errno::EEXIST)?;
+    let mut guard = dir_cache.type_.as_dir().unwrap().lock();
+
+    // Check whether the file already exists.
+    if let Some(weak) = guard.children.get(&*to_create.dirent.name) {
+        if let Some(arc) = weak.upgrade() {
+            match &arc.type_ {
+                DentCacheType::Negative => (),
+                _ => return Err(Errno::EEXIST),
+            }
+        }
+    }
+
+    // A new file is to be created.
+    let dir_vnode = dir_cache.open_vnode()?;
+    let mut dir_ops = dir_vnode.ops.lock();
+    let type_ = spec.node_type();
+    let new_ops = dir_ops.make_file(&to_create.dirent.name, spec)?;
+    let inode = new_ops.get_inode();
+    let new_vnode = Arc::try_new(VNode {
+        ops: Mutex::new(new_ops),
+        inode,
+        vfs: dir_vnode.vfs.clone(),
+        dentcache: None,
+        flags: AtomicU32::new(0),
+        type_,
+    })?;
+
+    // Successfully created new VNode.
+    dir_vnode
+        .vfs
+        .vnodes
+        .lock()
+        .insert(inode, Arc::downgrade(&new_vnode));
+
+    // TODO: This could be optimized by replacing the cache entry.
+    guard.children.remove(&*to_create.dirent.name);
+
+    Ok(())
 }
 
 /// Rename a file within the same filesystem.
-pub fn rename(old_path: &dyn PathSpec, new_path: &dyn PathSpec) -> EResult<()> {
-    todo!();
+pub fn rename(
+    old_at: Option<&dyn File>,
+    old_path: &[u8],
+    new_at: Option<&dyn File>,
+    new_path: &[u8],
+    flags: LinkFlags,
+) -> EResult<()> {
+    // Find source and destination.
+    let old_at = at_vnode(old_at)?;
+    let new_at = at_vnode(new_at)?;
+    let old = walk(
+        old_at.dentcache.clone().ok_or(Errno::ENOTDIR)?,
+        old_path,
+        flags & linkflags::FOLLOW_LINKS != 0,
+    )?;
+    let new = walk(
+        new_at.dentcache.clone().ok_or(Errno::ENOTDIR)?,
+        new_path,
+        flags & linkflags::FOLLOW_LINKS != 0,
+    )?;
+
+    // Get parent dirent caches.
+    let old_dir_cache = old.parent.clone().ok_or(Errno::EISDIR)?;
+    let new_dir_cache = old.parent.clone().ok_or(Errno::EISDIR)?;
+    let old_dir_vnode = old_dir_cache.open_vnode()?;
+
+    let mut old_guard = old_dir_cache.type_.as_dir().unwrap().lock();
+    let new_guard = if Arc::ptr_eq(&old_dir_cache, &new_dir_cache) {
+        // Rename within directory.
+        old_dir_vnode
+            .ops
+            .lock()
+            .rename(&old.dirent.name, &new.dirent.name)?;
+        None
+    } else {
+        // Rename across directories.
+        let guard = new_dir_cache.type_.as_dir().unwrap().lock();
+        if !Arc::ptr_eq(&old_dir_cache.vfs, &new_dir_cache.vfs) {
+            return Err(Errno::EXDEV);
+        }
+        let new_dir_vnode = new_dir_cache.open_vnode()?;
+        old_dir_cache.vfs.ops.lock_shared().rename(
+            &old_dir_vnode,
+            &old_dir_cache.dirent.name,
+            &new_dir_vnode,
+            &new_dir_cache.dirent.name,
+        )?;
+        Some(guard)
+    };
+
+    // Invalidate cache entries.
+    old_guard.children.remove(&*old.dirent.name).unwrap();
+    new_guard
+        .unwrap_or(old_guard)
+        .children
+        .remove(&*new.dirent.name);
+
+    Ok(())
 }
 
-#[unsafe(no_mangle)]
-unsafe extern "C" fn rust_fs_test() {
-    fs_test();
+/// Get the real path from some canonical path.
+pub fn realpath(at: Option<&dyn File>, path: &[u8], follow_last_symlink: bool) -> EResult<Vec<u8>> {
+    let at = at_vnode(at)?;
+    let cache = walk(
+        at.dentcache.clone().ok_or(Errno::ENOTDIR)?,
+        path,
+        follow_last_symlink,
+    )?;
+    cache.realpath()
 }
 
-pub fn fs_test() {
-    // Hardcoded mount of a RamFS.
-    let ramfs = RamFS::new().unwrap();
-    let root_ops = ramfs.open_root().unwrap();
+/// Detect the filesystem on a medium.
+fn detect<'a>(
+    media: &Media,
+    drivers: &'a BTreeMap<String, Box<dyn VfsDriver>>,
+) -> EResult<&'a str> {
+    todo!()
+}
+
+/// Helper function that prepares a standalone [`Vfs`] to be used by [`mount`].
+fn create_vfs(
+    drivers: &SharedMutexGuard<'_, BTreeMap<String, Box<dyn VfsDriver>>>,
+    mountpoint: Option<Arc<VNode>>,
+    type_: &str,
+    media: Option<&Media>,
+    mflags: MFlags,
+) -> EResult<Arc<Vfs>> {
+    let driver = if let Some(x) = drivers.get(type_) {
+        x
+    } else {
+        logkf!(LogLevel::Error, "No such filesystem driver: {}", type_);
+        return Err(Errno::ENOTSUP);
+    };
+
+    let vfs_ops = driver.mount(media, mflags)?;
+    let root_ops = vfs_ops.open_root()?;
 
     let vfs = Arc::try_new(Vfs {
-        ops: Mutex::new(Box::new(ramfs)),
-        media: None,
+        ops: Mutex::new(vfs_ops),
         vnodes: Mutex::new(BTreeMap::new()),
         root: UnsafeCell::new(None),
-        mountpoint: None,
+        mountpoint,
         flags: AtomicU32::new(0),
     })
     .unwrap();
@@ -643,13 +833,92 @@ pub fn fs_test() {
     });
     unsafe { *vfs.root.as_mut_unchecked() = Some(root) };
 
-    *ROOT_FS.lock() = Some(vfs);
+    Ok(vfs)
+}
+
+/// Mount a new filesystem.
+pub fn mount(
+    at: Option<&dyn File>,
+    path: &[u8],
+    type_: Option<&str>,
+    media: Option<&Media>,
+    mflags: MFlags,
+) -> EResult<()> {
+    // Determine filesystem type.
+    let drivers = FSDRIVERS.lock_shared();
+    let type_ = if let Some(x) = type_ {
+        x
+    } else if let Some(media) = media {
+        detect(media, &drivers)?
+    } else {
+        logkf!(LogLevel::Error, "Neither type nor media specified to mount");
+        return Err(Errno::EINVAL);
+    };
+
+    // Lock mounts table while other mounting logic runs.
+    let mut mounts = MOUNT_TABLE.lock();
+
+    // If the mounts table is empty (there is no root VFS), this must be mounted at `/`.
+    if mounts.len() == 0 {
+        if path != b"/" {
+            logkf!(LogLevel::Error, "/ needs to be mounted first");
+            return Err(Errno::ENOENT);
+        }
+        let vfs = create_vfs(&drivers, None, type_, media, mflags)?;
+        mounts.insert((*b"/").into(), vfs.clone());
+        *ROOT_FS.lock() = Some(vfs);
+        return Ok(());
+    }
+
+    // Get the directory that is requested for the mountpoint.
+    let at = at_vnode(at)?;
+    let cache = walk(at.dentcache.clone().ok_or(Errno::ENOTDIR)?, path, true)?.follow_mounts();
+    // Lock it so no modifications can happen while mounting there.
+    let cache_dir = cache.type_.as_dir().ok_or(Errno::ENOTDIR)?;
+    let mut cache_guard = cache_dir.lock();
+
+    if cache_guard.children.len() != 0 {
+        // Mountpoint must be empty.
+        logkf!(LogLevel::Error, "Mountpoint root isn't empty");
+        return Err(Errno::ENOTEMPTY);
+    } else if cache.is_vfs_root() {
+        // Cannot stack mounts.
+        logkf!(LogLevel::Warning, "Stacked mounts are not supported yet");
+        return Err(Errno::ENOTSUP);
+    }
+
+    // Create and insert VFS.
+    let vfs = create_vfs(&drivers, Some(cache.open_vnode()?), type_, media, mflags)?;
+    mounts.insert(cache.realpath()?.into(), vfs.clone());
+    cache_guard.mounted = Some(vfs);
+
+    Ok(())
+}
+
+#[unsafe(no_mangle)]
+unsafe extern "C" fn rust_fs_test() {
+    fs_test();
+}
+
+pub fn fs_test() {
+    // Mount a RamFS at `/`.
+    mount(None, b"/", Some("ramfs"), None, 0).unwrap();
+
+    // Debug-print mounts table.
+    for mountpoint in MOUNT_TABLE.lock_shared().keys() {
+        logkf(LogLevel::Debug, &unsafe {
+            str::from_utf8_unchecked(&mountpoint)
+        });
+    }
 
     // Try some simple operations on the RamFS.
-    let file = open(&"/a.txt", oflags::CREATE | oflags::READ_WRITE).unwrap();
+    let file = open(None, b"/a.txt", oflags::CREATE | oflags::READ_WRITE).unwrap();
     file.write(b"This data").unwrap();
     file.seek(SeekMode::Set, 0).unwrap();
     let mut buf = [0u8; 9];
     let rlen = file.read(&mut buf).unwrap();
     logkf!(LogLevel::Debug, "Read data: {}: {:?}", rlen, &buf);
+
+    // Link to another name.
+    link(None, b"/a.txt", None, b"/funny.ok.lol", 0).unwrap();
 }

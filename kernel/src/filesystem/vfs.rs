@@ -14,6 +14,7 @@ use alloc::{
     sync::{Arc, Weak},
     vec::Vec,
 };
+use mflags::MFlags;
 
 use super::{Dirent, File, NewFileSpec, NodeType, SeekMode, Stat};
 use crate::{
@@ -258,8 +259,6 @@ pub mod mflags {
 pub struct Vfs {
     /// Instance of the filesystem driver.
     pub(super) ops: Mutex<Box<dyn VfsOps>>,
-    /// Media upon which the VFS is mounted.
-    pub(super) media: Option<Media>,
     /// Dictionary of VNodes that are opened in this VFS.
     pub(super) vnodes: Mutex<BTreeMap<u64, Weak<VNode>>>,
     /// Handle of the root directory.
@@ -357,9 +356,9 @@ pub trait VfsOps: Sync {
     /// See [`VNodeOps::rename`] for renaming within a single directory.
     fn rename(
         &self,
-        src_dir: &mut VNode,
+        src_dir: &VNode,
         src_name: &[u8],
-        dest_dir: &mut VNode,
+        dest_dir: &VNode,
         dest_name: &[u8],
     ) -> EResult<()>;
 }
@@ -369,7 +368,8 @@ pub trait VfsDriver {
     /// Detect the filesystem on some medium.
     fn detect(&self, media: &Media) -> EResult<bool>;
     /// Mount the filesystem on some medium.
-    fn mount(&self, media: &Media) -> EResult<Box<dyn VfsOps>>;
+    /// Expected to log errors if they are caused by invalid parameters.
+    fn mount(&self, media: Option<&Media>, mflags: MFlags) -> EResult<Box<dyn VfsOps>>;
 }
 
 /// Data associated with dirent caches for directories.
@@ -423,6 +423,32 @@ pub(super) struct DentCache {
 }
 
 impl DentCache {
+    /// Get the real path this cache entry represents.
+    pub fn realpath(self: &Arc<Self>) -> EResult<Vec<u8>> {
+        let mut this = self.clone();
+        let mut components = Vec::new();
+
+        while let Some(parent) = this.parent.clone() {
+            components.try_reserve(1)?;
+            components.push(this.clone());
+            this = parent;
+        }
+
+        let mut path = Vec::new();
+        if components.len() == 0 {
+            path.try_reserve(1)?;
+            path.push(b'/');
+        } else {
+            for component in components.iter().rev() {
+                path.try_reserve(component.dirent.name.len() + 1)?;
+                path.push(b'/');
+                path.extend(component.dirent.name.iter());
+            }
+        }
+
+        Ok(path)
+    }
+
     /// Read the symlink target.
     pub fn readlink(&self) -> EResult<&[u8]> {
         if let DentCacheType::Symlink(link) = &self.type_ {
@@ -464,12 +490,16 @@ impl DentCache {
         if component == b"." {
             return Ok(this.clone());
         } else if component == b".." {
+            // Get the parent dir.
+            if let Some(x) = &this.parent {
+                return Ok(x.clone());
+            }
             // Traverse back up to the parent VFS' mountpoint.
             drop(guard);
             while let Some(x) = this.vfs.mountpoint.clone() {
                 this = x.dentcache.clone().unwrap();
             }
-            // Get the parent dir or use this by default.
+            // Try again to get the parent dir on the new VFS.
             if let Some(x) = &this.parent {
                 return Ok(x.clone());
             } else {
@@ -591,6 +621,23 @@ impl DentCache {
             }
         }
         this
+    }
+
+    /// Un-follow mounts; returns the parent VFS dentcache if this is a VFS root.
+    /// Returns self if this is the root directory.
+    pub fn unfollow_mounts(self: &Arc<Self>) -> Arc<Self> {
+        let mut this = self.clone();
+        while self.parent.is_none()
+            && let Some(mountpoint) = self.vfs.mountpoint.clone()
+        {
+            this = mountpoint.dentcache.clone().unwrap();
+        }
+        this
+    }
+
+    /// Whether this is the root of a VFS.
+    pub fn is_vfs_root(&self) -> bool {
+        self.parent.is_none()
     }
 
     /// Get or open the associated VNode.
