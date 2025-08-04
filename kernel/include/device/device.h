@@ -210,6 +210,9 @@ bool      device_test_dtb_compat(device_info_t const *info, size_t compats_len, 
 // Takes ownership of any memory in `info`, regardless of success.
 // Returns a nonzero ID if successful.
 device_t *device_add(device_info_t info);
+// Set the driver for a device explicitly.
+// Returns EEXIST if it already has one.
+errno_t   device_set_driver(device_t *device, driver_t const *driver);
 // Activate a device; search for a driver for the device.
 // If no driver could be found, the device is now eligible to get one in the future.
 // If this function is not called, no driver will ever be added.
@@ -269,3 +272,6 @@ void device_interrupt(device_t *device, irqno_t irq_irqno);
 errno_t driver_add(driver_t const *driver);
 // Remove a driver.
 errno_t driver_remove(driver_t const *driver);
+
+// [implemented in Rust] Create the DevNull and DevZero and add them to the tree.
+void device_create_null_zero();

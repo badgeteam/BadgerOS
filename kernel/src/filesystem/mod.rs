@@ -9,24 +9,19 @@ use core::{
 };
 
 use access::Access;
-use alloc::{
-    boxed::Box,
-    collections::{btree_map::BTreeMap, btree_set::BTreeSet},
-    string::String,
-    sync::Arc,
-    vec::Vec,
-};
+use alloc::{boxed::Box, collections::btree_map::BTreeMap, string::String, sync::Arc, vec::Vec};
+use device::{BlockDevFile, CharDevFile};
 use linkflags::LinkFlags;
 use oflags::OFlags;
-use ramfs::RamFS;
-use vfs::{
-    DentCache, DentCacheDir, DentCacheType, VNode, Vfs, VfsDriver, VfsFile, VfsOps,
-    mflags::{self, MFlags},
-};
+use vfs::{DentCache, DentCacheDir, DentCacheType, VNode, Vfs, VfsDriver, VfsFile, mflags::MFlags};
 
 use crate::{
     LogLevel,
     bindings::{
+        device::{
+            BaseDevice,
+            class::{block::BlockDevice, char::CharDevice},
+        },
         error::{EResult, Errno},
         filesystem::Media,
         mutex::{Mutex, SharedMutexGuard},
@@ -35,6 +30,7 @@ use crate::{
     time::Timespec,
 };
 
+pub mod device;
 pub mod fifo;
 pub mod mount_root;
 pub mod partition;
@@ -155,8 +151,8 @@ impl From<u16> for NodeMode {
 #[derive(Clone, Copy, Default)]
 /// Inode statistics obtained from [`File::stat`].
 pub struct Stat {
-    /// ID of device containing file.
-    pub dev: u32,
+    /// ID and class of device containing file.
+    pub dev: u64,
     /// Inode number.
     pub ino: u64,
     /// File type and mode flags
@@ -168,7 +164,7 @@ pub struct Stat {
     /// Owner group ID.
     pub gid: u16,
     /// ID of device for device special files.
-    pub rdev: u32,
+    pub rdev: u64,
     /// Byte size of this file.
     pub size: u64,
     /// Block size for filesystem I/O.
@@ -221,6 +217,10 @@ pub struct Dirent {
 
 /// Handle to an open file. Dropping it closes the file.
 pub trait File: Sync {
+    /// Get the device that this file represents, if any.
+    fn get_device(&self) -> Option<BaseDevice> {
+        None
+    }
     /// Get the stat info for this file's inode.
     fn stat(&self) -> EResult<Stat>;
     /// Get the position in the file.
@@ -245,11 +245,11 @@ pub enum NewFileSpec {
     /// Named pipe.
     Fifo,
     /// Character device.
-    CharDev, // TODO: Determine appropriate enum payload.
+    CharDev(CharDevice),
     /// Directory.
     Directory,
     /// Block device.
-    BlockDev, // TODO: Determine appropriate enum payload.
+    BlockDev(BlockDevice),
     /// Regular file.
     Regular,
     /// Symbolic link.
@@ -262,9 +262,9 @@ impl NewFileSpec {
     pub fn node_type(&self) -> NodeType {
         match self {
             NewFileSpec::Fifo => NodeType::Fifo,
-            NewFileSpec::CharDev => NodeType::CharDev,
+            NewFileSpec::CharDev(_) => NodeType::CharDev,
             NewFileSpec::Directory => NodeType::Directory,
-            NewFileSpec::BlockDev => NodeType::BlockDev,
+            NewFileSpec::BlockDev(_) => NodeType::BlockDev,
             NewFileSpec::Regular => NodeType::Regular,
             NewFileSpec::Symlink(_) => NodeType::Symlink,
             NewFileSpec::UnixSocket => NodeType::UnixSocket,
@@ -555,8 +555,19 @@ pub fn open(at: Option<&dyn File>, path: &[u8], oflags: OFlags) -> EResult<Arc<d
 
     match vnode.type_ {
         NodeType::Fifo => todo!("FIFO file ops"),
-        NodeType::CharDev => todo!("Character devide file ops"),
-        NodeType::BlockDev => todo!("Block device file ops"),
+        NodeType::CharDev => {
+            // Character device file ops.
+            Ok(Box::<dyn File>::from(Box::try_new(CharDevFile::new(vnode.clone()))?).into())
+        }
+        NodeType::BlockDev => {
+            // Block device file ops.
+            Ok(Box::<dyn File>::from(Box::try_new(BlockDevFile::new(
+                vnode.clone(),
+                oflags & oflags::READ_ONLY != 0,
+                oflags & oflags::WRITE_ONLY != 0,
+            ))?)
+            .into())
+        }
         NodeType::UnixSocket => todo!("UNIX domain socket file ops"),
         _ => {
             // Regular file ops.

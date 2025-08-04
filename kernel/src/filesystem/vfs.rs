@@ -20,6 +20,7 @@ use super::{Dirent, File, NewFileSpec, NodeType, SeekMode, Stat};
 use crate::{
     LogLevel,
     bindings::{
+        device::class::{block::BlockDevice, char::CharDevice},
         error::{EResult, Errno},
         filesystem::Media,
         mutex::Mutex,
@@ -211,6 +212,15 @@ impl Drop for VNode {
 
 /// Abstract vnode operations.
 pub trait VNodeOps {
+    /// Get the associated block device, if any.
+    fn get_blockdev(&self) -> Option<BlockDevice> {
+        None
+    }
+    /// Get the associated character device, if any.
+    fn get_chardev(&self) -> Option<CharDevice> {
+        None
+    }
+
     /// Write data to the file.
     fn write(&self, offset: u64, wdata: &[u8]) -> EResult<()>;
     /// Read data from the file.

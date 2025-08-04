@@ -254,6 +254,14 @@ impl Errno {
         }
     }
     /// Create an `EResult` from some integer.
+    pub fn check_usize(errno: isize) -> EResult<usize> {
+        if errno < 0 {
+            Err(unsafe { core::mem::transmute((-errno) as u32) })
+        } else {
+            Ok(errno as usize)
+        }
+    }
+    /// Create an `EResult` from some integer.
     pub fn check(errno: i32) -> EResult<()> {
         if errno < 0 {
             Err(unsafe { core::mem::transmute(-errno) })
@@ -287,6 +295,13 @@ impl Errno {
         match res {
             Ok(()) => 0,
             Err(x) => -(x as u32 as i32),
+        }
+    }
+    /// Convert an `EResult` into an integer.
+    pub fn extract_usize(res: EResult<usize>) -> isize {
+        match res {
+            Ok(x) => x as isize,
+            Err(x) => -(x as u32 as isize),
         }
     }
 }

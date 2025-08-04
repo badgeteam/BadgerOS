@@ -13,6 +13,7 @@ use alloc::{boxed::Box, collections::btree_map::BTreeMap, sync::Arc, vec::Vec};
 use crate::{
     LogLevel,
     bindings::{
+        device::class::{block::BlockDevice, char::CharDevice},
         error::{EResult, Errno},
         filesystem::Media,
         irq,
@@ -127,12 +128,12 @@ impl VfsOps for Arc<RamFS> {
 enum RamFSData {
     /// Named pipe.
     Fifo,
-    /// TODO: Character device.
-    CharDev,
+    /// Character device.
+    CharDev(CharDevice),
     /// Directory.
     Directory(BTreeMap<Box<[u8]>, Dirent>),
-    /// TODO: Block device.
-    BlockDev,
+    /// Block device.
+    BlockDev(BlockDevice),
     /// Regular file.
     Regular(Vec<u8>),
     /// Symbolic link.
@@ -182,9 +183,9 @@ impl RamFSData {
     fn node_type(&self) -> NodeType {
         match self {
             RamFSData::Fifo => NodeType::Fifo,
-            RamFSData::CharDev => NodeType::CharDev,
+            RamFSData::CharDev(_) => NodeType::CharDev,
             RamFSData::Directory(_) => NodeType::Directory,
-            RamFSData::BlockDev => NodeType::BlockDev,
+            RamFSData::BlockDev(_) => NodeType::BlockDev,
             RamFSData::Regular(_) => NodeType::Regular,
             RamFSData::Symlink(_) => NodeType::Symlink,
             RamFSData::UnixSocket => NodeType::UnixSocket,
@@ -217,6 +218,24 @@ struct RamVNode {
 }
 
 impl VNodeOps for RamVNode {
+    fn get_blockdev(&self) -> Option<BlockDevice> {
+        let inode = unsafe { self.inode.as_ref_unchecked() };
+        if let RamFSData::BlockDev(dev) = &inode.data {
+            Some(dev.clone())
+        } else {
+            None
+        }
+    }
+
+    fn get_chardev(&self) -> Option<CharDevice> {
+        let inode = unsafe { self.inode.as_ref_unchecked() };
+        if let RamFSData::CharDev(dev) = &inode.data {
+            Some(dev.clone())
+        } else {
+            None
+        }
+    }
+
     fn write(&self, offset: u64, wdata: &[u8]) -> EResult<()> {
         let offset: usize = offset.try_into().map_err(|_| Errno::EIO)?;
         let inode = unsafe { self.inode.as_mut_unchecked() };
@@ -362,9 +381,9 @@ impl VNodeOps for RamVNode {
 
         let data = match spec {
             NewFileSpec::Fifo => RamFSData::Fifo,
-            NewFileSpec::CharDev => RamFSData::CharDev,
+            NewFileSpec::CharDev(dev) => RamFSData::CharDev(dev),
             NewFileSpec::Directory => RamFSData::Directory(BTreeMap::new()),
-            NewFileSpec::BlockDev => RamFSData::BlockDev,
+            NewFileSpec::BlockDev(dev) => RamFSData::BlockDev(dev),
             NewFileSpec::Regular => RamFSData::Regular(Vec::new()),
             NewFileSpec::Symlink(items) => RamFSData::Symlink(items.into()),
             NewFileSpec::UnixSocket => RamFSData::UnixSocket,
@@ -469,15 +488,7 @@ impl VNodeOps for RamVNode {
 
     fn get_type(&self) -> NodeType {
         let inode = unsafe { self.inode.as_ref_unchecked() };
-        match &inode.data {
-            RamFSData::Fifo => NodeType::Fifo,
-            RamFSData::CharDev => NodeType::CharDev,
-            RamFSData::Directory(_) => NodeType::Directory,
-            RamFSData::BlockDev => NodeType::BlockDev,
-            RamFSData::Regular(_) => NodeType::Regular,
-            RamFSData::Symlink(_) => NodeType::Symlink,
-            RamFSData::UnixSocket => NodeType::UnixSocket,
-        }
+        inode.data.node_type()
     }
 
     fn sync(&self) -> EResult<()> {

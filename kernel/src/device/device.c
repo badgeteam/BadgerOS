@@ -158,25 +158,25 @@ static errno_t driver_add_succeeded(device_union_t *device) {
 
 // Register a device to a certain driver.
 // Initializes all data used by devices with drivers.
-// Returns `true` if the search for drivers should stop, regardless of whether adding this one was successful.
-static bool device_add_to_driver(device_t *device, driver_t const *driver) {
+// Returns -errno on error, 0 if not a match, 1 if a match (adding succeeded).
+static errno_bool_t device_add_to_driver(device_t *device, driver_t const *driver, bool skip_match) {
     mutex_acquire(&device->driver_mtx, TIMESTAMP_US_MAX);
 
     if (device->state != DEV_STATE_ACTIVE) {
         // Cannot add a driver because the device is inactive.
         mutex_release(&device->driver_mtx);
-        return true;
+        return 1;
     }
 
     if (device->driver) {
         // Device had already received a driver.
         mutex_release(&device->driver_mtx);
-        return true;
+        return 1;
     }
 
     dev_class_t dev_class   = device->dev_class;
     bool        match_class = (dev_class == DEV_CLASS_UNKNOWN || dev_class == driver->dev_class);
-    if (match_class && driver->match(&device->info)) {
+    if (match_class && (skip_match || driver->match(&device->info))) {
         if (dev_class == DEV_CLASS_UNKNOWN) {
             device->dev_class = driver->dev_class;
         }
@@ -204,7 +204,7 @@ static bool device_add_to_driver(device_t *device, driver_t const *driver) {
                 irq_enable();
 
                 mutex_release(&device->driver_mtx);
-                return true;
+                return 1;
             }
 
             device_t *parent = device->info.parent;
@@ -219,7 +219,7 @@ static bool device_add_to_driver(device_t *device, driver_t const *driver) {
                 mutex_release(&device->driver_mtx);
             }
 
-            return true;
+            return 2;
         } else {
             logkf(LOG_ERROR, "driver->add failed: %{cs} (%{cs})", errno_get_name(-res), errno_get_desc(-res));
             if (dev_class == DEV_CLASS_UNKNOWN) {
@@ -229,7 +229,7 @@ static bool device_add_to_driver(device_t *device, driver_t const *driver) {
     }
 
     mutex_release(&device->driver_mtx);
-    return false;
+    return 0;
 }
 
 // Remove a device from its driver.
@@ -262,7 +262,7 @@ static void device_remove_from_driver(device_t *device) {
 // Search for a driver for a device and if found, add it to that driver.
 static void device_try_find_driver(device_t *device) {
     set_foreach(driver_t const, driver, &drivers) {
-        if (device_add_to_driver(device, driver)) {
+        if (device_add_to_driver(device, driver, false) != 0) {
             return;
         }
     }
@@ -349,6 +349,28 @@ err0:
     free(info.addrs);
     mutex_release(&devs_mtx);
     return NULL;
+}
+
+// Set the driver for a device explicitly.
+// Returns EEXIST if it already has one.
+errno_t device_set_driver(device_t *device, driver_t const *driver) {
+    mutex_acquire_shared(&drivers_mtx, TIMESTAMP_US_MAX);
+    assert_always(set_contains(&drivers, driver));
+
+    mutex_acquire(&device->driver_mtx, TIMESTAMP_US_MAX);
+    errno_t res = 0;
+    if (device->state != DEV_STATE_ACTIVE) {
+        logkf(LOG_WARN, "Device %{u32;x} cannot have a driver set because it is not active", device->id);
+        res = -ENOENT;
+    }
+    mutex_release(&device->driver_mtx);
+
+    if (res == 0) {
+        res = device_add_to_driver(device, driver, true);
+    }
+
+    mutex_release_shared(&drivers_mtx);
+    return res;
 }
 
 // Activate a device; search for a driver for the device.
@@ -905,7 +927,7 @@ errno_t driver_add(driver_t const *driver) {
     // Try to match driverless devices against this driver.
     mutex_acquire(&devs_mtx, TIMESTAMP_US_MAX);
     map_foreach(ent, &devs_by_id) {
-        if (device_add_to_driver(ent->value, driver)) {
+        if (device_add_to_driver(ent->value, driver, false) != 0) {
             break;
         }
     }
