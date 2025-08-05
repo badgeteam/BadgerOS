@@ -15,6 +15,16 @@
 #include <stddef.h>
 #include <stdint.h>
 
+typedef struct {
+    long         old_at;
+    char const  *old_path;
+    size_t const old_path_len;
+    long         new_at;
+    char const  *new_path;
+    size_t const new_path_len;
+    uint32_t     flags;
+} syscall_fs_rename_args_t;
+
 #ifdef BADGEROS_KERNEL
 #include "filesystem.h"
 #include "scheduler/scheduler.h"

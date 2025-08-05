@@ -9,7 +9,6 @@
 #include "device/dtb/dtb.h"
 #include "errno.h"
 #include "filesystem.h"
-#include "filesystem/media.h"
 #include "interrupt.h"
 #include "klifetime.h"
 #include "kmodule.h"

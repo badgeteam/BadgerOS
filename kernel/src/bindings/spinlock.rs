@@ -37,10 +37,10 @@ impl<T, const SHARED: bool> Spinlock<T, SHARED> {
     }
     /// Create a new spinlock.
     pub fn new(data: T) -> Self {
-        let inner: spinlock_t = unsafe { MaybeUninit::zeroed().assume_init() };
+        let inner = UnsafeCell::new(SHARED as spinlock_t);
         fence(Ordering::Release);
         Self {
-            inner: UnsafeCell::new(inner),
+            inner,
             data: UnsafeCell::new(data),
         }
     }

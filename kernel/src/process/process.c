@@ -429,6 +429,7 @@ static int proc_fd_cmp_u(void const *a_ptr, void const *b_ptr) {
 
 // Add a file to the process file handle list.
 long proc_add_fd_raw(process_t *process, file_t k_fd) {
+    mutex_acquire(&process->mtx, TIMESTAMP_US_MAX);
     proc_fd_t fd = {.k_fd = k_fd, .u_fd = 0};
     for (size_t i = 0; i < process->fds_len; i++) {
         if (process->fds[i].u_fd == fd.u_fd) {
@@ -438,30 +439,41 @@ long proc_add_fd_raw(process_t *process, file_t k_fd) {
         }
     }
     if (array_len_sorted_insert(&process->fds, sizeof(proc_fd_t), &process->fds_len, &fd, proc_fd_cmp_u)) {
+        mutex_release(&process->mtx);
         return fd.u_fd;
     } else {
+        mutex_release(&process->mtx);
         return -ENOMEM;
     }
 }
 
 // Find a file in the process file handle list.
 file_t proc_find_fd_raw(process_t *process, long u_fd) {
+    mutex_acquire_shared(&process->mtx, TIMESTAMP_US_MAX);
     for (size_t i = 0; i < process->fds_len; i++) {
         if (process->fds[i].u_fd == u_fd) {
-            return process->fds[i].k_fd;
+            file_t k_fd = fs_file_clone(process->fds[i].k_fd);
+            mutex_release_shared(&process->mtx);
+            return k_fd;
         }
     }
-    return -EBADF;
+    mutex_release_shared(&process->mtx);
+    return FILE_NONE;
 }
 
 // Remove a file from the process file handle list.
 errno_t proc_remove_fd_raw(process_t *process, long u_fd) {
+    mutex_acquire(&process->mtx, TIMESTAMP_US_MAX);
     for (size_t i = 0; i < process->fds_len; i++) {
         if (process->fds[i].u_fd == u_fd) {
-            array_len_remove(&process->fds, sizeof(proc_fd_t), &process->fds_len, NULL, i);
+            file_t fd;
+            array_len_remove(&process->fds, sizeof(proc_fd_t), &process->fds_len, &fd, i);
+            fs_file_drop(fd);
+            mutex_release(&process->mtx);
             return 0;
         }
     }
+    mutex_release(&process->mtx);
     return -EBADF;
 }
 
@@ -584,7 +596,7 @@ void proc_delete_runtime_raw(process_t *process) {
 
     // Close pipes and files.
     for (size_t i = 0; i < process->fds_len; i++) {
-        fs_close(process->fds[i].k_fd);
+        fs_file_drop(process->fds[i].k_fd);
     }
     process->fds_len = 0;
     free(process->fds);

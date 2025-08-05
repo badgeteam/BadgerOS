@@ -15,7 +15,6 @@ use crate::{
     bindings::{
         device::class::{block::BlockDevice, char::CharDevice},
         error::{EResult, Errno},
-        filesystem::Media,
         irq,
         mutex::Mutex,
         spinlock::Spinlock,
@@ -25,7 +24,8 @@ use crate::{
 };
 
 use super::{
-    Dirent, FSDRIVERS, NewFileSpec, NodeMode, NodeType, Stat,
+    Dirent, FSDRIVERS, MakeFileSpec, NodeMode, NodeType, Stat,
+    media::Media,
     vfs::{VNode, VNodeOps, VfsDriver, VfsOps, mflags::MFlags},
 };
 
@@ -35,12 +35,15 @@ pub struct RamFS {
     inodes: Mutex<BTreeMap<u64, Arc<UnsafeCell<RamINode>>>>,
     /// Inode number counter.
     ino_ctr: AtomicU64,
+    /// Allows for device files.
+    allow_devfiles: bool,
 }
 unsafe impl Sync for RamFS {}
 
 impl RamFS {
-    pub fn new() -> EResult<Arc<Self>> {
+    pub fn new(allow_devfiles: bool) -> EResult<Arc<Self>> {
         let fs = Box::try_new(RamFS {
+            allow_devfiles,
             inodes: Mutex::new(BTreeMap::new()),
             ino_ctr: AtomicU64::new(2),
         })?;
@@ -371,7 +374,7 @@ impl VNodeOps for RamVNode {
         Ok(())
     }
 
-    fn make_file(&mut self, name: &[u8], spec: NewFileSpec) -> EResult<Box<dyn VNodeOps>> {
+    fn make_file(&mut self, name: &[u8], spec: MakeFileSpec) -> EResult<Box<dyn VNodeOps>> {
         let inode = unsafe { self.inode.as_mut_unchecked() };
         let directory = inode.data.as_directory_mut().ok_or(Errno::EINVAL)?;
 
@@ -379,14 +382,22 @@ impl VNodeOps for RamVNode {
             return Err(Errno::EEXIST);
         }
 
+        if !self.vfs.allow_devfiles {
+            match &spec {
+                MakeFileSpec::CharDev(_) => return Err(Errno::EINVAL),
+                MakeFileSpec::BlockDev(_) => return Err(Errno::EINVAL),
+                _ => (),
+            }
+        }
+
         let data = match spec {
-            NewFileSpec::Fifo => RamFSData::Fifo,
-            NewFileSpec::CharDev(dev) => RamFSData::CharDev(dev),
-            NewFileSpec::Directory => RamFSData::Directory(BTreeMap::new()),
-            NewFileSpec::BlockDev(dev) => RamFSData::BlockDev(dev),
-            NewFileSpec::Regular => RamFSData::Regular(Vec::new()),
-            NewFileSpec::Symlink(items) => RamFSData::Symlink(items.into()),
-            NewFileSpec::UnixSocket => RamFSData::UnixSocket,
+            MakeFileSpec::Fifo => RamFSData::Fifo,
+            MakeFileSpec::CharDev(dev) => RamFSData::CharDev(dev),
+            MakeFileSpec::Directory => RamFSData::Directory(BTreeMap::new()),
+            MakeFileSpec::BlockDev(dev) => RamFSData::BlockDev(dev),
+            MakeFileSpec::Regular => RamFSData::Regular(Vec::new()),
+            MakeFileSpec::Symlink(items) => RamFSData::Symlink(items.into()),
+            MakeFileSpec::UnixSocket => RamFSData::UnixSocket,
         };
         let now = Timespec::now();
         let ino = self.vfs.ino_ctr.fetch_add(1, Ordering::Relaxed);
@@ -497,14 +508,16 @@ impl VNodeOps for RamVNode {
 }
 
 /// The driver struct for [`RamFS`].
-struct RamFSDriver {}
+struct RamFSDriver {
+    allows_devfiles: bool,
+}
 
 impl VfsDriver for RamFSDriver {
-    fn detect(&self, media: &Media) -> EResult<bool> {
+    fn detect(&self, _media: &Media) -> EResult<bool> {
         Ok(false)
     }
 
-    fn mount(&self, media: Option<&Media>, mflags: MFlags) -> EResult<Box<dyn VfsOps>> {
+    fn mount(&self, media: Option<Media>, mflags: MFlags) -> EResult<Box<dyn VfsOps>> {
         if mflags & mflags::READ_ONLY != 0 {
             logkf!(
                 LogLevel::Error,
@@ -516,14 +529,25 @@ impl VfsDriver for RamFSDriver {
             logkf!(LogLevel::Error, "RamFS does not use media");
             return Err(Errno::EINVAL);
         }
-        Ok(Box::<dyn VfsOps>::from(Box::try_new(RamFS::new()?)?))
+        Ok(Box::<dyn VfsOps>::from(Box::try_new(RamFS::new(
+            self.allows_devfiles,
+        )?)?))
     }
 }
 
 fn register_ramfs() {
-    FSDRIVERS
-        .lock()
-        .insert("ramfs".into(), Box::new(RamFSDriver {}));
+    FSDRIVERS.lock().insert(
+        "ramfs".into(),
+        Box::new(RamFSDriver {
+            allows_devfiles: false,
+        }),
+    );
+    FSDRIVERS.lock().insert(
+        "devtmpfs".into(),
+        Box::new(RamFSDriver {
+            allows_devfiles: true,
+        }),
+    );
 }
 
 register_kmodule!(ramfs, [1, 0, 0], register_ramfs);

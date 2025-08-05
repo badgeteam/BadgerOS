@@ -149,9 +149,6 @@ static void kernel_init() {
     }
     set_clear(&kinit_join_threads);
 
-    void rust_fs_test();
-    rust_fs_test();
-
     /*
     // Try to mount the root filesystem.
     errno_t res = fs_mount_root_fs();
@@ -163,11 +160,11 @@ static void kernel_init() {
 
     // Temporary filesystem image.
     errno_t res;
-    res = fs_mount("ramfs", NULL, FILE_NONE, "/", 1, 0);
+    res = fs_mount(FILE_NONE, "/", 1, "ramfs", NULL, 0);
     assert_always(res >= 0);
-    res = fs_mkdir(FILE_NONE, "/dev", 4);
+    res = fs_make_file(FILE_NONE, "/dev", 4, (make_file_spec_t){.type = NODE_TYPE_DIRECTORY});
     assert_always(res >= 0);
-    res = fs_mount("devtmpfs", NULL, FILE_NONE, "/dev", 4, 0);
+    res = fs_mount(FILE_NONE, "/dev", 4, "devtmpfs", NULL, 0);
     assert_always(res >= 0);
     init_ramfs();
 }

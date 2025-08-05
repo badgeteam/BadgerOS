@@ -277,7 +277,7 @@ impl Errno {
         }
     }
     /// Convert an `EResult` into an integer.
-    pub fn extract_u64(res: EResult<u32>) -> i64 {
+    pub fn extract_u64(res: EResult<u64>) -> i64 {
         match res {
             Ok(x) => x as i64,
             Err(x) => -(x as u64 as i64),

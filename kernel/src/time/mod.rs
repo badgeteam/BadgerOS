@@ -4,6 +4,7 @@
 
 use crate::bindings::{self, irq, spinlock::Spinlock};
 
+#[repr(C)]
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
 /// Posix nanoseconds timestamp.
 pub struct Timespec {

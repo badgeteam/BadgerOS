@@ -112,8 +112,10 @@ SYSCALL_DEF(19, SYSCALL_FS_WRITE, syscall_fs_write, long, long fd, void const *w
 // Returns -errno on error, read count on success.
 SYSCALL_DEF(20, SYSCALL_FS_GETDENTS, syscall_fs_getdents, long, long fd, void *read_buf, long read_len)
 
-// // Rename and/or move a file to another path, optionally relative to one or two directories.
-// SYSCALL_DEF_V(21, SYSCALL_FS_RENAME, syscall_fs_rename)
+// Rename and/or move a file to another path, optionally relative to one or two directories.
+// If `*_at` is -1, the respective `*_path` is relative to the working directory.
+// Returns -errno on error, 0 on success.
+SYSCALL_DEF(21, SYSCALL_FS_RENAME, syscall_fs_rename, int, syscall_fs_rename_args_t *args)
 
 // Get file status given file handler or path, optionally following the final symlink.
 // If `path` is specified, it is interpreted as relative to the working directory.
@@ -124,32 +126,32 @@ SYSCALL_DEF(22, SYSCALL_FS_STAT, syscall_fs_stat, int, long fd, char const *path
 
 // Create a new directory.
 // If `at` is -1, `path` is relative to the working directory.
-// Returns -errno on error, file 0 on success.
+// Returns -errno on error, 0 on success.
 SYSCALL_DEF(47, SYSCALL_FS_MKDIR, syscall_fs_mkdir, int, long at, char const *path, size_t path_len)
 
 // Delete a directory if it is empty.
 // If `at` is -1, `path` is relative to the working directory.
-// Returns -errno on error, file 0 on success.
+// Returns -errno on error, 0 on success.
 SYSCALL_DEF(48, SYSCALL_FS_RMDIR, syscall_fs_rmdir, int, long at, char const *path, size_t path_len)
 
 // Create a new link to an existing inode.
 // If `*_at` is -1, the respective `*_path` is relative to the working directory.
-// Returns -errno on error, file 0 on success.
-SYSCALL_DEF(49, SYSCALL_FS_LINK, syscall_fs_link, int, long old_at, char const *old_path, size_t old_path_len, long new_at, char const *new_path, size_t new_path_len)
+// Returns -errno on error, 0 on success.
+SYSCALL_DEF(49, SYSCALL_FS_LINK, syscall_fs_link, int, syscall_fs_rename_args_t *args)
 
 // Remove a link to an inode. If it is the last link, the file is deleted.
 // If `at` is -1, `path` is relative to the working directory.
-// Returns -errno on error, file 0 on success.
+// Returns -errno on error, 0 on success.
 SYSCALL_DEF(50, SYSCALL_FS_UNLINK, syscall_fs_unlink, int, long at, char const *path, size_t path_len)
 
 // Create a new FIFO / named pipe.
 // If `at` is -1, `path` is relative to the working directory.
-// Returns -errno on error, file 0 on success.
+// Returns -errno on error, 0 on success.
 SYSCALL_DEF(51, SYSCALL_FS_MKFIFO, syscall_fs_mkfifo, int, long at, char const *path, size_t path_len)
 
 // Create a new pipe.
 // `fds[0]` will be written with the pointer to the read end, `fds[1]` the write end.
-// Returns -errno on error, file 0 on success.
+// Returns -errno on error, 0 on success.
 SYSCALL_DEF(52, SYSCALL_FS_PIPE, syscall_fs_pipe, int, long fds[2], int flags)
 
 

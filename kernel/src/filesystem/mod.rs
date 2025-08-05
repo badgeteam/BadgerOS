@@ -12,26 +12,34 @@ use access::Access;
 use alloc::{boxed::Box, collections::btree_map::BTreeMap, string::String, sync::Arc, vec::Vec};
 use device::{BlockDevFile, CharDevFile};
 use linkflags::LinkFlags;
+use media::Media;
 use oflags::OFlags;
 use vfs::{DentCache, DentCacheDir, DentCacheType, VNode, Vfs, VfsDriver, VfsFile, mflags::MFlags};
 
 use crate::{
     LogLevel,
     bindings::{
+        self,
         device::{
             BaseDevice,
             class::{block::BlockDevice, char::CharDevice},
         },
         error::{EResult, Errno},
-        filesystem::Media,
         mutex::{Mutex, SharedMutexGuard},
+        raw::{errno_t, file_t},
+    },
+    filesystem::{
+        c_api::ref_as_file,
+        fifo::{Fifo, FifoShared},
     },
     logkf,
     time::Timespec,
 };
 
+pub mod c_api;
 pub mod device;
 pub mod fifo;
+pub mod media;
 pub mod mount_root;
 pub mod partition;
 pub mod ramfs;
@@ -42,11 +50,11 @@ pub mod vfs;
 /// Seek modes to give to [`File::seek`].
 pub enum SeekMode {
     /// Set absolute position.
-    Set,
+    Set = 0,
     /// Set relative to current position.
-    Cur,
+    Cur = 1,
     /// Set relative to end of file.
-    End,
+    End = 2,
 }
 
 #[rustfmt::skip]
@@ -103,9 +111,9 @@ impl NodeMode {
             NodeType::Symlink => mode::S_IFLNK,
             NodeType::UnixSocket => mode::S_IFSOCK,
         };
-        mode + (self.others as u16)
-            + (self.group as u16) * 0o10
-            + (self.owner as u16) * 0o100
+        mode + (self.others as u16) * 0o0001
+            + (self.group as u16) * 0o0010
+            + (self.owner as u16) * 0o0100
             + self.suid as u16 * 0o4000
             + self.sgid as u16 * 0o2000
             + self.sticky as u16 * 0o1000
@@ -241,7 +249,7 @@ pub trait File: Sync {
 
 #[derive(Clone)]
 /// Specifies how a file is to be created.
-pub enum NewFileSpec {
+pub enum MakeFileSpec<'a> {
     /// Named pipe.
     Fifo,
     /// Character device.
@@ -253,21 +261,21 @@ pub enum NewFileSpec {
     /// Regular file.
     Regular,
     /// Symbolic link.
-    Symlink(Vec<u8>),
+    Symlink(&'a [u8]),
     /// UNIX domain socket.
     UnixSocket,
 }
 
-impl NewFileSpec {
+impl MakeFileSpec<'_> {
     pub fn node_type(&self) -> NodeType {
         match self {
-            NewFileSpec::Fifo => NodeType::Fifo,
-            NewFileSpec::CharDev(_) => NodeType::CharDev,
-            NewFileSpec::Directory => NodeType::Directory,
-            NewFileSpec::BlockDev(_) => NodeType::BlockDev,
-            NewFileSpec::Regular => NodeType::Regular,
-            NewFileSpec::Symlink(_) => NodeType::Symlink,
-            NewFileSpec::UnixSocket => NodeType::UnixSocket,
+            MakeFileSpec::Fifo => NodeType::Fifo,
+            MakeFileSpec::CharDev(_) => NodeType::CharDev,
+            MakeFileSpec::Directory => NodeType::Directory,
+            MakeFileSpec::BlockDev(_) => NodeType::BlockDev,
+            MakeFileSpec::Regular => NodeType::Regular,
+            MakeFileSpec::Symlink(_) => NodeType::Symlink,
+            MakeFileSpec::UnixSocket => NodeType::UnixSocket,
         }
     }
 }
@@ -294,6 +302,10 @@ pub mod oflags {
     pub const CREATE:     u32 = 0x0000_0040;
     /// Fail if the file exists already.
     pub const EXCLUSIVE:  u32 = 0x0000_0080;
+    /// Truncate the file on open.
+    pub const TRUNCATE:   u32 = 0x0000_0100;
+    /// Use non-blocking I/O.
+    pub const NONBLOCK:   u32 = 0x0000_0200;
 }
 
 #[rustfmt::skip]
@@ -475,7 +487,7 @@ fn o_creat_helper(to_create: Arc<DentCache>, exclusive: bool) -> EResult<Arc<VNo
     // A new regular file is to be created.
     let dir_vnode = dir_cache.open_vnode()?;
     let mut dir_ops = dir_vnode.ops.lock();
-    let new_ops = dir_ops.make_file(&to_create.dirent.name, NewFileSpec::Regular)?;
+    let new_ops = dir_ops.make_file(&to_create.dirent.name, MakeFileSpec::Regular)?;
     let inode = new_ops.get_inode();
     let new_vnode = Arc::try_new(VNode {
         ops: Mutex::new(new_ops),
@@ -484,6 +496,7 @@ fn o_creat_helper(to_create: Arc<DentCache>, exclusive: bool) -> EResult<Arc<VNo
         dentcache: None,
         flags: AtomicU32::new(0),
         type_: NodeType::Regular,
+        fifo: None,
     })?;
 
     // Successfully created new VNode.
@@ -508,7 +521,8 @@ pub fn open(at: Option<&dyn File>, path: &[u8], oflags: OFlags) -> EResult<Arc<d
                 | oflags::EXCLUSIVE
                 | oflags::FILE_ONLY
                 | oflags::WRITE_ONLY
-                | oflags::APPEND)
+                | oflags::APPEND
+                | oflags::TRUNCATE)
             != 0
     {
         // A flag incompatible with DIR_ONLY was passed.
@@ -554,7 +568,17 @@ pub fn open(at: Option<&dyn File>, path: &[u8], oflags: OFlags) -> EResult<Arc<d
     };
 
     match vnode.type_ {
-        NodeType::Fifo => todo!("FIFO file ops"),
+        NodeType::Fifo => {
+            // FIFO file ops.
+            Ok(Box::<dyn File>::from(Box::try_new(Fifo {
+                vnode: Some(vnode.clone()),
+                is_nonblock: oflags & oflags::NONBLOCK != 0,
+                allow_read: oflags & oflags::READ_ONLY != 0,
+                allow_write: oflags & oflags::WRITE_ONLY != 0,
+                shared: vnode.fifo.clone().unwrap(),
+            })?)
+            .into())
+        }
         NodeType::CharDev => {
             // Character device file ops.
             Ok(Box::<dyn File>::from(Box::try_new(CharDevFile::new(vnode.clone()))?).into())
@@ -668,7 +692,7 @@ pub fn unlink(at: Option<&dyn File>, path: &[u8], is_rmdir: bool) -> EResult<()>
 }
 
 /// Create a new file or directory.
-pub fn make_file(at: Option<&dyn File>, path: &[u8], spec: NewFileSpec) -> EResult<()> {
+pub fn make_file(at: Option<&dyn File>, path: &[u8], spec: MakeFileSpec) -> EResult<()> {
     // Find target file.
     let at = at_vnode(at)?;
     let to_create = walk(at.dentcache.clone().ok_or(Errno::ENOTDIR)?, path, false)?;
@@ -692,6 +716,7 @@ pub fn make_file(at: Option<&dyn File>, path: &[u8], spec: NewFileSpec) -> EResu
     let type_ = spec.node_type();
     let new_ops = dir_ops.make_file(&to_create.dirent.name, spec)?;
     let inode = new_ops.get_inode();
+    let fifo = (type_ == NodeType::Fifo).then(|| FifoShared::new());
     let new_vnode = Arc::try_new(VNode {
         ops: Mutex::new(new_ops),
         inode,
@@ -699,6 +724,7 @@ pub fn make_file(at: Option<&dyn File>, path: &[u8], spec: NewFileSpec) -> EResu
         dentcache: None,
         flags: AtomicU32::new(0),
         type_,
+        fifo,
     })?;
 
     // Successfully created new VNode.
@@ -799,7 +825,7 @@ fn create_vfs(
     drivers: &SharedMutexGuard<'_, BTreeMap<String, Box<dyn VfsDriver>>>,
     mountpoint: Option<Arc<VNode>>,
     type_: &str,
-    media: Option<&Media>,
+    media: Option<Media>,
     mflags: MFlags,
 ) -> EResult<Arc<Vfs>> {
     let driver = if let Some(x) = drivers.get(type_) {
@@ -841,6 +867,7 @@ fn create_vfs(
         dentcache: Some(Arc::new(dentcache)),
         flags: AtomicU32::new(0),
         type_: NodeType::Directory,
+        fifo: None,
     });
     unsafe { *vfs.root.as_mut_unchecked() = Some(root) };
 
@@ -852,14 +879,14 @@ pub fn mount(
     at: Option<&dyn File>,
     path: &[u8],
     type_: Option<&str>,
-    media: Option<&Media>,
+    media: Option<Media>,
     mflags: MFlags,
 ) -> EResult<()> {
     // Determine filesystem type.
     let drivers = FSDRIVERS.lock_shared();
     let type_ = if let Some(x) = type_ {
         x
-    } else if let Some(media) = media {
+    } else if let Some(media) = &media {
         detect(media, &drivers)?
     } else {
         logkf!(LogLevel::Error, "Neither type nor media specified to mount");
@@ -882,6 +909,7 @@ pub fn mount(
     }
 
     // Get the directory that is requested for the mountpoint.
+    let orig_at = at;
     let at = at_vnode(at)?;
     let cache = walk(at.dentcache.clone().ok_or(Errno::ENOTDIR)?, path, true)?.follow_mounts();
     // Lock it so no modifications can happen while mounting there.
@@ -903,33 +931,43 @@ pub fn mount(
     mounts.insert(cache.realpath()?.into(), vfs.clone());
     cache_guard.mounted = Some(vfs);
 
+    drop(cache_guard);
+    drop(mounts);
+    drop(drivers);
+
+    // Notify device subsystem.
+    unsafe extern "C" {
+        fn device_devtmpfs_mounted(devtmpfs_root: file_t) -> errno_t;
+    }
+    if let EResult::Err(x) = try {
+        let vfs_root_dir = open(orig_at, path, oflags::DIR_ONLY | oflags::READ_ONLY)?;
+        Errno::check(unsafe { device_devtmpfs_mounted(ref_as_file(&*vfs_root_dir)) })?;
+    } {
+        logkf!(LogLevel::Warning, "Failed to populate devtmpfs: {}", x);
+    }
+
     Ok(())
 }
 
-#[unsafe(no_mangle)]
-unsafe extern "C" fn rust_fs_test() {
-    fs_test();
-}
-
-pub fn fs_test() {
-    // Mount a RamFS at `/`.
-    mount(None, b"/", Some("ramfs"), None, 0).unwrap();
-
-    // Debug-print mounts table.
-    for mountpoint in MOUNT_TABLE.lock_shared().keys() {
-        logkf(LogLevel::Debug, &unsafe {
-            str::from_utf8_unchecked(&mountpoint)
-        });
-    }
-
-    // Try some simple operations on the RamFS.
-    let file = open(None, b"/a.txt", oflags::CREATE | oflags::READ_WRITE).unwrap();
-    file.write(b"This data").unwrap();
-    file.seek(SeekMode::Set, 0).unwrap();
-    let mut buf = [0u8; 9];
-    let rlen = file.read(&mut buf).unwrap();
-    logkf!(LogLevel::Debug, "Read data: {}: {:?}", rlen, &buf);
-
-    // Link to another name.
-    link(None, b"/a.txt", None, b"/funny.ok.lol", 0).unwrap();
+/// Create an unnamed pipe.
+/// The end written to is 0, the end read from is 1.
+pub fn pipe(oflags: OFlags) -> EResult<(Arc<dyn File>, Arc<dyn File>)> {
+    // TODO: OOM handling.
+    let shared = FifoShared::new();
+    shared.open(true, true, true);
+    let write_end = Arc::new(Fifo {
+        vnode: None,
+        is_nonblock: (oflags & oflags::NONBLOCK) != 0,
+        allow_read: false,
+        allow_write: true,
+        shared: shared.clone(),
+    });
+    let read_end = Arc::new(Fifo {
+        vnode: None,
+        is_nonblock: (oflags & oflags::NONBLOCK) != 0,
+        allow_read: true,
+        allow_write: false,
+        shared,
+    });
+    Ok((write_end, read_end))
 }

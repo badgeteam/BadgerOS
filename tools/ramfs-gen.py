@@ -39,12 +39,12 @@ def add_rom(path, virtpath, name):
     for byte in data:
         roms += "0x{:02x},".format(byte)
     roms += "\n};\n"
-    roms += "fileoff_t const {}_len = {};\n".format(name, len(data))
-    files += "    fd = fs_open(FILE_NONE, \"{}\", {}, OFLAGS_CREATE | OFLAGS_WRITEONLY);\n".format(escape(virtpath), len(virtpath))
-    files += "    assert_always(fd >= 0);\n"
+    roms += "size_t const {}_len = {};\n".format(name, len(data))
+    files += "    fd = fs_open(FILE_NONE, \"{}\", {}, FS_O_CREATE | FS_O_WRITE_ONLY).file;\n".format(escape(virtpath), len(virtpath))
+    files += "    assert_always(fd.metadata);\n"
     files += "    len = fs_write(fd, {}, {}_len);\n".format(name, name)
     files += "    assert_always(len == {}_len);\n".format(name)
-    files += "    assert_dev_keep(fs_close(fd) >= 0);\n"
+    files += "    fs_file_drop(fd);\n"
     infd.close()
 
 
@@ -52,7 +52,7 @@ def add_dir(path, virtpath):
     global dirs, file_count
     for filename in os.listdir(path):
         if os.path.isdir(path + "/" + filename):
-            dirs += "    assert_dev_keep(fs_mkdir(FILE_NONE, \"{}\", {}) >= 0);\n".format(escape(virtpath + "/" + filename), len(virtpath) + 1 + len(filename))
+            dirs += "    assert_dev_keep(fs_make_file(FILE_NONE, \"{}\", {}, (make_file_spec_t){{.type = NODE_TYPE_DIRECTORY}}) >= 0);\n".format(escape(virtpath + "/" + filename), len(virtpath) + 1 + len(filename))
             add_dir(path + "/" + filename, virtpath + "/" + filename)
         else:
             add_rom(path + "/" + filename, virtpath + "/" + filename, "filerom_{}".format(file_count))
@@ -63,7 +63,7 @@ add_dir(sys.argv[1], "")
 outfd.write(roms)
 outfd.write("void {}() {{\n".format(sys.argv[3]))
 outfd.write("    file_t fd;\n")
-outfd.write("    fileoff_t len;\n")
+outfd.write("    errno64_t len;\n")
 outfd.write(dirs)
 outfd.write(files)
 outfd.write("    (void)len;\n")

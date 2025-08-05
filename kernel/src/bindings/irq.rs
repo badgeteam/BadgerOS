@@ -40,3 +40,22 @@ pub unsafe fn disable() -> bool {
 pub unsafe fn enable() {
     unsafe { enable_if(true) }
 }
+
+/// Guard that disable interrupts momentarily.
+pub struct IrqGuard {
+    was_enabled: bool,
+}
+
+impl IrqGuard {
+    pub unsafe fn new() -> Self {
+        IrqGuard {
+            was_enabled: unsafe { disable() },
+        }
+    }
+}
+
+impl Drop for IrqGuard {
+    fn drop(&mut self) {
+        unsafe { enable_if(self.was_enabled) };
+    }
+}

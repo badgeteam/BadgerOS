@@ -1,262 +1,253 @@
-
+// SPDX-FileCopyrightText: 2025 Julian Scheffers <julian@scheffers.net>
+// SPDX-FileType: SOURCE
 // SPDX-License-Identifier: MIT
+
+// This subsystem is implemented in Rust.
 
 #pragma once
 
 #include "errno.h"
+#include "time.h"
+
+#include <stddef.h>
 
 
 
-// Maximum number of mountable filesystems.
-#define FILESYSTEM_MOUNT_MAX   8
-// Maximum supported filename length.
-#define FILESYSTEM_NAME_MAX    255
-// Maximum supported path length.
-#define FILESYSTEM_PATH_MAX    511
-// Maximum supported symlink nesting.
-#define FILESYSTEM_SYMLINK_MAX 8
-// Maximum supported directory entries.
-#define FILESYSTEM_DIRENT_MAX  64
-
-// Mount as read-only filesystem (default: read-write).
-#define MOUNTFLAGS_READONLY 0x00000001
-// Filesystem mounting flags.
-typedef uint32_t mountflags_t;
-
-// Open for read-only.
-#define OFLAGS_READONLY  0x00000001
-// Open for write-only.
-#define OFLAGS_WRITEONLY 0x00000002
-// Open for read and write.
-#define OFLAGS_READWRITE 0x00000003
-// Seek to the end on opening.
-#define OFLAGS_APPEND    0x00000004
-// Truncate on opening.
-#define OFLAGS_TRUNCATE  0x00000008
-// Create if it doesn't exist on opening.
-#define OFLAGS_CREATE    0x00000010
-// Error if it exists on opening.
-#define OFLAGS_EXCLUSIVE 0x00000020
-// Do not inherit to child process.
-#define OFLAGS_CLOEXEC   0x00000040
-// Open a directory instead of a file.
-#define OFLAGS_DIRECTORY 0x00000080
-// Do not block on sockets, FIFOs, TTYs, etc.
-#define OFLAGS_NONBLOCK  0x00000100
-
-// Bitmask of filesystem open flags that only the kernel may apply.
-#define KOFLAGS_MASK    0xffff0000
-// Kernel-only flag: Open for execution.
-#define KOFLAGS_EXECUTE 0x00010000
-
-// Bitmask of all flags valid for use with the `fs_pipe` function.
-#define VALID_OFLAGS_PIPE OFLAGS_NONBLOCK
-// Bitmask of all opening flags valid without the use of `OFLAGS_DIRECTORY` and without the use of `OFLAGS_EXCLUSIVE`.
-#define VALID_OFLAGS_FILE                                                                                              \
-    (OFLAGS_READWRITE | OFLAGS_APPEND | OFLAGS_TRUNCATE | OFLAGS_CREATE | OFLAGS_EXCLUSIVE | OFLAGS_CLOEXEC |          \
-     OFLAGS_NONBLOCK | KOFLAGS_EXECUTE)
-// Bitmask of all opening flags valid in conjunction with `OFLAGS_DIRECTORY`.
-#define VALID_OFLAGS_DIRECTORY (OFLAGS_DIRECTORY | OFLAGS_CREATE | OFLAGS_EXCLUSIVE | OFLAGS_READONLY | OFLAGS_CLOEXEC)
-
-// File opening mode flags.
-typedef uint32_t oflags_t;
-
-// Value used for absent inodes.
-#define INODE_NONE ((inode_t)0)
-// Type used for inode numbers.
-typedef int64_t inode_t;
-
-// Value used for absent file / directory handle.
-#define FILE_NONE ((file_t) - 1)
-// Type used for file / directory handles in the kernel.
-typedef int     file_t;
-// Type used for file offsets.
-typedef int64_t fileoff_t;
-// Type used for file modes.
-typedef int     mode_t;
-
-
-
-// Modes for VFS seek.
+// Seek mode for `file_seek`.
 typedef enum {
-    // Seek from start of file.
-    SEEK_ABS = -1,
-    // Seek from current position.
-    SEEK_CUR = 0,
-    // Seek from end of file.
-    SEEK_END = 1,
-} fs_seek_t;
+    SEEK_SET,
+    SEEK_CUR,
+    SEEK_END,
+} seek_mode_t;
 
-// EXT2/3/4, unix file types.
+// Types of a file node.
 typedef enum {
-    // Unix socket
-    FILETYPE_SOCK = 12,
-    // Symbolic link
-    FILETYPE_LINK = 10,
-    // Regular file
-    FILETYPE_FILE = 8,
-    // Block device
-    FILETYPE_BLK  = 6,
-    // Directory
-    FILETYPE_DIR  = 4,
-    // Character device
-    FILETYPE_CHR  = 2,
-    // FIFO
-    FILETYPE_FIFO = 1,
-} filetype_t;
+    // Unknown file type (not valid for make_file_spec_t).
+    NODE_TYPE_UNKNOWN,
+    // Named pipe.
+    NODE_TYPE_FIFO,
+    // Character device.
+    NODE_TYPE_CHAR_DEV,
+    // Directory.
+    NODE_TYPE_DIRECTORY,
+    // Block device.
+    NODE_TYPE_BLOCK_DEV,
+    // Regular file.
+    NODE_TYPE_REGULAR,
+    // Symbolic link.
+    NODE_TYPE_SYMLINK,
+    // UNIX domain socket.
+    NODE_TYPE_UNIX_SOCKET,
+} node_type_t;
 
-
-
-// Directory entry as read from a directory handle.
-// The `record_len` field indicates the total size of the `dirent_t` and is therefor the offset to the next `dirent_t`.
-// If `record_len < sizeof(dirent_t)`, `name` is smaller.
-// This means that `record_len >= sizeof(dirent_t) - FILESYSTEM_NAME_MAX + 1`.
+// Opaque file handle; represents an `Arc<dyn File>`.
 typedef struct {
-    // Length of the file entry record.
-    fileoff_t record_len;
-    // Inode number; gauranteed to be unique per physical file per filesystem.
-    inode_t   inode;
-    // Node is a directory.
-    bool      is_dir;
-    // Node is a symbolic link.
-    bool      is_symlink;
-    // Length of the filename.
-    fileoff_t name_len;
-    // Filename; NULL-terminated despite allowing NULL bytes.
-    char      name[FILESYSTEM_NAME_MAX + 1];
-} dirent_t;
+    void       *data;
+    void const *metadata;
+} file_t;
 
-// List of dirents as created by `fs_dir_read`.
+// A result of either an errno or a file_t.
 typedef struct {
-    // Pointer to packed array of `dirent_t`, each aligned to 8 bytes.
-    // Dirent names are null-terminated.
-    // Dirents are shortened at the name to conserve memory.
-    void  *mem;
-    // Byte size of `mem`.
-    size_t size;
-    // Number of dirents in the list.
-    size_t ent_count;
-} dirent_list_t;
+    errno_t errno;
+    file_t  file;
+} errno_file_t;
 
-// Indicates that a function returns either a `dirent_list_t` or an -errno.
+// Specifies how a file is to be created.
 typedef struct {
-    int           errno;
-    dirent_list_t list;
-} errno_dirent_list_t;
+    // The type of file to create.
+    node_type_t type;
+    union {
+        // ID of the character device to attach.
+        uint32_t char_dev;
+        // ID of the block device to attach.
+        uint32_t block_dev;
+        // The symlink target.
+        struct {
+            // The path to the target of the symlink.
+            char const *target;
+            // The length of the target path.
+            size_t      target_len;
+        } symlink;
+    };
+} make_file_spec_t;
 
-// File or directory status.
-typedef struct stat {
-    // ID of device containing file.
-    uint32_t  device;
+// Filesystem media types.
+typedef enum {
+    // Block device as media.
+    FS_MEDIA_BLKDEV,
+    // Linear area of RAM as media.
+    FS_MEDIA_RAM,
+    // Loopback file as media,
+    // FS_MEDIA_FILE,
+} fs_media_type_t;
+
+// Filesystem media descriptor.
+typedef struct {
+    // Media type.
+    fs_media_type_t type;
+    // Partition offset added automatically.
+    uint64_t        part_offset;
+    // Partition length.
+    uint64_t        part_length;
+    union {
+        // Block device ID.
+        uint32_t blkdev;
+        // RAM area.
+        uint8_t *ram;
+        // TODO: Loopback file support.
+    };
+} fs_media_t;
+
+// Inode statistics from `file_stat`.
+typedef struct {
+    // ID and class of device containing file.
+    uint64_t   dev;
     // Inode number.
-    inode_t   inode;
-    // File type and protection.
-    mode_t    mode;
+    uint64_t   ino;
+    // File type and mode flags
+    uint16_t   mode;
     // Number of hard links.
-    size_t    links;
+    uint16_t   nlink;
     // Owner user ID.
-    // TODO: User ID type?
-    int       uid;
+    uint16_t   uid;
     // Owner group ID.
-    // TODO: Group ID type?
-    int       gid;
-    // File size in bytes.
-    fileoff_t size;
+    uint16_t   gid;
+    // ID of device for device special files.
+    uint64_t   rdev;
+    // Byte size of this file.
+    uint64_t   size;
+    // Block size for filesystem I/O.
+    uint64_t   blksize;
+    // Number of 512 byte blocks allocated (represents actual used disk space).
+    uint64_t   blocks;
+    // Time of last access. On BadgerOS, only updated when modified or created.
+    timespec_t atim;
+    // Time of last modification.
+    timespec_t mtim;
+    // Time of last status change.
+    timespec_t ctim;
 } stat_t;
 
 // Return value of `fs_pipe`.
 typedef struct {
-    int    errno;
-    file_t reader;
-    file_t writer;
+    errno_t errno;
+    file_t  write_end, read_end;
 } fs_pipe_t;
 
-typedef struct fs_media fs_media_t;
+
+
+// Returns the errno on error or passes through the value on success.
+#define RETURN_ON_ERRNO_FILE(expr, ...)                                                                                \
+    ({                                                                                                                 \
+        errno_file_t tmp = (expr);                                                                                     \
+        if (tmp.errno < 0) {                                                                                           \
+            __VA_ARGS__;                                                                                               \
+            return tmp.errno;                                                                                          \
+        }                                                                                                              \
+        tmp.file;                                                                                                      \
+    })
+
+// Represents absence of a file.
+#define FILE_NONE ((file_t){NULL, NULL})
+
+// Allows for reading the file.
+#define FS_O_READ_ONLY  0x00000001
+// Allows for writing the file.
+#define FS_O_WRITE_ONLY 0x00000002
+// Allows for both reading and writing.
+#define FS_O_READ_WRITE 0x00000003
+// Makes writing work in append mode.
+#define FS_O_APPEND     0x00000004
+// Fail if the target is a directory.
+#define FS_O_FILE_ONLY  0x00000008
+// Fail if the target is not a directory.
+#define FS_O_DIR_ONLY   0x00000010
+// Do not follow the last symlink.
+#define FS_O_NOFOLLOW   0x00000020
+// Create the file if it does not exist.
+#define FS_O_CREATE     0x00000040
+// Fail if the file exists already.
+#define FS_O_EXCLUSIVE  0x00000080
+// Truncate the file on open.
+#define FS_O_TRUNCATE   0x00000100
+
+// Filesystem is read-only.
+#define FS_M_READ_ONLY 0x00000001
+
+// Maximum path length.
+#define PATH_MAX 512
 
 
 
-// Mount the root filesystem according to kernel parameters.
-errno_t fs_mount_root_fs();
+// Mount a filesystem.
+errno_t
+    fs_mount(file_t at, char const *path, size_t path_len, char const *type, fs_media_t *media, uint32_t mountflags);
 
-// Try to mount a filesystem.
-// Some filesystems (like RAMFS) do not use a block device, for which `media` must be NULL.
-// If `media` is not NULL, this takes ownership of it.
-// Filesystems which do use a block device can often be automatically detected.
-errno_t fs_mount(char const *type, fs_media_t *media, file_t at, char const *path, size_t path_len, mountflags_t flags);
-// Try to unmount a filesystem.
-// May fail if there any any files open on the target filesystem.
-errno_t fs_umount(file_t at, char const *path, size_t path_len);
-// Try to identify the filesystem stored in the block device
-// Returns `NULL` on error or if the filesystem is unknown.
-errno_ptr_t fs_detect(fs_media_t *media);
 
-// Get the real path of a filename.
-// Returns a heap-allocated string on success.
-errno_ptr_t fs_realpath(file_t at, char const *path, size_t path_len);
 
-// Get file status given file handler or path, optionally following the final symlink.
-// If both `fd` and `path` are specified, `fd` is a directory handle to which `path` is relative.
-// Otherwise, either `fd` or `path` is used to get the stat info.
-// If `follow_link` is false, the last symlink in the path is not followed.
-errno_t fs_stat(file_t fd, char const *path, size_t path_len, bool follow_link, stat_t *stat_out);
+// Open a file.
+errno_file_t fs_open(file_t at, char const *path, size_t path_len, uint32_t oflags);
 
-// Create a new directory relative to a dir handle.
-// If `at` is `FILE_NONE`, it is relative to the root dir.
-errno_t fs_mkdir(file_t at, char const *path, size_t path_len);
-// Open a directory for reading relative to a dir handle.
-// If `at` is `FILE_NONE`, it is relative to the root dir.
-file_t  fs_dir_open(file_t at, char const *path, size_t path_len, oflags_t oflags);
-// Remove a directory, which must be empty, relative to a dir handle.
-// If `at` is `FILE_NONE`, it is relative to the root dir.
-errno_t fs_rmdir(file_t at, char const *path, size_t path_len);
+// Drop a share from a file descriptor.
+void fs_file_drop(file_t file);
 
-// Close a directory opened by `fs_dir_open`.
-// Only raises an error if `dir` is an invalid directory descriptor.
-errno_t             fs_dir_close(file_t dir);
-// Read all entries from a directory.
-errno_dirent_list_t fs_dir_read(file_t dir);
+// Create another share for a file descriptor.
+file_t fs_file_clone(file_t file);
 
-// Unlink a file from the given directory relative to a dir handle.
-// If `at` is `FILE_NONE`, it is relative to the root dir.
-// If this is the last reference to an inode, the inode is deleted.
-// Fails if this is a directory.
-errno_t fs_unlink(file_t at, char const *path, size_t path_len);
-// Create a new hard link from one path to another relative to their respective dirs.
-// If `*_at` is `FILE_NONE`, it is relative to the root dir.
-// Fails if `old_path` names a directory.
+// Create a new name for a tile.
 errno_t fs_link(
-    file_t old_at, char const *old_path, size_t old_path_len, file_t new_at, char const *new_path, size_t new_path_len
+    file_t      old_at,
+    char const *old_path,
+    size_t      old_path_len,
+    file_t      new_at,
+    char const *new_path,
+    size_t      new_path_len,
+    uint32_t    append
 );
-// Create a new symbolic link from one path to another, the latter relative to a dir handle.
-// The `old_path` specifies a path that is relative to the symlink's location.
-// If `new_at` is `FILE_NONE`, it is relative to the root dir.
-errno_t fs_symlink(
-    char const *target_path, size_t target_path_len, file_t link_at, char const *link_path, size_t link_path_len
+
+// Remove a file or directory.
+// Uses POSIX `rmdir` semantics iff `is_rmdir`, otherwise POSIX unlink semantics.
+errno_t fs_unlink(file_t at, char const *path, size_t path_len, int is_rmdir);
+
+// Create a new file or directory.
+// The spec parameter should be defined as needed for NewFileSpec.
+errno_t fs_make_file(file_t at, char const *path, size_t path_len, make_file_spec_t spec);
+
+// Rename a file within the same filesystem.
+errno_t fs_rename(
+    file_t      old_at,
+    char const *old_path,
+    size_t      old_path_len,
+    file_t      new_at,
+    char const *new_path,
+    size_t      new_path_len,
+    uint32_t    flags
 );
-// Create a new named FIFO at a path relative to a dir handle.
-// If `at` is `FILE_NONE`, it is relative to the root dir.
-errno_t fs_mkfifo(file_t at, char const *path, size_t path_len);
 
-// Create a new pipe with one read and one write end.
-fs_pipe_t fs_pipe(int flags);
-// Open a file for reading and/or writing relative to a dir handle.
-// If `at` is `FILE_NONE`, it is relative to the root dir.
-file_t    fs_open(file_t at, char const *path, size_t path_len, oflags_t oflags);
-// Close a file opened by `fs_open`.
-// Only raises an error if `file` is an invalid file descriptor or an I/O error occurs.
-errno_t   fs_close(file_t file);
-// Read bytes from a file.
-// Returns the amount of data successfully read.
-fileoff_t fs_read(file_t file, void *readbuf, fileoff_t readlen);
-// Write bytes to a file.
-// Returns the amount of data successfully written.
-fileoff_t fs_write(file_t file, void const *writebuf, fileoff_t writelen);
-// Get the current offset in the file.
-fileoff_t fs_tell(file_t file);
-// Set the current offset in the file.
-// Returns the new offset in the file.
-fileoff_t fs_seek(file_t file, fileoff_t off, fs_seek_t seekmode);
+// Get the real path from some canonical path.
+// The result is written to out_path, which must have at least out_path_len bytes.
+errno_t fs_realpath(
+    file_t at, char const *path, size_t path_len, int follow_last_symlink, char **out_path, size_t *out_path_len
+);
 
-// Force any write caches to be flushed for a given file.
-// If the file is `FILE_NONE`, all open files are flushed.
-errno_t fs_flush(file_t file);
+// Create an unnamed pipe.
+fs_pipe_t fs_pipe(uint32_t oflags);
+
+
+
+// Get the device that this file represents, if any.
+bool         fs_get_device(file_t file, uint32_t *id_out);
+// Get the stat info for this file's inode.
+errno_t      fs_stat(file_t file, stat_t *stat_out);
+// Get the position in the file.
+errno64_t    fs_tell(file_t file);
+// Change the position in the file.
+errno64_t    fs_seek(file_t file, seek_mode_t mode, int64_t offset);
+// Write bytes to this file.
+errno_size_t fs_write(file_t file, void const *wdata, size_t wdata_len);
+// Read bytes from this file.
+errno_size_t fs_read(file_t file, void *rdata, size_t rdata_len);
+// Resize the file to a new length.
+errno_t      fs_resize(file_t file, uint64_t new_size);
+// Sync the underlying caches to disk.
+errno_t      fs_sync(file_t file);

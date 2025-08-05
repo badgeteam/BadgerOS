@@ -16,7 +16,7 @@ void print(char const *cstr) {
     syscall_temp_write(cstr, strlen(cstr));
 }
 
-void putd(uint64_t value, int decimals) {
+void putu(uint64_t value, int decimals) {
     char tmp[20];
 
     int i;
@@ -35,6 +35,15 @@ void putd(uint64_t value, int decimals) {
     }
 
     syscall_temp_write(tmp + 20 - decimals, decimals);
+}
+
+void putd(int64_t value, int decimals) {
+    if (value < 0) {
+        syscall_temp_write("-", 1);
+        putu(-value, decimals);
+    } else {
+        putu(value, decimals);
+    }
 }
 
 char const hextab[] = "0123456789ABCDEF";

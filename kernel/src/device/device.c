@@ -966,7 +966,7 @@ errno_t driver_remove(driver_t const *driver) {
 
 
 // Helper function to printf into a file.
-__attribute__((format(printf, 2, 3))) static fileoff_t printf_to_file(file_t fd, char const *fmt, ...) {
+__attribute__((format(printf, 2, 3))) static errno64_t printf_to_file(file_t fd, char const *fmt, ...) {
     char    buf[64];
     va_list l;
     va_start(l, fmt);
@@ -976,7 +976,7 @@ __attribute__((format(printf, 2, 3))) static fileoff_t printf_to_file(file_t fd,
 }
 
 // Helper function to print a device info's address.
-static fileoff_t print_addr(file_t fd, dev_addr_t addr) {
+static errno64_t print_addr(file_t fd, dev_addr_t addr) {
     switch (addr.type) {
         case DEV_ATYPE_MMIO:
             return printf_to_file(fd, "addr: mmio: 0x%llx 0x%zx\n", (long long)addr.mmio.paddr, addr.mmio.size);
@@ -995,7 +995,7 @@ static fileoff_t print_addr(file_t fd, dev_addr_t addr) {
 
 // Helper function to populate devnode dir's `info` file.
 static errno_t populate_info_file(file_t devnode_dir, device_t *device) {
-    file_t fd = RETURN_ON_ERRNO(fs_open(devnode_dir, "info", 4, OFLAGS_WRITEONLY | OFLAGS_CREATE | OFLAGS_TRUNCATE));
+    file_t fd = RETURN_ON_ERRNO_FILE(fs_open(devnode_dir, "info", 4, FS_O_WRITE_ONLY | FS_O_CREATE | FS_O_TRUNCATE));
 
     char const *type;
     switch (device->dev_class) {
@@ -1008,16 +1008,16 @@ static errno_t populate_info_file(file_t devnode_dir, device_t *device) {
         case DEV_CLASS_I2CCTL: type = "i2cctl"; break;
         case DEV_CLASS_AHCI: type = "ahci"; break;
     }
-    RETURN_ON_ERRNO(printf_to_file(fd, "class: %s\n", type), fs_close(fd));
+    RETURN_ON_ERRNO(printf_to_file(fd, "class: %s\n", type), fs_file_drop(fd));
 
-    RETURN_ON_ERRNO(printf_to_file(fd, "id: %u\n", device->id), fs_close(fd));
+    RETURN_ON_ERRNO(printf_to_file(fd, "id: %u\n", device->id), fs_file_drop(fd));
 
     if (device->info.parent) {
-        RETURN_ON_ERRNO(printf_to_file(fd, "parent: %u\n", device->info.parent->id), fs_close(fd));
+        RETURN_ON_ERRNO(printf_to_file(fd, "parent: %u\n", device->info.parent->id), fs_file_drop(fd));
     }
 
     if (device->info.irq_parent) {
-        RETURN_ON_ERRNO(printf_to_file(fd, "irq_parent: %u\n", device->info.irq_parent->id), fs_close(fd));
+        RETURN_ON_ERRNO(printf_to_file(fd, "irq_parent: %u\n", device->info.irq_parent->id), fs_file_drop(fd));
     }
 
     // Print IDs of child devices.
@@ -1034,46 +1034,71 @@ static errno_t populate_info_file(file_t devnode_dir, device_t *device) {
     }
     set_clear(&children);
     if (err) {
-        fs_close(fd);
+        fs_file_drop(fd);
         return -EIO;
     }
 
     for (size_t i = 0; i < device->info.addrs_len; i++) {
-        RETURN_ON_ERRNO(print_addr(fd, device->info.addrs[i]), fs_close(fd));
+        RETURN_ON_ERRNO(print_addr(fd, device->info.addrs[i]), fs_file_drop(fd));
     }
 
-    fs_close(fd);
+    fs_file_drop(fd);
     return 0;
 }
 
 // Add device nodes to a new devtmpfs.
 // Called by the VFS after a devtmpfs filesystem is mounted.
 errno_t device_devtmpfs_mounted(file_t devtmpfs_root) {
-    RETURN_ON_ERRNO(fs_mkdir(devtmpfs_root, "by_id", 5));
+    RETURN_ON_ERRNO(fs_make_file(devtmpfs_root, "by_id", 5, (make_file_spec_t){.type = NODE_TYPE_DIRECTORY}), {
+        logkf(LOG_WARN, "Failed to create devnode by_id: %{cs} (%{cs})", errno_get_name(tmp), errno_get_desc(tmp));
+    });
 
     mutex_acquire_shared(&devs_mtx, TIMESTAMP_US_MAX);
     map_foreach(ent, &devs_by_id) {
         device_t *dev = ent->value;
         char      buf[32];
         int       len = npf_snprintf(buf, sizeof(buf), "by_id/%u", dev->id);
-        RETURN_ON_ERRNO(fs_mkdir(devtmpfs_root, buf, len), mutex_release_shared(&devs_mtx));
+        RETURN_ON_ERRNO(fs_make_file(devtmpfs_root, buf, len, (make_file_spec_t){.type = NODE_TYPE_DIRECTORY}), {
+            logkf(
+                LOG_WARN,
+                "Failed to create devnode %{cs}: %{cs} (%{cs})",
+                buf,
+                errno_get_name(tmp),
+                errno_get_desc(tmp)
+            );
+            mutex_release_shared(&devs_mtx);
+        });
 
-        file_t devnode_dir = RETURN_ON_ERRNO(fs_dir_open(devtmpfs_root, buf, len, 0), mutex_release_shared(&devs_mtx));
+        file_t devnode_dir = RETURN_ON_ERRNO_FILE(fs_open(devtmpfs_root, buf, len, FS_O_DIR_ONLY | FS_O_READ_ONLY), {
+            logkf(
+                LOG_WARN,
+                "Failed to open devnode %{cs}: %{cs} (%{cs})",
+                buf,
+                errno_get_name(tmp.errno),
+                errno_get_desc(tmp.errno)
+            );
+            mutex_release_shared(&devs_mtx);
+        });
 
         RETURN_ON_ERRNO(populate_info_file(devnode_dir, dev), {
-            fs_close(devnode_dir);
+            logkf(
+                LOG_WARN,
+                "Failed to populate devnode %{cs}/info: %{cs} (%{cs})",
+                buf,
+                errno_get_name(tmp),
+                errno_get_desc(tmp)
+            );
+            fs_file_drop(devnode_dir);
             mutex_release_shared(&devs_mtx);
         });
 
         mutex_acquire_shared(&dev->driver_mtx, TIMESTAMP_US_MAX);
         if (dev->driver && dev->driver->create_devnodes) {
-            if (devnode_dir >= 0) {
-                dev->driver->create_devnodes(dev, devtmpfs_root, devnode_dir);
-            }
+            dev->driver->create_devnodes(dev, devtmpfs_root, devnode_dir);
         }
         mutex_release_shared(&dev->driver_mtx);
 
-        fs_dir_close(devnode_dir);
+        fs_file_drop(devnode_dir);
     }
     mutex_release_shared(&devs_mtx);
 

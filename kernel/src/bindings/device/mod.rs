@@ -1,9 +1,7 @@
 use crate::{
     LogLevel,
-    bindings::{
-        filesystem::File,
-        raw::{dev_class_t, dev_filter_t, set_ent_t, timestamp_us_t},
-    },
+    bindings::raw::{dev_class_t, dev_filter_t, set_ent_t, timestamp_us_t},
+    filesystem::File,
     logkf,
 };
 use core::{num::NonZero, ptr::NonNull};
@@ -556,7 +554,11 @@ pub trait BaseDriver: Sync {
     }
     /// [optional] Create additional device node files.
     /// Called when a new `devtmpfs` is mounted OR after registered to the driver.
-    fn create_devnodes(&mut self, _devtmpfs_root: File, _devnode_dir: File) -> EResult<()> {
+    fn create_devnodes(
+        &mut self,
+        _devtmpfs_root: &dyn File,
+        _devnode_dir: &dyn File,
+    ) -> EResult<()> {
         Ok(())
     }
 }
@@ -565,7 +567,7 @@ pub trait BaseDriver: Sync {
 #[macro_export]
 macro_rules! abstract_driver_struct {
     ($type: ty, $class: expr, $match_: expr, $add: expr) => {{
-        use crate::bindings::{error::*, device::*, raw::*, filesystem::*};
+        use crate::{filesystem::c_api::*, bindings::{error::*, device::*, raw::*}};
         use ::alloc::boxed::Box;
         use ::core::ffi::c_void;
         driver_t {
@@ -672,9 +674,11 @@ macro_rules! abstract_driver_struct {
                 Some(cascase_enable_irq_wrapper)
             },
             create_devnodes: {
-                unsafe extern "C" fn create_devnodes_wrapper(device: *mut device_t, devtmpfs_root: i32, devnode_dir: i32) -> errno_t {
+                unsafe extern "C" fn create_devnodes_wrapper(device: *mut device_t, devtmpfs_root: file_t, devnode_dir: file_t) -> errno_t {
                     let ptr = unsafe{&mut *((*device).cookie as *mut $type)};
-                    Errno::extract(ptr.create_devnodes(File::from_raw(devtmpfs_root).unwrap(), File::from_raw(devnode_dir).unwrap()))
+                    let devtmpfs_root = unsafe { file_as_ref(devtmpfs_root) }.unwrap();
+                    let devnode_dir = unsafe { file_as_ref(devnode_dir) }.unwrap();
+                    Errno::extract(ptr.create_devnodes(devtmpfs_root, devnode_dir))
                 }
                 Some(create_devnodes_wrapper)
             },

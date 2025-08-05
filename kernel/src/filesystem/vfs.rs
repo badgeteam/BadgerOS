@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: MIT
 
 use core::{
-    cell::{OnceCell, UnsafeCell},
+    cell::UnsafeCell,
     hint::unlikely,
     sync::atomic::{AtomicU32, AtomicU64, Ordering},
 };
@@ -16,15 +16,15 @@ use alloc::{
 };
 use mflags::MFlags;
 
-use super::{Dirent, File, NewFileSpec, NodeType, SeekMode, Stat};
+use super::{Dirent, File, MakeFileSpec, NodeType, SeekMode, Stat, media::Media};
 use crate::{
     LogLevel,
     bindings::{
         device::class::{block::BlockDevice, char::CharDevice},
         error::{EResult, Errno},
-        filesystem::Media,
         mutex::Mutex,
     },
+    filesystem::fifo::FifoShared,
 };
 
 /// A file that is stored in a [`Vfs`].
@@ -202,6 +202,8 @@ pub struct VNode {
     pub(super) flags: AtomicU32,
     /// What kind of node this is.
     pub(super) type_: NodeType,
+    /// Shared FIFO data.
+    pub(super) fifo: Option<Arc<FifoShared>>,
 }
 
 impl Drop for VNode {
@@ -238,7 +240,7 @@ pub trait VNodeOps {
     /// Link an existing inode to this directory.
     fn link(&mut self, name: &[u8], inode: &VNode) -> EResult<()>;
     /// Create a new file in this directory.
-    fn make_file(&mut self, name: &[u8], spec: NewFileSpec) -> EResult<Box<dyn VNodeOps>>;
+    fn make_file(&mut self, name: &[u8], spec: MakeFileSpec) -> EResult<Box<dyn VNodeOps>>;
     /// Rename a file within this directory.
     /// See [`VfsOps::rename`] for renaming between two different directories.
     fn rename(&mut self, old_name: &[u8], new_name: &[u8]) -> EResult<()>;
@@ -317,6 +319,7 @@ impl Vfs {
         // Call the filesystem to open the vnode.
         let ops = self.ops.lock_shared().open(dirent)?;
 
+        let fifo = (dirent.type_ == NodeType::Fifo).then(|| FifoShared::new());
         let vnode = Arc::try_new(VNode {
             ops: Mutex::new(ops),
             inode: dirent.ino,
@@ -324,6 +327,7 @@ impl Vfs {
             dentcache,
             flags: AtomicU32::new(0),
             type_: dirent.type_,
+            fifo,
         })?;
 
         // Insert the new vnode.
@@ -379,7 +383,7 @@ pub trait VfsDriver {
     fn detect(&self, media: &Media) -> EResult<bool>;
     /// Mount the filesystem on some medium.
     /// Expected to log errors if they are caused by invalid parameters.
-    fn mount(&self, media: Option<&Media>, mflags: MFlags) -> EResult<Box<dyn VfsOps>>;
+    fn mount(&self, media: Option<Media>, mflags: MFlags) -> EResult<Box<dyn VfsOps>>;
 }
 
 /// Data associated with dirent caches for directories.
