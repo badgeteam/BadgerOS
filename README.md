@@ -14,6 +14,20 @@ BadgerOS is a hobby operating system.
 
 
 
+# Crud I want to port
+- Init systems
+  1. Busybox
+  2. OpenRC
+  3. Systemd
+- Games
+  - Tetris
+- Desktop stuff
+  1. Modesetting QEMU Virtio
+  2. Modesetting NVIDIA
+  3. Port some wayland desktop
+
+
+
 # Contributing
 We are an open-source project, so we can always use more hands!
 If you're new to this project and want to help, message us:
