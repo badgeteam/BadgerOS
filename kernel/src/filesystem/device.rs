@@ -19,7 +19,7 @@ impl CharDevFile {
     /// Create a new character device file.
     pub fn new(vnode: Arc<VNode>) -> Self {
         Self {
-            char_dev: vnode.clone().ops.lock_shared().get_chardev().unwrap(),
+            char_dev: vnode.clone().ops.lock_shared().get_chardev(&vnode).unwrap(),
             vnode,
         }
     }
@@ -27,7 +27,7 @@ impl CharDevFile {
 
 impl File for CharDevFile {
     fn stat(&self) -> EResult<Stat> {
-        self.vnode.ops.lock_shared().stat()
+        self.vnode.ops.lock_shared().stat(&self.vnode)
     }
 
     fn tell(&self) -> EResult<u64> {
@@ -81,7 +81,12 @@ impl BlockDevFile {
     /// Create a new block device file.
     pub fn new(vnode: Arc<VNode>, allow_read: bool, allow_write: bool) -> Self {
         Self {
-            block_dev: vnode.clone().ops.lock_shared().get_blockdev().unwrap(),
+            block_dev: vnode
+                .clone()
+                .ops
+                .lock_shared()
+                .get_blockdev(&vnode)
+                .unwrap(),
             vnode,
             offset: AtomicU64::new(0),
             allow_read,
@@ -92,7 +97,7 @@ impl BlockDevFile {
 
 impl File for BlockDevFile {
     fn stat(&self) -> EResult<Stat> {
-        self.vnode.ops.lock_shared().stat()
+        self.vnode.ops.lock_shared().stat(&self.vnode)
     }
 
     fn tell(&self) -> EResult<u64> {

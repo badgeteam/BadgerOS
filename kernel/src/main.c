@@ -149,6 +149,9 @@ static void kernel_init() {
     }
     set_clear(&kinit_join_threads);
 
+    void fatfs_test();
+    fatfs_test();
+
     /*
     // Try to mount the root filesystem.
     errno_t res = fs_mount_root_fs();

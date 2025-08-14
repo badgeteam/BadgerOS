@@ -174,8 +174,12 @@ typedef struct {
 // Filesystem is read-only.
 #define FS_M_READ_ONLY 0x00000001
 
-// Maximum path length.
-#define PATH_MAX 512
+// The maximum number of symlinks followed.
+#define LINK_MAX 32
+// The maximum path length.
+#define PATH_MAX 4096
+// The maximum filename length.
+#define NAME_MAX 255
 
 
 

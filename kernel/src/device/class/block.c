@@ -203,7 +203,7 @@ static errno_t iterate_block_ranges(
 
     rcu_crit_exit();
     irq_enable();
-    return -ENOSYS;
+    return 0;
 }
 
 // Implementation of `device_block_write_bytes` after caching.
@@ -235,10 +235,10 @@ errno_t device_block_write_bytes(device_block_t *device, uint64_t offset, uint64
         return res;
     }
 
-    iterate_block_ranges(device, offset, size, write_bytes_cb, (void *)data, true);
+    errno_t res = iterate_block_ranges(device, offset, size, write_bytes_cb, (void *)data, true);
 
     mutex_release_shared(&device->base.driver_mtx);
-    return 0;
+    return res;
 }
 
 // Implementation of `device_block_read_bytes` after caching.
@@ -271,10 +271,10 @@ errno_t device_block_read_bytes(device_block_t *device, uint64_t offset, uint64_
         return res;
     }
 
-    iterate_block_ranges(device, offset, size, read_bytes_cb, (void *)data, false);
+    errno_t res = iterate_block_ranges(device, offset, size, read_bytes_cb, (void *)data, false);
 
     mutex_release_shared(&device->base.driver_mtx);
-    return 0;
+    return res;
 }
 
 // Erase block device bytes.

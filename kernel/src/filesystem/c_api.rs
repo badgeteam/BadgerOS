@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: MIT
 
 use core::{
+    cell::UnsafeCell,
     ffi::{c_char, c_void},
     ptr::{self, null, null_mut, slice_from_raw_parts, slice_from_raw_parts_mut},
 };
@@ -22,7 +23,6 @@ use crate::{
     filesystem::{
         Stat,
         media::{Media, MediaType},
-        oflags,
     },
 };
 
@@ -51,7 +51,7 @@ pub unsafe fn file_as_ref(file: file_t) -> Option<&'static dyn File> {
 }
 
 pub fn arc_into_file(arc: Arc<dyn File>) -> file_t {
-    let raw = unsafe { Arc::into_raw(arc) };
+    let raw = Arc::into_raw(arc);
     file_t {
         data: raw as *mut c_void,
         metadata: unsafe { core::mem::transmute(ptr::metadata(raw)) },
@@ -102,12 +102,12 @@ unsafe extern "C" fn fs_mount(
                         size: media.part_length,
                     },
                     raw::fs_media_type_t_FS_MEDIA_RAM => Media {
-                        storage: MediaType::Ram(unsafe {
+                        storage: MediaType::Ram(UnsafeCell::new(unsafe {
                             Box::from_raw(slice_from_raw_parts_mut(
                                 media.__bindgen_anon_1.ram,
                                 media.part_length as usize,
                             ))
-                        }),
+                        })),
                         offset: media.part_offset,
                         size: media.part_length,
                     },

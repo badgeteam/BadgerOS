@@ -12,16 +12,16 @@ use access::Access;
 use alloc::{boxed::Box, collections::btree_map::BTreeMap, string::String, sync::Arc, vec::Vec};
 use device::{BlockDevFile, CharDevFile};
 use linkflags::LinkFlags;
-use media::Media;
+use media::{Media, MediaType};
 use oflags::OFlags;
 use vfs::{DentCache, DentCacheDir, DentCacheType, VNode, Vfs, VfsDriver, VfsFile, mflags::MFlags};
 
 use crate::{
     LogLevel,
+    badgelib::time::Timespec,
     bindings::{
-        self,
         device::{
-            BaseDevice,
+            BaseDevice, DeviceFilters,
             class::{block::BlockDevice, char::CharDevice},
         },
         error::{EResult, Errno},
@@ -33,11 +33,11 @@ use crate::{
         fifo::{Fifo, FifoShared},
     },
     logkf,
-    time::Timespec,
 };
 
 pub mod c_api;
 pub mod device;
+pub mod fatfs;
 pub mod fifo;
 pub mod media;
 pub mod mount_root;
@@ -317,6 +317,10 @@ pub mod linkflags {
 
 /// The maximum number of symlinks followed.
 pub const LINK_MAX: usize = 32;
+/// The maximum path length.
+pub const PATH_MAX: usize = 4096;
+/// The maximum filename length.
+pub const NAME_MAX: usize = 255;
 
 /// The currently mounted root filesystem.
 static ROOT_FS: Mutex<Option<Arc<Vfs>>> = unsafe { Mutex::new_static(None) };
@@ -352,6 +356,11 @@ fn at_vnode(at: Option<&dyn File>) -> EResult<Arc<VNode>> {
 
 /// Walk down the filesystem to a certain path.
 fn walk(mut at: Arc<DentCache>, path: &[u8], follow_last_symlink: bool) -> EResult<Arc<DentCache>> {
+    if path.len() > PATH_MAX {
+        // There is no distinction between the errno for NAME_MAX exceeded or PATH_MAX exceeded.
+        return Err(Errno::ENAMETOOLONG);
+    }
+
     /// A string slice or an arc of dentcache.
     enum LinkValue<'a> {
         None,
@@ -418,6 +427,9 @@ fn walk(mut at: Arc<DentCache>, path: &[u8], follow_last_symlink: bool) -> EResu
             .iter()
             .position(|x| *x == b'/')
             .unwrap_or(name.len() - offset);
+        if component_len > NAME_MAX {
+            return Err(Errno::ENAMETOOLONG);
+        }
 
         // Get next component.
         let next = at.lookup(&name[offset..offset + component_len])?;
@@ -487,11 +499,11 @@ fn o_creat_helper(to_create: Arc<DentCache>, exclusive: bool) -> EResult<Arc<VNo
     // A new regular file is to be created.
     let dir_vnode = dir_cache.open_vnode()?;
     let mut dir_ops = dir_vnode.ops.lock();
-    let new_ops = dir_ops.make_file(&to_create.dirent.name, MakeFileSpec::Regular)?;
+    let new_ops = dir_ops.make_file(&dir_vnode, &to_create.dirent.name, MakeFileSpec::Regular)?;
     let inode = new_ops.get_inode();
     let new_vnode = Arc::try_new(VNode {
         ops: Mutex::new(new_ops),
-        inode,
+        ino: inode,
         vfs: dir_vnode.vfs.clone(),
         dentcache: None,
         flags: AtomicU32::new(0),
@@ -646,7 +658,7 @@ pub fn link(
     dir_vnode
         .ops
         .lock()
-        .link(&new.dirent.name, &*old.open_vnode()?)?;
+        .link(&dir_vnode, &new.dirent.name, &*old.open_vnode()?)?;
 
     // Invalidate dentcache for new.
     new_guard
@@ -683,7 +695,7 @@ pub fn unlink(at: Option<&dyn File>, path: &[u8], is_rmdir: bool) -> EResult<()>
     dir_vnode
         .ops
         .lock()
-        .unlink(&to_remove.dirent.name, is_rmdir)?;
+        .unlink(&dir_vnode, &to_remove.dirent.name, is_rmdir)?;
 
     // Delete the dirent cache entry.
     guard.children.remove(&*to_remove.dirent.name);
@@ -714,12 +726,12 @@ pub fn make_file(at: Option<&dyn File>, path: &[u8], spec: MakeFileSpec) -> ERes
     let dir_vnode = dir_cache.open_vnode()?;
     let mut dir_ops = dir_vnode.ops.lock();
     let type_ = spec.node_type();
-    let new_ops = dir_ops.make_file(&to_create.dirent.name, spec)?;
+    let new_ops = dir_ops.make_file(&dir_vnode, &to_create.dirent.name, spec)?;
     let inode = new_ops.get_inode();
     let fifo = (type_ == NodeType::Fifo).then(|| FifoShared::new());
     let new_vnode = Arc::try_new(VNode {
         ops: Mutex::new(new_ops),
-        inode,
+        ino: inode,
         vfs: dir_vnode.vfs.clone(),
         dentcache: None,
         flags: AtomicU32::new(0),
@@ -773,7 +785,7 @@ pub fn rename(
         old_dir_vnode
             .ops
             .lock()
-            .rename(&old.dirent.name, &new.dirent.name)?;
+            .rename(&old_dir_vnode, &old.dirent.name, &new.dirent.name)?;
         None
     } else {
         // Rename across directories.
@@ -783,6 +795,7 @@ pub fn rename(
         }
         let new_dir_vnode = new_dir_cache.open_vnode()?;
         old_dir_cache.vfs.ops.lock_shared().rename(
+            &old_dir_cache.vfs,
             &old_dir_vnode,
             &old_dir_cache.dirent.name,
             &new_dir_vnode,
@@ -836,7 +849,6 @@ fn create_vfs(
     };
 
     let vfs_ops = driver.mount(media, mflags)?;
-    let root_ops = vfs_ops.open_root()?;
 
     let vfs = Arc::try_new(Vfs {
         ops: Mutex::new(vfs_ops),
@@ -847,13 +859,16 @@ fn create_vfs(
     })
     .unwrap();
 
+    let root_ops = vfs.ops.lock_shared().open_root(&vfs)?;
+    let root_ino = root_ops.get_inode();
+
     let dentcache = DentCache {
         type_: DentCacheType::Directory(Mutex::new(DentCacheDir::EMPTY)),
         vfs: vfs.clone(),
         parent: None,
         vnode: Mutex::new(None),
         dirent: Dirent {
-            ino: 1,
+            ino: root_ino,
             type_: NodeType::Directory,
             name: b"/".into(),
             dirent_off: 0,
@@ -862,7 +877,7 @@ fn create_vfs(
 
     let root = Arc::new(VNode {
         ops: Mutex::new(root_ops),
-        inode: 1,
+        ino: root_ino,
         vfs: vfs.clone(),
         dentcache: Some(Arc::new(dentcache)),
         flags: AtomicU32::new(0),
@@ -970,4 +985,60 @@ pub fn pipe(oflags: OFlags) -> EResult<(Arc<dyn File>, Arc<dyn File>)> {
         shared,
     });
     Ok((write_end, read_end))
+}
+
+#[unsafe(no_mangle)]
+unsafe extern "C" fn fatfs_test() {
+    let devs = BlockDevice::filter(DeviceFilters::default()).unwrap();
+
+    // We assume the FAT FS to be at 4096 * 512 offset in the first block device.
+    let dev = devs.iter().next().unwrap().clone();
+    let media = Media {
+        offset: 4096 * 512,
+        size: 8192 * 512,
+        storage: MediaType::Block(dev),
+    };
+
+    // Hexdump the first couple bytes.
+    let mut tmp = Vec::new();
+    tmp.resize(1024, 0);
+    media.read(0, &mut tmp).unwrap();
+    logkf!(LogLevel::Debug, "First bytes on media:");
+    for i in 0..tmp.len() / 16 {
+        logkf!(
+            LogLevel::Debug,
+            "  {:02x} {:02x} {:02x} {:02x}  {:02x} {:02x} {:02x} {:02x}  {:02x} {:02x} {:02x} {:02x}  {:02x} {:02x} {:02x} {:02x}",
+            tmp[i * 16 + 0],
+            tmp[i * 16 + 1],
+            tmp[i * 16 + 2],
+            tmp[i * 16 + 3],
+            tmp[i * 16 + 4],
+            tmp[i * 16 + 5],
+            tmp[i * 16 + 6],
+            tmp[i * 16 + 7],
+            tmp[i * 16 + 8],
+            tmp[i * 16 + 9],
+            tmp[i * 16 + 10],
+            tmp[i * 16 + 11],
+            tmp[i * 16 + 12],
+            tmp[i * 16 + 13],
+            tmp[i * 16 + 14],
+            tmp[i * 16 + 15]
+        );
+    }
+
+    // Mount the FAT filesystem.
+    mount(None, b"/", Some("vfat"), Some(media), 0).unwrap();
+
+    // Try printing `/LONGFI~2.EXT`.
+    let file = open(None, b"/LONGFI~2.EXT", oflags::READ_ONLY).unwrap();
+    let mut buf = [0u8; 1024];
+    let read = file.read(&mut buf).unwrap();
+    assert!(read > 0);
+    logkf!(
+        LogLevel::Debug,
+        "Read {} bytes: {}",
+        read,
+        String::from_utf8_lossy(&buf[..read])
+    );
 }
