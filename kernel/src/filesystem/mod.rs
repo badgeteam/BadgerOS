@@ -560,7 +560,12 @@ pub fn open(at: Option<&dyn File>, path: &[u8], oflags: OFlags) -> EResult<Arc<d
 
     // Open the target VNode.
     let vnode = match &cache.type_ {
-        DentCacheType::Negative => o_creat_helper(cache.clone(), oflags & oflags::EXCLUSIVE != 0)?,
+        DentCacheType::Negative => {
+            if oflags & oflags::CREATE == 0 {
+                return Err(Errno::ENOENT);
+            }
+            o_creat_helper(cache.clone(), oflags & oflags::EXCLUSIVE != 0)?
+        }
         DentCacheType::Directory(_) => {
             if oflags & oflags::EXCLUSIVE != 0 {
                 return Err(Errno::EEXIST);
@@ -884,6 +889,7 @@ fn create_vfs(
         type_: NodeType::Directory,
         fifo: None,
     });
+    vfs.vnodes.lock().insert(root.ino, Arc::downgrade(&root));
     unsafe { *vfs.root.as_mut_unchecked() = Some(root) };
 
     Ok(vfs)

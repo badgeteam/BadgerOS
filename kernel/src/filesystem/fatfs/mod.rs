@@ -59,7 +59,7 @@ struct FatVNode {
 
 /// Helper function that gets a reference to the FAT filesystem from a VNode.
 fn get_fatfs(vfs: &Vfs) -> &FatFS {
-    (&vfs.ops as &dyn Any).downcast_ref::<FatFS>().unwrap()
+    unsafe { &*(vfs.ops.data().as_ref() as *const dyn VfsOps as *const FatFS) }
 }
 
 impl FatVNode {
@@ -101,50 +101,15 @@ impl FatVNode {
                 break;
             } else if raw_dirent.name[0] == 0xe5 {
                 // Free dirent.
-            } else if use_lfn && raw_dirent.attr & attr::LONG_NAME == attr::LONG_NAME {
-                let mut lfn_ent: LfnEnt = raw_dirent.into();
-                lfn_ent.from_le();
-
-                // Check validity of LFN entry.
-                if let Some(x) = lfn_seq
-                    && x != lfn_ent.order & 0x3f
-                {
-                    arc_self.vfs.check_eio_failed();
-                    use_lfn = false;
-                } else if lfn_seq == None {
-                    if lfn_ent.order & 0x40 == 0 {
-                        arc_self.vfs.check_eio_failed();
-                        use_lfn = false;
-                    }
-                    lfn_seq = Some((lfn_ent.order & 0x3f).wrapping_sub(1));
-                }
-
-                // Append all data from this LFN entry.
-                for char in lfn_ent.get_name() {
-                    if char == 0 {
-                        // End of the LFN.
-                        if lfn_ent.order & 0x3f != 1 {
-                            arc_self.vfs.check_eio_failed();
-                            use_lfn = false;
-                        }
-                        break;
-                    }
-                    if let Some(char) = char::from_u32(char as u32)
-                        && FatFS::is_valid_long_char(char)
-                    {
-                        if !lfn_buf.push(char) {
-                            // LFN is too long; use short one instead.
-                            use_lfn = false;
-                        }
-                    } else {
-                        // LFN contains invalid unicode.
-                        arc_self.vfs.check_eio_failed();
-                        use_lfn = false;
-                    }
-                }
             } else if raw_dirent.attr & attr::VOLUME_ID == 0 {
                 let mut dirent = raw_dirent;
                 dirent.from_le();
+
+                // TODO: Try to read preceding LFN dirents.
+
+                // Convert short filename.
+                let mut sfn = StaticString::<12>::new();
+                fatfs.short_name_to_str(&dirent.name, &mut sfn);
 
                 // Check validity of dirent.
                 if !dirent.name.iter().all(|&x| {
@@ -405,7 +370,7 @@ struct FatFS {
     root_dir_cluster: u32,
     /// Offset of the root directory, if FAT12/FAT16.
     legacy_root_sector: u32,
-    /// Size of the root directory, if FAT12/FAT16.
+    /// Size of the root directory in entries, if FAT12/FAT16.
     legacy_root_size: u32,
     /// Mutex used to protect FAT12 read-modify-write.
     fat12_mutex: Mutex<()>,
@@ -782,7 +747,7 @@ impl VfsOps for FatFS {
                 storage: FatFileStorage::Root16(
                     (self.legacy_root_sector as u64) << self.sector_size_exp,
                 ),
-                len: self.legacy_root_size,
+                len: self.legacy_root_size * 32,
                 dirent_off: 0,
             })?))
         }
@@ -807,6 +772,7 @@ impl VfsOps for FatFS {
         Ok(Box::<dyn VNodeOps>::from(Box::try_new(FatVNode {
             storage: FatFileStorage::Clusters(chain),
             len: dirent.size,
+            dirent_off: cached_dirent.dirent_off,
         })?))
     }
 

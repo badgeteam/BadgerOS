@@ -20,11 +20,11 @@ unsafe impl<T, const SHARED: bool> Send for Mutex<T, SHARED> {}
 unsafe impl<T, const SHARED: bool> Sync for Mutex<T, SHARED> {}
 
 impl<T, const SHARED: bool> Mutex<T, SHARED> {
-    unsafe fn mutex(&self) -> &mut mutex_t {
+    pub unsafe fn mutex(&self) -> &mut mutex_t {
         unsafe { self.inner.as_mut_unchecked() }
     }
 
-    unsafe fn data(&self) -> &mut T {
+    pub unsafe fn data(&self) -> &mut T {
         unsafe { self.data.as_mut_unchecked() }
     }
 

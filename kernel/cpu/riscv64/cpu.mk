@@ -3,8 +3,11 @@ QEMU          ?= qemu-system-riscv64
 
 $(BUILDDIR)/cache/OVMF_RISCV64.fd:
 	mkdir -p $(BUILDDIR)/cache
-	cd $(BUILDDIR)/cache && curl -o OVMF_RISCV64.fd https://retrage.github.io/edk2-nightly/bin/RELEASERISCV64_VIRT_CODE.fd \
-		&& dd if=/dev/zero of=OVMF_RISCV64.fd bs=1 count=0 seek=33554432
+	test -f $(BUILDDIR)/cache/OVMF_RISCV64.fd || ( \
+		cd $(BUILDDIR)/cache \
+		&& curl -o OVMF_RISCV64.fd https://retrage.github.io/edk2-nightly/bin/RELEASERISCV64_VIRT_CODE.fd \
+		&& dd if=/dev/zero of=OVMF_RISCV64.fd bs=1 count=0 seek=33554432 \
+	)
 
 .PHONY: qemu
 qemu-debug: $(BUILDDIR)/cache/OVMF_RISCV64.fd build
