@@ -25,6 +25,7 @@ pub mod config;
 pub mod device;
 pub mod filesystem;
 pub mod kparam;
+pub mod mem;
 pub mod util;
 
 use core::{alloc::GlobalAlloc, ffi::c_void, ops::Deref, panic::PanicInfo};
