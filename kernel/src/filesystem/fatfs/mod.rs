@@ -82,7 +82,7 @@ impl FatVNode {
     fn iter_dirents(
         &self,
         arc_self: &Arc<VNode>,
-        mut dirent_func: impl FnMut(u64, &Dirent, &[u8], Option<&str>) -> EResult<bool>,
+        mut dirent_func: impl FnMut(u64, &Dirent, &str, Option<&str>) -> EResult<bool>,
     ) -> EResult<()> {
         let fatfs = get_fatfs(&arc_self.vfs);
         let mut lfn_buf = StaticString::<NAME_MAX>::new();
@@ -119,7 +119,7 @@ impl FatVNode {
                 } else if !(dirent_func(
                     self.disk_offset_of(arc_self, offset),
                     &dirent,
-                    &dirent.name,
+                    sfn.as_ref(),
                     use_lfn.then_some(lfn_buf.as_ref()),
                 )?) {
                     // Callback said to stop iterating.
@@ -136,6 +136,7 @@ impl FatVNode {
     /// Converts a [`Dirent`] and a name to a [`super::Dirent`].
     fn convert_dirent(dirent_off: u64, dirent: &Dirent, name: &[u8]) -> EResult<super::Dirent> {
         let mut name_copy = Vec::try_with_capacity(name.len())?;
+        name_copy.resize(name.len(), 0);
         name_copy.copy_from_slice(name);
 
         // Make up an inode number, which is required, but FAT doesn't have.
@@ -249,8 +250,8 @@ impl VNodeOps for FatVNode {
             {
                 *res_ptr = Ok(Self::convert_dirent(off, dent, lfn.as_bytes())?);
                 Ok(false)
-            } else if FatFS::name_equals(sfn, name) {
-                *res_ptr = Ok(Self::convert_dirent(off, dent, sfn)?);
+            } else if FatFS::name_equals(sfn.as_bytes(), name) {
+                *res_ptr = Ok(Self::convert_dirent(off, dent, sfn.as_bytes())?);
                 Ok(false)
             } else {
                 Ok(true)
@@ -266,7 +267,7 @@ impl VNodeOps for FatVNode {
             out.push(Self::convert_dirent(
                 off,
                 dent,
-                lfn.map(str::as_bytes).unwrap_or(sfn),
+                lfn.unwrap_or(sfn).as_bytes(),
             )?);
             Ok(true)
         })?;
@@ -767,7 +768,7 @@ impl VfsOps for FatFS {
         dirent.from_le();
         let start_cluster =
             ((dirent.first_cluster_hi as u32) << 16) | dirent.first_cluster_lo as u32;
-        let chain = self.read_chain(self_arc, start_cluster)?;
+        let chain = self.read_chain(self_arc, start_cluster.checked_sub(2).ok_or(Errno::EIO)?)?;
 
         Ok(Box::<dyn VNodeOps>::from(Box::try_new(FatVNode {
             storage: FatFileStorage::Clusters(chain),
