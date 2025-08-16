@@ -43,7 +43,7 @@ pub struct VfsFile {
 
 impl VfsFile {
     /// Implementation of append-mode writes.
-    fn append_write(&self, self_arc: &Arc<VNode>, wdata: &[u8]) -> EResult<usize> {
+    fn append_write(&self, wdata: &[u8]) -> EResult<usize> {
         let mut ops = self.vnode.ops.lock();
         let old_size = ops.get_size(&self.vnode);
         let new_size = old_size
@@ -55,7 +55,7 @@ impl VfsFile {
     }
 
     /// Implementation of non-append writes.
-    fn regular_write(&self, self_arc: &Arc<VNode>, wdata: &[u8]) -> EResult<usize> {
+    fn regular_write(&self, wdata: &[u8]) -> EResult<usize> {
         let mut ops = self.vnode.ops.lock_shared();
         let mut offset = self.offset.load(Ordering::Relaxed);
         let mut size = ops.get_size(&self.vnode);
@@ -130,9 +130,9 @@ impl File for VfsFile {
         if !self.allow_write {
             Err(Errno::EBADF)
         } else if self.is_append {
-            self.append_write(&self.vnode, wdata)
+            self.append_write(wdata)
         } else {
-            self.regular_write(&self.vnode, wdata)
+            self.regular_write(wdata)
         }
     }
 
