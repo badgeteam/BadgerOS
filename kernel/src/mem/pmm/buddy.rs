@@ -9,15 +9,16 @@
 
 use core::{
     cell::UnsafeCell,
-    mem::ManuallyDrop,
-    sync::atomic::{AtomicU32, AtomicUsize},
+    mem::{ManuallyDrop, offset_of},
+    ptr::slice_from_raw_parts_mut,
+    sync::atomic::{AtomicUsize, Ordering, fence},
 };
 
 use crate::{
     bindings::error::EResult,
     config,
     mem::{
-        pmm::{AtomicPPN, AtomicPaddr, PPN, Paddr, PhysAlloc},
+        pmm::{PPN, PhysAlloc},
         vmm::{self, VPN},
     },
 };
@@ -29,10 +30,6 @@ use crate::{
 struct PhysBuddyTempAlloc {
     /// Physical page number of the first block.
     base: PPN,
-    /// How many times the first allocated page is referenced.
-    /// The page table builder should only (possibly) clone for the first allocated page,
-    /// because it will be for the highest level in the kernel page table, which is mirrored to user page tables.
-    first_refcount: UnsafeCell<u32>,
     /// Number of pages allocated so far.
     usage: UnsafeCell<PPN>,
     /// Total number of pages allowed to be allocated.
@@ -53,19 +50,30 @@ impl PhysAlloc for PhysBuddyTempAlloc {
         }
     }
 
-    unsafe fn page_clone(&self, base: PPN, size: PPN) {
-        debug_assert!(
-            base == self.base && *unsafe { self.usage.as_ref_unchecked() } == 0 && size == 1
-        );
-        // SAFETY: Because of how this is intended to be used, only one thread will call any function in here.
-        // In addition, we know the caller to be the page table builder, which will only possibly clone the very first page it allocates.
-        *unsafe { self.first_refcount.as_mut_unchecked() } += 1;
-    }
+    unsafe fn page_free(&self, _base: PPN) {}
+}
 
-    unsafe fn page_drop(&self, _base: PPN, _size: PPN) {
-        // This doesn't leak memory because pages would only be dropped if building the page table fails,
-        // which would lead to the real allocator not being created.
-    }
+/// Highest order block used by this allocator.
+const MAX_ORDER: u8 = 4;
+
+#[repr(C)]
+/// Per-block metadata for [`PhysBuddy`].
+struct BlockMetadata {
+    /// What order of block this is.
+    order: u8,
+    /// Whether this block is part of a larger block.
+    is_subblock: bool,
+    /// Next free block of the same order.
+    next: usize,
+    /// Previous free block of the same order.
+    prev: usize,
+}
+
+#[repr(C)]
+/// Per-order metadata for [`PhysBuddy`].
+struct OrderMetadata {
+    /// First block of this order.
+    first: AtomicUsize,
 }
 
 #[repr(C)]
@@ -74,20 +82,13 @@ struct PhysBuddyMetadata {
     /// The slot reserved for the allocator itself.
     alloc: PhysBuddy,
     /// The amount of free blocks per order.
-    available: [AtomicPPN; 64],
+    available: [OrderMetadata; MAX_ORDER as usize],
     /// The start of the per-block metadata.
-    block_metadata: [AtomicU32; 0],
+    block_metadata: [BlockMetadata; 0],
 }
 
 #[repr(C)]
 /// A physical memory buddy allocator.
-///
-/// The metadata is comprised of a contiguous array of 32-bit atomic flags:
-/// - \[31:26] The block's order
-/// - \[25]    Is part of a larger block
-/// - \[24:0]  If \[25]: How many entries to go back for the main metadata entry, else: The reference count.
-///
-/// In addition, a metadata slot is locked if set to 0xffff_ffff.
 pub struct PhysBuddy {
     /// Physical page number of the first block.
     base: PPN,
@@ -105,23 +106,24 @@ pub struct PhysBuddy {
 impl PhysBuddy {
     /// Initialize a physical memory allocator, if the region is large enough.
     pub unsafe fn new(base: PPN, len: PPN) -> EResult<Self> {
-        debug_assert!(size_of::<PhysBuddyMetadata>() == size_of::<[AtomicPPN; 64]>() + size_of::<PhysBuddy>());
-        
+        debug_assert!(
+            offset_of!(PhysBuddyMetadata, block_metadata)
+                == size_of::<[OrderMetadata; MAX_ORDER as usize]>() + size_of::<PhysBuddy>()
+        );
+
         // Calculate overhead.
-        let byte_overhead =
-            len * size_of::<AtomicU32>() + size_of::<[AtomicPPN; 64]>() + size_of::<PhysBuddy>();
+        let byte_overhead = len * size_of::<BlockMetadata>() + size_of::<PhysBuddyMetadata>();
         let page_overhead = byte_overhead.div_ceil(config::PAGE_SIZE as usize) as PPN;
 
         // Map the metadata into memory.
         let tmp_alloc = PhysBuddyTempAlloc {
             base,
-            first_refcount: UnsafeCell::new(1),
             usage: UnsafeCell::new(0),
             total: len - page_overhead,
         };
         let metadata_vpn =
             unsafe { vmm::map_k(page_overhead as VPN, base, vmm::flags::RW, &tmp_alloc) }?;
-        let metadata = (metadata_vpn * config::PAGE_SIZE as usize) as *const ();
+        let metadata = (metadata_vpn * config::PAGE_SIZE as usize) as *mut PhysBuddyMetadata;
 
         let alloc = Self {
             base,
@@ -130,12 +132,51 @@ impl PhysBuddy {
             metadata,
             nodrop: ManuallyDrop::new(()),
         };
-        
-        // Get the metadata pointers.
-        let available = unsafe {&*(alloc.metadata as usize + )}
-        
-        // Initialize the metadata.
 
+        // Get metadata pointers.
+        let available = unsafe { &mut (*metadata).available };
+        let block_metadata =
+            unsafe { &mut *slice_from_raw_parts_mut(&raw mut (*metadata).block_metadata[0], len) };
+
+        // Initialize the metadata.
+        available.fill_with(|| OrderMetadata {
+            first: AtomicUsize::new(usize::MAX),
+        });
+        block_metadata.fill_with(|| BlockMetadata {
+            order: 0,
+            is_subblock: false,
+            next: 0,
+            prev: 0,
+        });
+        let tmp_usage = *unsafe { tmp_alloc.usage.as_ref_unchecked() };
+        if tmp_usage != 0 {
+            block_metadata[0].refcount.store(
+                *unsafe { tmp_alloc.first_refcount.as_ref_unchecked() },
+                Ordering::Relaxed,
+            );
+        }
+        for i in 1..tmp_usage {
+            block_metadata[i].refcount.store(1, Ordering::Relaxed);
+        }
+
+        // Do initial coalescing of blocks.
+        let mut block = tmp_usage;
+        while block < alloc.page_count {
+            // Calculate maximum order of block that can be made.
+            let order = ((block + alloc.base).trailing_zeros())
+                .min((alloc.page_count - block).trailing_zeros()) as u8;
+
+            // Set block metadata.
+            block_metadata[block].order = order;
+            for subblock in block + 1..block + 1 << order {
+                block_metadata[subblock].order = order;
+                block_metadata[subblock].is_subblock = true;
+            }
+
+            block = block + (1 << order);
+        }
+
+        fence(Ordering::Release);
         Ok(alloc)
     }
 }

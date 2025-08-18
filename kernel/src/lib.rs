@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2025 Julian Scheffers <julian@scheffers.net>
+// SPDX-FileType: SOURCE
+// SPDX-License-Identifier: MIT
+
 #![no_std]
 #![no_main]
 #![feature(allocator_api)]
@@ -27,6 +31,10 @@ pub mod filesystem;
 pub mod kparam;
 pub mod mem;
 pub mod util;
+
+#[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
+#[path = "cpu/riscv/mod.rs"]
+pub mod cpu;
 
 use core::{alloc::GlobalAlloc, ffi::c_void, ops::Deref, panic::PanicInfo};
 

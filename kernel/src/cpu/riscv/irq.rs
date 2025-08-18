@@ -3,7 +3,6 @@ use core::arch::asm;
 use crate::bindings::raw::CSR_STATUS_IE_BIT;
 
 /// Check whether interrupts are enabled.
-#[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
 pub unsafe fn is_enabled() -> bool {
     let mut mask: usize;
     unsafe {
@@ -13,7 +12,6 @@ pub unsafe fn is_enabled() -> bool {
 }
 
 /// Disable interrupts if some condition holds.
-#[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
 pub unsafe fn disable_if(cond: bool) -> bool {
     let mut mask: usize = (cond as usize) << CSR_STATUS_IE_BIT;
     unsafe {
@@ -23,7 +21,6 @@ pub unsafe fn disable_if(cond: bool) -> bool {
 }
 
 /// Enable interrupts if some condition holds.
-#[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
 pub unsafe fn enable_if(cond: bool) {
     let mask: usize = (cond as usize) << CSR_STATUS_IE_BIT;
     unsafe {

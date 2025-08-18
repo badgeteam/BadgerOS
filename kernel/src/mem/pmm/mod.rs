@@ -4,7 +4,9 @@
 
 use core::sync::atomic::AtomicUsize;
 
-pub mod buddy;
+use crate::bindings;
+
+// pub mod buddy;
 
 /// Unsigned integer that can store a physical address.
 pub type AtomicPaddr = AtomicUsize;
@@ -23,16 +25,30 @@ pub trait PhysAlloc {
     /// Returns the physical page number of the start of the block.
     fn page_alloc(&self, order: u8) -> Option<PPN>;
 
-    /// Increase the reference count of a range of physical memory.
-    /// # Panics
-    /// - If the specified range is not within this allocator;
-    /// - Part of the range is currently marked as free;
-    /// - The reference count overflows.
-    unsafe fn page_clone(&self, base: PPN, size: PPN);
-
     /// Decrease the reference count of a range of physical memory.
-    /// # Panics
-    /// - If the specified range is not within this allocator;
-    /// - Part of the range is currently marked as free.
-    unsafe fn page_drop(&self, base: PPN, size: PPN);
+    /// The caller must ensure that `base` points to the start of a valid allocation,
+    /// and note that this entire allocation is freed at once.
+    unsafe fn page_free(&self, base: PPN);
+}
+
+/// The global page allocator.
+pub static GLOBAL_PHYS_ALLOC: GlobalPhysAlloc = GlobalPhysAlloc { a: () };
+
+pub struct GlobalPhysAlloc {
+    /// Dummy field that forbids construction of this allocator externally.
+    a: (),
+}
+
+impl PhysAlloc for GlobalPhysAlloc {
+    fn page_alloc(&self, order: u8) -> Option<PPN> {
+        let tmp = unsafe { bindings::raw::phys_page_alloc(1usize << order, false) };
+        if tmp == 0 {
+            return None;
+        }
+        Some(tmp)
+    }
+
+    unsafe fn page_free(&self, base: PPN) {
+        unsafe { bindings::raw::phys_page_free(base) };
+    }
 }
