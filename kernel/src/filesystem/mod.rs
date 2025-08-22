@@ -4,6 +4,7 @@
 
 use core::{
     cell::UnsafeCell,
+    fmt::{Debug, Write},
     panic, str,
     sync::atomic::{AtomicU32, AtomicU64},
 };
@@ -32,7 +33,7 @@ use crate::{
         c_api::ref_as_file,
         fifo::{Fifo, FifoShared},
     },
-    logkf,
+    logk_hexdump, logkf,
 };
 
 pub mod c_api;
@@ -188,7 +189,7 @@ pub struct Stat {
 }
 
 #[repr(u32)]
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, Debug)]
 /// Types of file recognised by [`Dirent`].
 pub enum NodeType {
     #[default]
@@ -223,8 +224,42 @@ pub struct Dirent {
     pub dirent_off: u64,
 }
 
+impl Debug for Dirent {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("Dirent")
+            .field("ino", &self.ino)
+            .field("type_", &self.type_)
+            .field("name", &{
+                struct ByteStr<'a>(&'a [u8]);
+                impl<'a> core::fmt::Debug for ByteStr<'a> {
+                    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                        f.write_str("b\"")?;
+                        for &b in self.0 {
+                            match b {
+                                b'\\' => f.write_str("\\\\")?,
+                                b'"' => f.write_str("\\\"")?,
+                                0x20..=0x7E => f.write_char(b as char)?,
+                                _ => write!(f, "\\x{:02x}", b)?,
+                            }
+                        }
+                        f.write_str("\"")
+                    }
+                }
+                ByteStr(&self.name)
+            })
+            .field("dirent_off", &self.dirent_off)
+            .finish()
+    }
+}
+
 /// Handle to an open file. Dropping it closes the file.
 pub trait File: Sync {
+    /// Get all entries in this directory.
+    fn get_dirents(&self) -> EResult<Vec<Dirent>> {
+        let vnode = self.get_vnode().ok_or(Errno::ESPIPE)?;
+        let ops = vnode.ops.lock_shared();
+        ops.get_dirents(&vnode)
+    }
     /// Get the device that this file represents, if any.
     fn get_device(&self) -> Option<BaseDevice> {
         None
@@ -1005,46 +1040,43 @@ unsafe extern "C" fn fatfs_test() {
         storage: MediaType::Block(dev),
     };
 
-    // Hexdump the first couple bytes.
-    let mut tmp = Vec::new();
-    tmp.resize(1024, 0);
-    media.read(0, &mut tmp).unwrap();
-    logkf!(LogLevel::Debug, "First bytes on media:");
-    for i in 0..tmp.len() / 16 {
-        logkf!(
-            LogLevel::Debug,
-            "  {:02x} {:02x} {:02x} {:02x}  {:02x} {:02x} {:02x} {:02x}  {:02x} {:02x} {:02x} {:02x}  {:02x} {:02x} {:02x} {:02x}",
-            tmp[i * 16 + 0],
-            tmp[i * 16 + 1],
-            tmp[i * 16 + 2],
-            tmp[i * 16 + 3],
-            tmp[i * 16 + 4],
-            tmp[i * 16 + 5],
-            tmp[i * 16 + 6],
-            tmp[i * 16 + 7],
-            tmp[i * 16 + 8],
-            tmp[i * 16 + 9],
-            tmp[i * 16 + 10],
-            tmp[i * 16 + 11],
-            tmp[i * 16 + 12],
-            tmp[i * 16 + 13],
-            tmp[i * 16 + 14],
-            tmp[i * 16 + 15]
-        );
-    }
-
     // Mount the FAT filesystem.
     mount(None, b"/", Some("vfat"), Some(media), 0).unwrap();
 
-    // Try printing `/LONGFI~2.EXT`.
-    let file = open(None, b"/LONGFI~2.EXT", oflags::READ_ONLY).unwrap();
+    // Print contents of root dir.
+    let dirents = open(None, b"/", oflags::READ_ONLY)
+        .unwrap()
+        .get_dirents()
+        .unwrap();
+    logkf!(LogLevel::Debug, "Dirents: {:#?}", &dirents);
+
+    // Try printing the contents of a file.
+    let file = open(None, b"/.file", oflags::READ_ONLY).unwrap();
     let mut buf = [0u8; 1024];
     let read = file.read(&mut buf).unwrap();
     assert!(read > 0);
-    logkf!(
+    logk_hexdump(
         LogLevel::Debug,
-        "Read {} bytes: {}",
-        read,
-        String::from_utf8_lossy(&buf[..read])
+        "First bytes in the file:",
+        Some(0),
+        &buf[..read],
     );
+
+    // Print the end of bigfile.
+    let file = open(None, b"/BIGFILE", oflags::READ_WRITE).unwrap();
+    let mut buf = [0u8; 1024];
+    let pos = file.seek(SeekMode::End, -1024).unwrap();
+    let read = file.read(&mut buf).unwrap();
+    assert!(read > 0);
+    logk_hexdump(
+        LogLevel::Debug,
+        "Last bytes in the file:",
+        Some(pos as usize),
+        &buf[..read],
+    );
+
+    // Write the the bigfile.
+    file.seek(SeekMode::Set, 0).unwrap();
+    file.write(b"This data brought to you by overwriting the beginning of the file.\n\n")
+        .unwrap();
 }

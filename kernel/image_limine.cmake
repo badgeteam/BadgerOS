@@ -22,14 +22,14 @@ add_custom_command(
     COMMAND mkdir -p ${boot_dir}/boot
     COMMAND cp ${limine_efi} ${boot_dir}/EFI/BOOT/
     COMMAND cp ${limine_boot} ${boot_dir}/boot/
-    COMMAND cp ${CMAKE_CURRENT_LIST_DIR}/testdata/* ${boot_dir}/
+    COMMAND rsync -r ${CMAKE_CURRENT_LIST_DIR}/testdata/ ${boot_dir}
     COMMAND cp ${CMAKE_BINARY_DIR}/badger-os.stripped.elf ${boot_dir}/boot/badger-os.elf
     
     # Making a FAT filesystem image from it.
     COMMAND rm -f ${boot_fatfs}
     COMMAND dd if=/dev/zero bs=1M count=4 of=${boot_fatfs}
     COMMAND mformat -i ${boot_fatfs}
-    COMMAND mcopy -s -i ${boot_fatfs} ${boot_dir}/* ::/
+    COMMAND mcopy -s -i ${boot_fatfs} `find ${boot_dir}/ -mindepth 1 -maxdepth 1` ::/
     
     DEPENDS badger-os.stripped.elf ${limine_efi} ${limine_boot}
 )

@@ -7,6 +7,7 @@ use cluster::{ClusterAlloc, ClusterChain};
 use spec::{Bpb, Dirent, Header16, Header32, LfnEnt, attr};
 
 use crate::{
+    LogLevel,
     badgelib::utf8::{StaticString, StringLike},
     bindings::{
         error::{EResult, Errno},
@@ -20,11 +21,7 @@ use super::{
     media::Media,
     vfs::{VNode, VNodeOps, Vfs, VfsDriver, VfsOps, mflags::MFlags},
 };
-use core::{
-    any::Any,
-    num::{self, NonZeroU8, NonZeroU32},
-    ops::Index,
-};
+use core::{fmt::Debug, num::NonZeroU8};
 
 mod cluster;
 mod spec;
@@ -38,6 +35,7 @@ enum FatType {
 }
 
 /// Either a cluster chain or the region where the FAT12/FAT16 root directory is.
+#[derive(Debug)]
 enum FatFileStorage {
     /// The root directory for FAT12/FAT16, which is stored in a fixed location.
     Root16(u64),
@@ -48,6 +46,7 @@ enum FatFileStorage {
 /// A FAT file node.
 /// Despite FAT not being designed for it, unlinked files can still be accessed by their VNode.
 /// Note: Directories allow writing, which is used internally, and the outer VFS prevents the user from writing to directories.
+#[derive(Debug)]
 struct FatVNode {
     /// Where this file is stored in the media.
     storage: FatFileStorage,
@@ -55,6 +54,8 @@ struct FatVNode {
     len: u32,
     /// Offset of the parent dirent, if any.
     dirent_off: u64,
+    /// Is a directory?
+    is_dir: bool,
 }
 
 /// Helper function that gets a reference to the FAT filesystem from a VNode.
@@ -77,6 +78,62 @@ impl FatVNode {
         }
     }
 
+    /// Helper to read LFN entries for some dirent.
+    #[inline(always)]
+    fn read_lfn(
+        &self,
+        arc_self: &Arc<VNode>,
+        mut offset: u32,
+        lfn_out: &mut impl StringLike,
+    ) -> EResult<bool> {
+        let fatfs = get_fatfs(&arc_self.vfs);
+        if !fatfs.allow_lfn {
+            return Ok(false);
+        }
+
+        let mut order = 1u8;
+        while offset > 0 {
+            offset -= 32;
+            let mut dirent = [0u8; 32];
+            self.read(arc_self, offset as u64, &mut dirent)?;
+            let mut dirent = LfnEnt::from(dirent);
+            if dirent.attr != attr::LONG_NAME {
+                break;
+            }
+            dirent.from_le();
+
+            for (i, &char) in dirent.get_name().iter().enumerate() {
+                if dirent.order & 0x3f != order {
+                    arc_self.vfs.check_eio_failed();
+                    // Invalid LFN; ignore it.
+                    return Ok(false);
+                }
+                if char == 0 {
+                    if dirent.order & 0x40 != 0x40 {
+                        // Invalid LFN; ignore it.
+                        arc_self.vfs.check_eio_failed();
+                        return Ok(false);
+                    }
+                    break;
+                }
+                if !lfn_out.push(unsafe { char::from_u32_unchecked(char as u32) }) {
+                    // Out of memory; only short name can be used.
+                    return Ok(false);
+                }
+            }
+            if dirent.order & 0x40 == 0x40 {
+                return Ok(true);
+            }
+            order += 1;
+        }
+
+        if lfn_out.len() != 0 {
+            Err(Errno::EIO)
+        } else {
+            Ok(false)
+        }
+    }
+
     /// Helper function to iterate dirents.
     /// Stops iteration if `dirent_func` return `Err(_)` or `Ok(false)`.
     fn iter_dirents(
@@ -86,8 +143,6 @@ impl FatVNode {
     ) -> EResult<()> {
         let fatfs = get_fatfs(&arc_self.vfs);
         let mut lfn_buf = StaticString::<NAME_MAX>::new();
-        let mut lfn_seq = Option::<u8>::None;
-        let mut use_lfn = fatfs.allow_lfn;
 
         // Iterate over raw directory entries, only calling `dirent_func` once for each valid dirent.
         // If the LFN name ends up being too long, then the 8.3 format name is used instead.
@@ -105,7 +160,9 @@ impl FatVNode {
                 let mut dirent = raw_dirent;
                 dirent.from_le();
 
-                // TODO: Try to read preceding LFN dirents.
+                // Try to read preceding LFN dirents.
+                lfn_buf.clear();
+                let use_lfn = self.read_lfn(arc_self, offset, &mut lfn_buf)?;
 
                 // Convert short filename.
                 let mut sfn = StaticString::<12>::new();
@@ -278,8 +335,8 @@ impl VNodeOps for FatVNode {
         todo!()
     }
 
-    fn link(&mut self, arc_self: &Arc<VNode>, name: &[u8], inode: &VNode) -> EResult<()> {
-        todo!()
+    fn link(&mut self, _arc_self: &Arc<VNode>, _name: &[u8], _inode: &VNode) -> EResult<()> {
+        Err(Errno::EPERM)
     }
 
     fn make_file(
@@ -295,8 +352,8 @@ impl VNodeOps for FatVNode {
         todo!()
     }
 
-    fn readlink(&self, arc_self: &Arc<VNode>) -> EResult<Box<[u8]>> {
-        todo!()
+    fn readlink(&self, _arc_self: &Arc<VNode>) -> EResult<Box<[u8]>> {
+        Err(Errno::EINVAL)
     }
 
     fn stat(&self, arc_self: &Arc<VNode>) -> EResult<Stat> {
@@ -310,12 +367,16 @@ impl VNodeOps for FatVNode {
         }
     }
 
-    fn get_size(&self, arc_self: &Arc<VNode>) -> u64 {
-        todo!()
+    fn get_size(&self, _arc_self: &Arc<VNode>) -> u64 {
+        self.len as u64
     }
 
-    fn get_type(&self, arc_self: &Arc<VNode>) -> NodeType {
-        todo!()
+    fn get_type(&self, _arc_self: &Arc<VNode>) -> NodeType {
+        if self.is_dir {
+            NodeType::Directory
+        } else {
+            NodeType::Regular
+        }
     }
 
     fn sync(&self, arc_self: &Arc<VNode>) -> EResult<()> {
@@ -347,7 +408,7 @@ struct FatFS {
     fat_type: FatType,
     /// Whether the long filename extension is enabled.
     allow_lfn: bool,
-    /// Log-base 2 of the cluster size in bytes.
+    /// Log-base 2 of the cluster size in sectors.
     cluster_size_exp: u32,
     /// Log-base 2 of the sector size in bytes.
     sector_size_exp: u32,
@@ -375,6 +436,30 @@ struct FatFS {
     legacy_root_size: u32,
     /// Mutex used to protect FAT12 read-modify-write.
     fat12_mutex: Mutex<()>,
+}
+
+impl Debug for FatFS {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("FatFS")
+            .field("media", &self.media)
+            .field("fat_type", &self.fat_type)
+            .field("allow_lfn", &self.allow_lfn)
+            .field("cluster_size_exp", &self.cluster_size_exp)
+            .field("sector_size_exp", &self.sector_size_exp)
+            .field("sectors_per_fat", &self.sectors_per_fat)
+            .field("cluster_count", &self.cluster_count)
+            .field("cluster_alloc", &())
+            .field("data_offset", &self.data_offset)
+            .field("fat_sector", &self.fat_sector)
+            .field("fat_count", &self.fat_count)
+            .field("active_fat", &self.active_fat)
+            .field("mirror_fats", &self.mirror_fats)
+            .field("root_dir_cluster", &self.root_dir_cluster)
+            .field("legacy_root_sector", &self.legacy_root_sector)
+            .field("legacy_root_size", &self.legacy_root_size)
+            .field("fat12_mutex", &())
+            .finish()
+    }
 }
 
 impl FatFS {
@@ -677,7 +762,7 @@ impl FatFS {
                     (bytes[0] >> 4) as u16 | ((bytes[1] as u16) << 4)
                 };
                 if tmp >= 0xff7 {
-                    tmp as u32 + 0xffff_f000
+                    tmp as u32 + 0x0fff_f000
                 } else {
                     tmp as u32
                 }
@@ -689,7 +774,7 @@ impl FatFS {
                     .read(fat_offset + (cluster as u64 * 2), &mut bytes)?;
                 let tmp = u16::from_le_bytes(bytes);
                 if tmp >= 0xfff7 {
-                    tmp as u32 + 0xffff_0000
+                    tmp as u32 + 0x0fff_0000
                 } else {
                     tmp as u32
                 }
@@ -742,6 +827,7 @@ impl VfsOps for FatFS {
                 storage: FatFileStorage::Clusters(chain),
                 len,
                 dirent_off: 0,
+                is_dir: true,
             })?))
         } else {
             Ok(Box::<dyn VNodeOps>::from(Box::try_new(FatVNode {
@@ -750,6 +836,7 @@ impl VfsOps for FatFS {
                 ),
                 len: self.legacy_root_size * 32,
                 dirent_off: 0,
+                is_dir: true,
             })?))
         }
     }
@@ -774,6 +861,7 @@ impl VfsOps for FatFS {
             storage: FatFileStorage::Clusters(chain),
             len: dirent.size,
             dirent_off: cached_dirent.dirent_off,
+            is_dir: (dirent.attr & spec::attr::DIRECTORY) != 0,
         })?))
     }
 
@@ -851,7 +939,8 @@ impl VfsDriver for FatFSDriver {
             - bpb.fat_count as u32 * sectors_per_fat
             - legacy_root_size;
         let cluster_count = data_sectors / bpb.sectors_per_cluster as u32;
-        let cluster_size_exp = bpb.sectors_per_cluster.ilog2();
+        let sector_size_exp = bpb.bytes_per_sector.ilog2();
+        let cluster_size_exp = bpb.sectors_per_cluster.ilog2() + sector_size_exp;
         let fat_sector = bpb.reserved_sector_count as u32;
         let legacy_root_sector = fat_sector + sectors_per_fat * bpb.fat_count as u32;
         let data_sector = legacy_root_sector + legacy_root_size;
@@ -866,7 +955,7 @@ impl VfsDriver for FatFSDriver {
         };
         let root_dir_cluster = header32.first_root_cluster.wrapping_sub(2);
 
-        Ok(Box::<dyn VfsOps>::from(Box::try_new(FatFS {
+        let fs = FatFS {
             media,
             fat_type,
             allow_lfn: self.allow_lfn,
@@ -882,9 +971,11 @@ impl VfsDriver for FatFSDriver {
             legacy_root_sector,
             legacy_root_size,
             fat12_mutex: Mutex::new(()),
-            sector_size_exp: bpb.bytes_per_sector.ilog2(),
+            sector_size_exp,
             root_dir_cluster,
-        })?))
+        };
+
+        Ok(Box::<dyn VfsOps>::from(Box::try_new(fs)?))
     }
 }
 

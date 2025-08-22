@@ -5,6 +5,7 @@
 //! Code that helps with allocation of clusters in memory only.
 
 use core::{
+    fmt::{Debug, Formatter},
     ops::Range,
     sync::atomic::{AtomicU32, AtomicUsize, Ordering},
 };
@@ -224,6 +225,25 @@ pub(super) struct ClusterChain {
     len: u32,
 }
 
+impl Debug for ClusterChain {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        f.write_fmt(format_args!("ClusterChain {{ len: {}, data: [", self.len))?;
+        for (i, link) in self.data.iter().enumerate() {
+            if i > 0 {
+                f.write_str(", ")?;
+            }
+            f.write_fmt(format_args!(
+                "0x{:x}-0x{:x} @ {}",
+                link.range.start,
+                link.range.end - 1,
+                link.offset,
+            ))?;
+        }
+        f.write_str("] }")?;
+        Ok(())
+    }
+}
+
 impl ClusterChain {
     /// Make an empty cluster chain.
     pub(super) fn new() -> Self {
@@ -290,6 +310,7 @@ impl ClusterChain {
                 range: cluster..cluster + 1,
             });
         }
+        self.len += 1;
     }
 
     /// Get the last cluster in this chain.
@@ -347,7 +368,7 @@ impl ClusterChain {
             .binary_search_by(|range| range.offset.cmp(&first_cluster))
         {
             Ok(x) => x,
-            Err(x) => x,
+            Err(x) => x - 1,
         };
 
         // Iterate the ranges of clusters, accessing in as large chunks as possible.
@@ -365,7 +386,7 @@ impl ClusterChain {
             }
 
             // The offset within the data cluster area.
-            let data_start = fileoff_start - access_start
+            let data_start = access_start - fileoff_start
                 + ((range.range.start as u64) << fatfs.cluster_size_exp);
 
             // Actually access the media.
@@ -387,7 +408,7 @@ impl ClusterChain {
             .binary_search_by(|range| range.offset.cmp(&first_cluster))
         {
             Ok(x) => x,
-            Err(x) => x,
+            Err(x) => x - 1,
         };
 
         // Iterate the ranges of clusters, accessing in as large chunks as possible.
@@ -405,7 +426,7 @@ impl ClusterChain {
             }
 
             // The offset within the data cluster area.
-            let data_start = fileoff_start - access_start
+            let data_start = access_start - fileoff_start
                 + ((range.range.start as u64) << fatfs.cluster_size_exp);
 
             // Actually access the media.

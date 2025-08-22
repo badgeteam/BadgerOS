@@ -273,6 +273,12 @@ impl From<[u8; 32]> for Dirent {
     }
 }
 
+impl Into<[u8; 32]> for Dirent {
+    fn into(self) -> [u8; 32] {
+        unsafe { core::mem::transmute(self) }
+    }
+}
+
 #[repr(packed)]
 #[derive(Debug, Default, Clone, Copy)]
 /// FAT long file name directory entry.
@@ -378,6 +384,18 @@ impl LfnEnt {
 
 impl Into<Dirent> for LfnEnt {
     fn into(self) -> Dirent {
+        unsafe { core::mem::transmute(self) }
+    }
+}
+
+impl From<[u8; 32]> for LfnEnt {
+    fn from(value: [u8; 32]) -> Self {
+        unsafe { core::mem::transmute(value) }
+    }
+}
+
+impl Into<[u8; 32]> for LfnEnt {
+    fn into(self) -> [u8; 32] {
         unsafe { core::mem::transmute(self) }
     }
 }

@@ -1,4 +1,7 @@
-use core::fmt::{Display, Formatter, Write};
+use core::{
+    ffi::{c_char, c_void},
+    fmt::{Display, Formatter, Write},
+};
 
 use super::raw;
 
@@ -13,19 +16,45 @@ pub enum LogLevel {
     Debug,
 }
 
+/// Print a hexdump without locking the mutex.
+pub fn logk_hexdump_unlocked(level: LogLevel, msg: &str, addr: Option<usize>, data: &[u8]) {
+    unsafe {
+        raw::logk_len_hexdump_vaddr_from_isr(
+            level as u32,
+            msg.as_ptr() as *const c_char,
+            msg.len(),
+            data.as_ptr() as *const c_void,
+            data.len(),
+            addr.unwrap_or(data.as_ptr() as usize),
+        );
+    }
+}
+
+/// Print a hexdump.
+pub fn logk_hexdump(level: LogLevel, msg: &str, addr: Option<usize>, data: &[u8]) {
+    unsafe {
+        raw::logk_len_hexdump_vaddr(
+            level as u32,
+            msg.as_ptr() as *const c_char,
+            msg.len(),
+            data.as_ptr() as *const c_void,
+            data.len(),
+            addr.unwrap_or(data.as_ptr() as usize),
+        );
+    }
+}
+
 /// Print an unformatted message without locking the mutex.
 pub fn logk_unlocked(level: LogLevel, msg: &str) {
     unsafe {
-        let bytes = msg.as_bytes();
-        raw::logk_len_from_isr(level as u32, bytes.as_ptr(), bytes.len());
+        raw::logk_len_from_isr(level as u32, msg.as_ptr() as *const c_char, msg.len());
     }
 }
 
 /// Print an unformatted message.
 pub fn logk(level: LogLevel, msg: &str) {
     unsafe {
-        let bytes = msg.as_bytes();
-        raw::logk_len(level as u32, bytes.as_ptr(), bytes.len());
+        raw::logk_len(level as u32, msg.as_ptr() as *const c_char, msg.len());
     }
 }
 

@@ -32,6 +32,12 @@ void logk_len(log_level_t level, char const *msg, size_t msg_len);
 // Print a formatted message according to format_str.
 void logkf(log_level_t level, char const *msg, ...);
 // Print a hexdump (usually for debug purposes).
+void logk_len_hexdump(log_level_t level, char const *msg, size_t msg_len, void const *data, size_t size);
+// Print a hexdump, override the address shown (usually for debug purposes).
+void logk_len_hexdump_vaddr(
+    log_level_t level, char const *msg, size_t msg_len, void const *data, size_t size, size_t vaddr
+);
+// Print a hexdump (usually for debug purposes).
 void logk_hexdump(log_level_t level, char const *msg, void const *data, size_t size);
 // Print a hexdump, override the address shown (usually for debug purposes).
 void logk_hexdump_vaddr(log_level_t level, char const *msg, void const *data, size_t size, size_t vaddr);
@@ -45,6 +51,12 @@ void logk_len_from_isr(log_level_t level, char const *msg, size_t msg_len);
 // Print a formatted message according to format_str from an interrupt.
 // Only use this function in emergencies.
 void logkf_from_isr(log_level_t level, char const *msg, ...);
+// Print a hexdump (usually for debug purposes).
+void logk_len_hexdump_from_isr(log_level_t level, char const *msg, size_t msg_len, void const *data, size_t size);
+// Print a hexdump, override the address shown (usually for debug purposes).
+void logk_len_hexdump_vaddr_from_isr(
+    log_level_t level, char const *msg, size_t msg_len, void const *data, size_t size, size_t vaddr
+);
 // Print a hexdump (usually for debug purposes) from an interrupt.
 // Only use this function in emergencies.
 void logk_hexdump_from_isr(log_level_t level, char const *msg, void const *data, size_t size);

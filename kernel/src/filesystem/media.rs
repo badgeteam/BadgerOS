@@ -1,9 +1,9 @@
-use core::cell::UnsafeCell;
+use core::{cell::UnsafeCell, fmt::Debug};
 
 use alloc::boxed::Box;
 
 use crate::bindings::{
-    device::class::block::BlockDevice,
+    device::{HasBaseDevice, class::block::BlockDevice},
     error::{EResult, Errno},
 };
 
@@ -13,7 +13,20 @@ pub enum MediaType {
     Ram(UnsafeCell<Box<[u8]>>),
 }
 
+impl Debug for MediaType {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Block(arg0) => f.debug_tuple("Block").field(&arg0.id()).finish(),
+            Self::Ram(arg0) => f
+                .debug_tuple("Ram")
+                .field(&unsafe { arg0.as_ref_unchecked() }.len())
+                .finish(),
+        }
+    }
+}
+
 /// Specifies a partition to mount a filesystem on.
+#[derive(Debug)]
 pub struct Media {
     /// Partition byte offset.
     pub offset: u64,

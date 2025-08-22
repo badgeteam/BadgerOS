@@ -13,6 +13,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#define LOGK_HEXDUMP_COLS   16
+#define LOGK_HEXDUMP_GROUPS 4
+
 #define isvalidlevel(level) ((level) >= 0 && (level) < 5)
 
 mutex_t log_mtx = MUTEX_T_INIT;
@@ -95,14 +98,35 @@ void logkf(log_level_t level, char const *msg, ...) {
 }
 
 // Print a hexdump (usually for debug purposes).
+void logk_len_hexdump(log_level_t level, char const *msg, size_t msg_len, void const *data, size_t size) {
+    bool acq = mutex_acquire(&log_mtx, LOG_MUTEX_TIMEOUT);
+    logk_len_hexdump_vaddr_from_isr(level, msg, msg_len, data, size, (size_t)data);
+    if (acq)
+        mutex_release(&log_mtx);
+}
+
+// Print a hexdump, override the address shown (usually for debug purposes).
+void logk_len_hexdump_vaddr(
+    log_level_t level, char const *msg, size_t msg_len, void const *data, size_t size, size_t vaddr
+) {
+    bool acq = mutex_acquire(&log_mtx, LOG_MUTEX_TIMEOUT);
+    logk_len_hexdump_vaddr_from_isr(level, msg, msg_len, data, size, vaddr);
+    if (acq)
+        mutex_release(&log_mtx);
+}
+
+// Print a hexdump (usually for debug purposes).
 void logk_hexdump(log_level_t level, char const *msg, void const *data, size_t size) {
-    logk_hexdump_vaddr(level, msg, data, size, (size_t)data);
+    bool acq = mutex_acquire(&log_mtx, LOG_MUTEX_TIMEOUT);
+    logk_len_hexdump_vaddr_from_isr(level, msg, cstr_length(msg), data, size, (size_t)data);
+    if (acq)
+        mutex_release(&log_mtx);
 }
 
 // Print a hexdump, override the address shown (usually for debug purposes).
 void logk_hexdump_vaddr(log_level_t level, char const *msg, void const *data, size_t size, size_t vaddr) {
     bool acq = mutex_acquire(&log_mtx, LOG_MUTEX_TIMEOUT);
-    logk_hexdump_vaddr_from_isr(level, msg, data, size, vaddr);
+    logk_len_hexdump_vaddr_from_isr(level, msg, cstr_length(msg), data, size, vaddr);
     if (acq)
         mutex_release(&log_mtx);
 }
@@ -140,16 +164,15 @@ void logkf_from_isr(log_level_t level, char const *msg, ...) {
 
 
 // Print a hexdump (usually for debug purposes).
-void logk_hexdump_from_isr(log_level_t level, char const *msg, void const *data, size_t size) {
-    logk_hexdump_vaddr(level, msg, data, size, (size_t)data);
+void logk_len_hexdump_from_isr(log_level_t level, char const *msg, size_t msg_len, void const *data, size_t size) {
+    logk_len_hexdump_vaddr_from_isr(level, msg, msg_len, data, size, (size_t)data);
 }
 
-#define LOGK_HEXDUMP_COLS   16
-#define LOGK_HEXDUMP_GROUPS 4
 // Print a hexdump, override the address shown (usually for debug purposes).
-void logk_hexdump_vaddr_from_isr(log_level_t level, char const *msg, void const *data, size_t size, size_t vaddr) {
+void logk_len_hexdump_vaddr_from_isr(
+    log_level_t level, char const *msg, size_t msg_len, void const *data, size_t size, size_t vaddr
+) {
     logk_prefix(level);
-    size_t msg_len = cstr_length(msg);
     if (msg_len >= 2 && msg[msg_len - 2] == '\r' && msg[msg_len - 1] == '\n') {
         msg_len -= 2;
     } else if (msg_len && msg[msg_len - 1] == '\n') {
@@ -191,4 +214,14 @@ void logk_hexdump_vaddr_from_isr(log_level_t level, char const *msg, void const 
         rawputc('\n');
     }
     rawprint("\033[0m");
+}
+
+// Print a hexdump (usually for debug purposes).
+void logk_hexdump_from_isr(log_level_t level, char const *msg, void const *data, size_t size) {
+    logk_len_hexdump_vaddr_from_isr(level, msg, cstr_length(msg), data, size, (size_t)data);
+}
+
+// Print a hexdump, override the address shown (usually for debug purposes).
+void logk_hexdump_vaddr_from_isr(log_level_t level, char const *msg, void const *data, size_t size, size_t vaddr) {
+    logk_len_hexdump_vaddr_from_isr(level, msg, cstr_length(msg), data, size, vaddr);
 }
