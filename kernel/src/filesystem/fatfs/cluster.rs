@@ -59,8 +59,8 @@ impl ClusterAlloc {
     }
 
     /// Mark all clusters from `chain` as usable.
-    pub(super) fn free_chain(&self, chain: ClusterChain) {
-        for cluster in &chain {
+    pub(super) fn free_chain(&self, chain: &ClusterChain) {
+        for cluster in chain {
             self.free(cluster);
         }
     }
@@ -149,7 +149,7 @@ impl ClusterAlloc {
 
                 // Add the cluster to the chain.
                 if let Err(_) = chain.try_reserve(1) {
-                    self.free_chain(chain);
+                    self.free_chain(&chain);
                     return Err(Errno::ENOMEM);
                 }
                 chain.push(mask.trailing_zeros() + i as u32 * usize::BITS);

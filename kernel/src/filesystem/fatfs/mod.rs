@@ -53,7 +53,7 @@ struct FatVNode {
     /// The size of the file.
     len: u32,
     /// Offset of the parent dirent, if any.
-    dirent_off: u64,
+    dirent_off: Mutex<Option<u64>>,
     /// Is a directory?
     is_dir: bool,
 }
@@ -220,6 +220,16 @@ impl FatVNode {
             dirent_off,
         })
     }
+
+    /// Delete a dirent (doesn't mark clusters as free).
+    fn delete_dirent(&mut self, dirent_off: u64) -> EResult<()> {
+        todo!()
+    }
+
+    /// Create a dirent.
+    fn create_dirent(&mut self, name: &str, is_dir: bool) -> EResult<u64> {
+        todo!()
+    }
 }
 
 impl VNodeOps for FatVNode {
@@ -262,7 +272,7 @@ impl VNodeOps for FatVNode {
                         .cluster_alloc
                         .alloc_chain(new_clusters - chain.len())?;
                     if let Err(x) = chain.try_reserve(extra_chain.entries_len()) {
-                        fatfs.cluster_alloc.free_chain(extra_chain);
+                        fatfs.cluster_alloc.free_chain(&extra_chain);
                         return Err(x.into());
                     }
 
@@ -332,7 +342,47 @@ impl VNodeOps for FatVNode {
     }
 
     fn unlink(&mut self, arc_self: &Arc<VNode>, name: &[u8], is_rmdir: bool) -> EResult<()> {
-        todo!()
+        let fatfs = get_fatfs(&arc_self.vfs);
+        let ent = self.find_dirent(arc_self, name)?;
+
+        // Get the FAT dirent.
+        let mut fat_ent = [0u8; size_of::<Dirent>()];
+        fatfs.media.read(ent.dirent_off, &mut fat_ent)?;
+        let mut fat_ent = Dirent::from(fat_ent);
+        fat_ent.from_le();
+        let first_cluster =
+            ((fat_ent.first_cluster_hi as u32) << 16) | (fat_ent.first_cluster_lo as u32);
+        let chain = if let Some(first_cluster) = first_cluster.checked_sub(2) {
+            Some(fatfs.read_chain(&arc_self.vfs, first_cluster)?)
+        } else {
+            None
+        };
+
+        let unlinked_vnode = arc_self.vfs.get_vnode(ent.ino);
+        if let Some(unlinked_vnode) = &unlinked_vnode {
+            // Mark it as not having a dirent on the VNode, if it is currently open.
+            let fat_vnode = unsafe {
+                &*(unlinked_vnode.ops.data().as_ref() as *const dyn VNodeOps as *const FatVNode)
+            };
+            *fat_vnode.dirent_off.lock() = None;
+        }
+
+        // Either way, mark the clusters as free in the FAT.
+        // If the VNode was still open, it'll only have them reserved in memory.
+        if let Some(chain) = &chain {
+            for cluster in chain {
+                fatfs.fat_set(cluster, FatValue::Free)?;
+            }
+        }
+
+        if unlinked_vnode.is_none() {
+            // If not open, mark the chain as free.
+            if let Some(chain) = &chain {
+                fatfs.cluster_alloc.free_chain(chain);
+            }
+        }
+
+        self.delete_dirent(ent.dirent_off)
     }
 
     fn link(&mut self, _arc_self: &Arc<VNode>, _name: &[u8], _inode: &VNode) -> EResult<()> {
@@ -826,7 +876,7 @@ impl VfsOps for FatFS {
             Ok(Box::<dyn VNodeOps>::from(Box::try_new(FatVNode {
                 storage: FatFileStorage::Clusters(chain),
                 len,
-                dirent_off: 0,
+                dirent_off: Mutex::new(None),
                 is_dir: true,
             })?))
         } else {
@@ -835,7 +885,7 @@ impl VfsOps for FatFS {
                     (self.legacy_root_sector as u64) << self.sector_size_exp,
                 ),
                 len: self.legacy_root_size * 32,
-                dirent_off: 0,
+                dirent_off: Mutex::new(None),
                 is_dir: true,
             })?))
         }
@@ -860,7 +910,7 @@ impl VfsOps for FatFS {
         Ok(Box::<dyn VNodeOps>::from(Box::try_new(FatVNode {
             storage: FatFileStorage::Clusters(chain),
             len: dirent.size,
-            dirent_off: cached_dirent.dirent_off,
+            dirent_off: Mutex::new(Some(cached_dirent.dirent_off)),
             is_dir: (dirent.attr & spec::attr::DIRECTORY) != 0,
         })?))
     }
@@ -888,7 +938,7 @@ impl VfsDriver for FatFSDriver {
         Ok(false)
     }
 
-    fn mount(&self, media: Option<Media>, mflags: MFlags) -> EResult<Box<dyn VfsOps>> {
+    fn mount(&self, media: Option<Media>, _mflags: MFlags) -> EResult<Box<dyn VfsOps>> {
         // Read the BPB.
         let media = media.ok_or(Errno::ENODEV)?;
         let mut bpb = [0u8; size_of::<Bpb>()];

@@ -1,5 +1,6 @@
 use core::{
     cell::UnsafeCell,
+    fmt::Debug,
     marker::PhantomData,
     mem::MaybeUninit,
     ops::{Deref, DerefMut},
@@ -7,11 +8,12 @@ use core::{
 
 use super::{
     error::{EResult, Errno},
-    raw::{self, mutex_t, spinlock_t, timestamp_us_t},
+    raw::{self, mutex_t, timestamp_us_t},
 };
 
 /// A BadgerOS mutex with a value in it.
 #[repr(C)]
+#[derive(Debug)]
 pub struct Mutex<T, const SHARED: bool = true> {
     inner: UnsafeCell<mutex_t>,
     data: UnsafeCell<T>,
