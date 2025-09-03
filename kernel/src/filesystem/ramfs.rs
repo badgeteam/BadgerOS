@@ -20,7 +20,7 @@ use crate::{
         mutex::Mutex,
         spinlock::Spinlock,
     },
-    filesystem::vfs::mflags,
+    filesystem::{VNodeMtxInner, vfs::mflags},
 };
 
 use super::{
@@ -76,25 +76,31 @@ impl RamFS {
 }
 
 impl VfsOps for Arc<RamFS> {
-    fn open_root(&self, self_arc: &Arc<Vfs>) -> EResult<Box<dyn VNodeOps>> {
+    fn uses_inodes(&self) -> bool {
+        true
+    }
+
+    fn open_root(&self, _self_arc: &Arc<Vfs>) -> EResult<Box<dyn VNodeOps>> {
         self.open_impl(1)
     }
 
-    fn open(&self, self_arc: &Arc<Vfs>, dirent: &Dirent) -> EResult<Box<dyn VNodeOps>> {
+    fn open(&self, _self_arc: &Arc<Vfs>, dirent: &Dirent) -> EResult<Box<dyn VNodeOps>> {
         self.open_impl(dirent.ino)
     }
 
     fn rename(
         &self,
-        self_arc: &Arc<Vfs>,
-        src_dir: &VNode,
+        _self_arc: &Arc<Vfs>,
+        src_dir: &Arc<VNode>,
         src_name: &[u8],
-        dest_dir: &VNode,
+        _src_mutexinner: &mut VNodeMtxInner,
+        dest_dir: &Arc<VNode>,
         dest_name: &[u8],
-    ) -> EResult<()> {
+        _dest_mutexinner: &mut VNodeMtxInner,
+    ) -> EResult<Dirent> {
         // Downcast trait objects into RamVNode.
-        let mut src_ops = src_dir.ops.lock();
-        let mut dest_ops = dest_dir.ops.lock();
+        let mut src_ops = src_dir.mtx.lock();
+        let mut dest_ops = dest_dir.mtx.lock();
         let src_ramnode = (&mut *src_ops as &mut dyn Any)
             .downcast_mut::<RamVNode>()
             .unwrap();
@@ -122,9 +128,9 @@ impl VfsOps for Arc<RamFS> {
 
         // Insert the entry under the new name.
         entry.name = dest_name.into(); // TODO: OOM handling.
-        dest_dir_map.insert(dest_name.into(), entry);
+        dest_dir_map.insert(dest_name.into(), entry.clone());
 
-        Ok(())
+        Ok(entry)
     }
 }
 
@@ -291,7 +297,13 @@ impl VNodeOps for RamVNode {
         Ok(directory.values().map(Dirent::clone).collect())
     }
 
-    fn unlink(&mut self, _arc_self: &Arc<VNode>, name: &[u8], is_rmdir: bool) -> EResult<()> {
+    fn unlink(
+        &mut self,
+        _arc_self: &Arc<VNode>,
+        name: &[u8],
+        is_rmdir: bool,
+        _unlinked_vnode: Option<Arc<VNode>>,
+    ) -> EResult<()> {
         let inode = unsafe { self.inode.as_mut_unchecked() };
         let directory = inode.data.as_directory_mut().ok_or(Errno::EINVAL)?;
 
@@ -368,6 +380,7 @@ impl VNodeOps for RamVNode {
                 ino: ram_inode.ino,
                 type_: ram_inode.data.node_type(),
                 name: name.into(),
+                dirent_disk_off: 0,
                 dirent_off: 0,
             },
         );
@@ -380,7 +393,7 @@ impl VNodeOps for RamVNode {
         _arc_self: &Arc<VNode>,
         name: &[u8],
         spec: MakeFileSpec,
-    ) -> EResult<Box<dyn VNodeOps>> {
+    ) -> EResult<(Dirent, Box<dyn VNodeOps>)> {
         let inode = unsafe { self.inode.as_mut_unchecked() };
         let directory = inode.data.as_directory_mut().ok_or(Errno::EINVAL)?;
 
@@ -424,33 +437,39 @@ impl VNodeOps for RamVNode {
 
         self.vfs.inodes.lock().insert(ino, new_inode.clone());
 
-        directory.insert(
-            name.into(),
-            Dirent {
-                ino,
-                type_: unsafe { new_inode.as_ref_unchecked() }.data.node_type(),
-                name: name.into(),
-                dirent_off: 0,
-            },
-        );
+        let dirent = Dirent {
+            ino,
+            type_: unsafe { new_inode.as_ref_unchecked() }.data.node_type(),
+            name: name.into(),
+            dirent_disk_off: 0,
+            dirent_off: 0,
+        };
+        directory.insert(name.into(), dirent.clone());
 
-        Ok(Box::<dyn VNodeOps>::from(ops))
+        Ok((dirent, Box::<dyn VNodeOps>::from(ops)))
     }
 
-    fn rename(&mut self, _arc_self: &Arc<VNode>, old_name: &[u8], new_name: &[u8]) -> EResult<()> {
+    fn rename(
+        &mut self,
+        _arc_self: &Arc<VNode>,
+        old_name: &[u8],
+        new_name: &[u8],
+    ) -> EResult<Dirent> {
         let inode = unsafe { self.inode.as_mut_unchecked() };
         let directory = inode.data.as_directory_mut().ok_or(Errno::EINVAL)?;
 
         if old_name == new_name {
-            return Ok(());
+            return directory.get(old_name).cloned().ok_or(Errno::ENOENT);
         }
 
         if let Some(dirent) = directory.get(old_name) {
+            let mut dirent = dirent.clone();
+            dirent.name = new_name.into();
             directory
                 .try_insert(new_name.into(), dirent.clone())
                 .map_err(|_| Errno::EEXIST)?;
-            directory.remove(old_name);
-            Ok(())
+            directory.remove(old_name).unwrap();
+            Ok(dirent)
         } else {
             Err(Errno::ENOENT)
         }
@@ -469,7 +488,7 @@ impl VNodeOps for RamVNode {
         unsafe { irq::enable() };
         Ok(Stat {
             dev: 0,
-            ino: inode.ino,
+            ino: 0,
             mode: NodeMode {
                 type_: inode.data.node_type(),
                 others: 7,

@@ -189,6 +189,10 @@ pub trait HasBaseDevice {
     fn as_base<'a>(&self) -> &'a BaseDevice;
     /// Get the raw pointer to the base struct.
     fn base_ptr(&self) -> *mut device_t;
+    /// Get the device class.
+    fn class(&self) -> dev_class_t {
+        unsafe { *self.base_ptr() }.dev_class
+    }
 
     /// Get the parent device, if any.
     fn parent(&self) -> Option<Device> {

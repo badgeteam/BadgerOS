@@ -367,7 +367,7 @@ impl Drop for Fifo {
 impl File for Fifo {
     fn stat(&self) -> EResult<Stat> {
         if let Some(vnode) = &self.vnode {
-            vnode.ops.lock_shared().stat(&vnode)
+            vnode.mtx.lock_shared().ops.stat(&vnode)
         } else {
             Ok(Stat::default())
         }

@@ -255,12 +255,15 @@ impl ClusterChain {
 
     /// Get number of the cluster that is `offset` clusters into the file.
     pub(super) fn get(&self, offset: u32) -> Option<u32> {
+        if self.len == 0 {
+            return None;
+        }
         self.range(offset, 1).into_iter().next()
     }
 
     /// Get an iterator for the range of clusters starting at `offset` with length `length`.
     pub(super) fn range<'a>(&'a self, offset: u32, length: u32) -> ClusterRange<'a> {
-        debug_assert!(offset + length < self.len);
+        debug_assert!(offset + length <= self.len);
         let index = match self
             .data
             .binary_search_by(|range| range.offset.cmp(&offset))
@@ -314,8 +317,11 @@ impl ClusterChain {
     }
 
     /// Get the last cluster in this chain.
-    pub(super) fn last(&self) -> u32 {
-        self.data.last().unwrap().range.end - 1
+    pub(super) fn last(&self) -> Option<u32> {
+        if self.len == 0 {
+            return None;
+        }
+        Some(self.data.last().unwrap().range.end - 1)
     }
 
     /// Extend this chain by consuming another.

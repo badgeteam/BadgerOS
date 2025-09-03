@@ -9,6 +9,7 @@ test = false
 
 [dependencies]
 bytemuck = "1.23.0"
+chrono = { version="0.4.41", default-features = false }
 crc = "3.3.0"
 limine = "0.5.0"
 static_assertions = "1.1.0"

@@ -44,7 +44,8 @@ pub struct VfsFile {
 impl VfsFile {
     /// Implementation of append-mode writes.
     fn append_write(&self, wdata: &[u8]) -> EResult<usize> {
-        let mut ops = self.vnode.ops.lock();
+        let mut guard = self.vnode.mtx.lock();
+        let ops = &mut guard.ops;
         let old_size = ops.get_size(&self.vnode);
         let new_size = old_size
             .checked_add(wdata.len() as u64)
@@ -56,9 +57,9 @@ impl VfsFile {
 
     /// Implementation of non-append writes.
     fn regular_write(&self, wdata: &[u8]) -> EResult<usize> {
-        let mut ops = self.vnode.ops.lock_shared();
+        let mut guard = self.vnode.mtx.lock_shared();
         let mut offset = self.offset.load(Ordering::Relaxed);
-        let mut size = ops.get_size(&self.vnode);
+        let mut size = guard.ops.get_size(&self.vnode);
 
         loop {
             let new_off = offset
@@ -67,16 +68,16 @@ impl VfsFile {
 
             if new_off > size {
                 // The file must be resized.
-                drop(ops);
-                let mut mut_ops = self.vnode.ops.lock();
-                if mut_ops.get_size(&self.vnode) == size {
-                    mut_ops.resize(&self.vnode, new_off)?;
+                drop(guard);
+                let mut mut_guard = self.vnode.mtx.lock();
+                if mut_guard.ops.get_size(&self.vnode) == size {
+                    mut_guard.ops.resize(&self.vnode, new_off)?;
                     size = new_off;
                 } else {
-                    size = mut_ops.get_size(&self.vnode);
+                    size = mut_guard.ops.get_size(&self.vnode);
                 }
-                drop(mut_ops);
-                ops = self.vnode.ops.lock_shared();
+                drop(mut_guard);
+                guard = self.vnode.mtx.lock_shared();
             } else if let Err(x) =
                 self.offset
                     .compare_exchange(offset, new_off, Ordering::Relaxed, Ordering::Relaxed)
@@ -85,7 +86,10 @@ impl VfsFile {
                 offset = x;
             } else {
                 // Offset updated successfully; perform write.
-                return ops.write(&self.vnode, offset, wdata).map(|_| wdata.len());
+                return guard
+                    .ops
+                    .write(&self.vnode, offset, wdata)
+                    .map(|_| wdata.len());
             }
         }
     }
@@ -93,7 +97,10 @@ impl VfsFile {
 
 impl File for VfsFile {
     fn stat(&self) -> EResult<Stat> {
-        self.vnode.ops.lock_shared().stat(&self.vnode)
+        Ok(Stat {
+            ino: self.vnode.ino,
+            ..self.vnode.mtx.lock_shared().ops.stat(&self.vnode)?
+        })
     }
 
     fn tell(&self) -> EResult<u64> {
@@ -101,8 +108,8 @@ impl File for VfsFile {
     }
 
     fn seek(&self, mode: SeekMode, offset: i64) -> EResult<u64> {
-        let ops = self.vnode.ops.lock_shared();
-        let size = ops.get_size(&self.vnode);
+        let guard = self.vnode.mtx.lock_shared();
+        let size = guard.ops.get_size(&self.vnode);
         let mut old_off = self.offset.load(Ordering::Relaxed);
 
         let mut new_off = match mode {
@@ -142,8 +149,8 @@ impl File for VfsFile {
         }
 
         // Get file ops and size.
-        let ops = self.vnode.ops.lock_shared();
-        let size = ops.get_size(&self.vnode);
+        let guard = self.vnode.mtx.lock_shared();
+        let size = guard.ops.get_size(&self.vnode);
 
         // Increment offset and determine read count.
         let mut offset = self.offset.load(Ordering::Acquire);
@@ -159,20 +166,22 @@ impl File for VfsFile {
         }
 
         // Perform read on vnode ops.
-        ops.read(&self.vnode, offset, &mut rdata[0..readlen])?;
+        guard
+            .ops
+            .read(&self.vnode, offset, &mut rdata[0..readlen])?;
         Ok(readlen)
     }
 
     fn resize(&self, size: u64) -> EResult<()> {
-        let mut ops = self.vnode.ops.lock();
-        ops.resize(&self.vnode, size)?;
+        let mut guard = self.vnode.mtx.lock();
+        guard.ops.resize(&self.vnode, size)?;
         self.offset
             .update(Ordering::Relaxed, Ordering::Relaxed, |f| f.min(size));
         Ok(())
     }
 
     fn sync(&self) -> EResult<()> {
-        self.vnode.ops.lock_shared().sync(&self.vnode)
+        self.vnode.mtx.lock_shared().ops.sync(&self.vnode)
     }
 
     fn get_vnode(&self) -> Option<Arc<VNode>> {
@@ -182,22 +191,29 @@ impl File for VfsFile {
 
 #[rustfmt::skip]
 pub mod vnflags {
-    /// VNode flags.
-    pub type VNFlags = u32;
     /// VNode is removed from the filesystem.
     pub const REMOVED: u32 = 0x0000_0001;
 }
 
+/// [`VNode`] operations and flags.
+pub struct VNodeMtxInner {
+    /// VFS implementation of file operations.
+    pub(super) ops: Box<dyn VNodeOps>,
+    /// Dirent cache associated.
+    pub(super) dentcache: Option<Arc<DentCache>>,
+    /// VNode flags.
+    pub(super) flags: u32,
+}
+
 /// A virtual generalization of inodes. Multiple [`super::File`]s may refer to one vnode.
+/// TODO: A mechanism to mark a VNode as unlinked so it cannot be modified (flag exists but logic doesn't).
 pub struct VNode {
-    /// VNode operations.
-    pub(super) ops: Mutex<Box<dyn VNodeOps>>,
+    /// VNode operations and flags.
+    pub(super) mtx: Mutex<VNodeMtxInner>,
     /// Inode number on the parent filesystem.
     pub(super) ino: u64,
     /// VFS on which this VNode exists.
     pub(super) vfs: Arc<Vfs>,
-    /// Dirent cache associated.
-    pub(super) dentcache: Option<Arc<DentCache>>,
     /// VNode flags.
     pub(super) flags: AtomicU32,
     /// What kind of node this is.
@@ -236,7 +252,13 @@ pub trait VNodeOps {
     fn get_dirents(&self, arc_self: &Arc<VNode>) -> EResult<Vec<Dirent>>;
     /// Unlink a node from this directory.
     /// Uses POSIX `rmdir` semantics iff `is_rmdir`, otherwise POSIX unlink semantics.
-    fn unlink(&mut self, arc_self: &Arc<VNode>, name: &[u8], is_rmdir: bool) -> EResult<()>;
+    fn unlink(
+        &mut self,
+        arc_self: &Arc<VNode>,
+        name: &[u8],
+        is_rmdir: bool,
+        unlinked_vnode: Option<Arc<VNode>>,
+    ) -> EResult<()>;
     /// Link an existing inode to this directory.
     fn link(&mut self, arc_self: &Arc<VNode>, name: &[u8], inode: &VNode) -> EResult<()>;
     /// Create a new file in this directory.
@@ -245,14 +267,20 @@ pub trait VNodeOps {
         arc_self: &Arc<VNode>,
         name: &[u8],
         spec: MakeFileSpec,
-    ) -> EResult<Box<dyn VNodeOps>>;
+    ) -> EResult<(Dirent, Box<dyn VNodeOps>)>;
     /// Rename a file within this directory.
     /// See [`VfsOps::rename`] for renaming between two different directories.
-    fn rename(&mut self, arc_self: &Arc<VNode>, old_name: &[u8], new_name: &[u8]) -> EResult<()>;
+    fn rename(
+        &mut self,
+        arc_self: &Arc<VNode>,
+        old_name: &[u8],
+        new_name: &[u8],
+    ) -> EResult<Dirent>;
 
     /// Read the link if this is a symlink.
     fn readlink(&self, arc_self: &Arc<VNode>) -> EResult<Box<[u8]>>;
     /// Get this node's stat buffer.
+    /// This function need not set [`Stat::ino`]; it is copied from the [`VNode`].
     fn stat(&self, arc_self: &Arc<VNode>) -> EResult<Stat>;
     /// Get this node's inode number.
     /// Called only once during construction of the VNode and therefor doesn't have `arc_self`.
@@ -285,6 +313,8 @@ pub struct Vfs {
     pub(super) mountpoint: Option<Arc<VNode>>,
     /// Mounted filesystem flags.
     pub(super) flags: AtomicU32,
+    /// Fake inode counter for filesystems that do not implement inodes.
+    pub(super) next_fake_ino: AtomicU64,
 }
 unsafe impl Sync for Vfs {}
 
@@ -312,32 +342,40 @@ impl Vfs {
         dirent: &Dirent,
         dentcache: Option<Arc<DentCache>>,
     ) -> EResult<Arc<VNode>> {
+        let uses_inodes = self.ops.lock_shared().uses_inodes();
         if let Some(vnode) = self.get_vnode(dirent.ino) {
             return Ok(vnode);
         }
 
         let mut guard = self.vnodes.lock();
-        if let Some(vnode) = try { guard.get(&dirent.ino)?.upgrade()? } {
-            // Race condition: Another thread opened the vnode in the mean time.
-            return Ok(vnode);
-        }
+        if uses_inodes {
+            if let Some(vnode) = try { guard.get(&dirent.ino)?.upgrade()? } {
+                // Race condition: Another thread opened the vnode in the mean time.
+                return Ok(vnode);
+            }
+        } // Omitting this for inode-less filesystems works because the `DentCache` also locks its `vnode` field.
 
         // Call the filesystem to open the vnode.
         let ops = self.ops.lock_shared().open(self, dirent)?;
 
         let fifo = (dirent.type_ == NodeType::Fifo).then(|| FifoShared::new());
         let vnode = Arc::try_new(VNode {
-            ops: Mutex::new(ops),
+            mtx: Mutex::new(VNodeMtxInner {
+                ops,
+                flags: 0,
+                dentcache,
+            }),
             ino: dirent.ino,
             vfs: self.clone(),
-            dentcache,
             flags: AtomicU32::new(0),
             type_: dirent.type_,
             fifo,
         })?;
 
         // Insert the new vnode.
-        guard.insert(dirent.ino, Arc::downgrade(&vnode));
+        if uses_inodes {
+            guard.insert(dirent.ino, Arc::downgrade(&vnode));
+        }
 
         Ok(vnode)
     }
@@ -368,6 +406,9 @@ impl Vfs {
 
 /// Filesystem-wide operations for a [`Vfs`]; instance of a [`VfsDriver`].
 pub trait VfsOps: Sync {
+    /// Whether this type of filesystem has inode numers.
+    /// If disabled, inode numbers will be spoofed when a [`VNode`] is opened.
+    fn uses_inodes(&self) -> bool;
     /// Open the root directory.
     fn open_root(&self, self_arc: &Arc<Vfs>) -> EResult<Box<dyn VNodeOps>>;
     /// Open a file or directory.
@@ -378,11 +419,13 @@ pub trait VfsOps: Sync {
     fn rename(
         &self,
         self_arc: &Arc<Vfs>,
-        src_dir: &VNode,
+        src_dir: &Arc<VNode>,
         src_name: &[u8],
-        dest_dir: &VNode,
+        src_mutexinner: &mut VNodeMtxInner,
+        dest_dir: &Arc<VNode>,
         dest_name: &[u8],
-    ) -> EResult<()>;
+        dest_mutexinner: &mut VNodeMtxInner,
+    ) -> EResult<Dirent>;
 }
 
 /// A filesystem driver.
@@ -395,6 +438,7 @@ pub trait VfsDriver {
 }
 
 /// Data associated with dirent caches for directories.
+#[derive(Clone)]
 pub(super) struct DentCacheDir {
     /// Child dentcache nodes.
     pub children: BTreeMap<Box<[u8]>, Weak<DentCache>>,
@@ -499,7 +543,7 @@ impl DentCache {
         // Handle mounted filesystems.
         while let Some(mounted) = guard.mounted.clone() {
             drop(guard);
-            this = mounted.root().dentcache.clone().unwrap();
+            this = mounted.root().mtx.lock_shared().dentcache.clone().unwrap();
             cache = if let DentCacheType::Directory(x) = &this.type_ {
                 x
             } else {
@@ -519,7 +563,7 @@ impl DentCache {
             // Traverse back up to the parent VFS' mountpoint.
             drop(guard);
             while let Some(x) = this.vfs.mountpoint.clone() {
-                this = x.dentcache.clone().unwrap();
+                this = x.mtx.lock_shared().dentcache.clone().unwrap();
             }
             // Try again to get the parent dir on the new VFS.
             if let Some(x) = &this.parent {
@@ -548,8 +592,9 @@ impl DentCache {
         }
         let self_vnode = this.open_vnode()?;
         let dirent = match self_vnode
-            .ops
+            .mtx
             .lock_shared()
+            .ops
             .find_dirent(&self_vnode, component)
         {
             Ok(x) => x,
@@ -596,7 +641,7 @@ impl DentCache {
             NodeType::Symlink => {
                 // Read the symlink first.
                 let vnode = self_vnode.vfs.open(&dirent, None)?;
-                let name = vnode.ops.lock_shared().readlink(&self_vnode)?;
+                let name = vnode.mtx.lock_shared().ops.readlink(&self_vnode)?;
 
                 let value = Arc::try_new(DentCache {
                     type_: DentCacheType::Symlink(name),
@@ -637,7 +682,7 @@ impl DentCache {
             let mut guard = cache.lock_shared();
             while let Some(mounted) = guard.mounted.clone() {
                 drop(guard);
-                this = mounted.root().dentcache.clone().unwrap();
+                this = mounted.root().mtx.lock_shared().dentcache.clone().unwrap();
                 cache = if let DentCacheType::Directory(x) = &this.type_ {
                     x
                 } else {
@@ -656,7 +701,7 @@ impl DentCache {
         while self.parent.is_none()
             && let Some(mountpoint) = self.vfs.mountpoint.clone()
         {
-            this = mountpoint.dentcache.clone().unwrap();
+            this = mountpoint.mtx.lock_shared().dentcache.clone().unwrap();
         }
         this
     }
@@ -668,6 +713,7 @@ impl DentCache {
 
     /// Get or open the associated VNode.
     pub fn open_vnode(self: &Arc<Self>) -> EResult<Arc<VNode>> {
+        let uses_inodes = self.vfs.ops.lock_shared().uses_inodes();
         if let Some(weak) = &*self.vnode.lock_shared() {
             if let Some(arc) = weak.upgrade() {
                 return Ok(arc);
@@ -683,7 +729,8 @@ impl DentCache {
 
         let vnode = self.vfs.open(
             &self.dirent,
-            if self.dirent.type_ == NodeType::Directory {
+            if self.dirent.type_ == NodeType::Directory || !uses_inodes {
+                // Must also provide for inode-less regular files so re-opening the same file will get the same VNode.
                 Some(self.clone())
             } else {
                 None

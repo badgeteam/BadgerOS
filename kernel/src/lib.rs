@@ -21,8 +21,13 @@
 #![feature(iterator_try_collect)]
 
 extern crate alloc;
+extern crate chrono;
 
-pub use core::{include, option::Option, result::Result};
+pub use core::{
+    include,
+    option::Option::{self, None, Some},
+    result::Result::{self, Err, Ok},
+};
 
 #[macro_use]
 pub mod bindings;

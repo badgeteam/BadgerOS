@@ -93,4 +93,12 @@ impl Media {
         }
         Ok(())
     }
+
+    /// Device this media is attached to, if any.
+    pub fn device(&self) -> Option<BlockDevice> {
+        match &self.storage {
+            MediaType::Block(block_device) => Some(block_device.clone()),
+            _ => None,
+        }
+    }
 }

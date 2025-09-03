@@ -200,7 +200,7 @@ pub const fn pack_date(year: u8, month: u8, day: u8) -> u16 {
 /// * Month number (1-12)
 /// * Day number (1-31)
 pub const fn unpack_date(raw: u16) -> (u8, u8, u8) {
-    ((raw & 31) as u8, ((raw >> 5) & 15) as u8, (raw >> 9) as u8)
+    ((raw >> 9) as u8, ((raw >> 5) & 15) as u8, (raw & 31) as u8)
 }
 
 #[repr(C)]
