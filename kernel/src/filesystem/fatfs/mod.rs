@@ -3,12 +3,11 @@
 // SPDX-License-Identifier: MIT
 
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
-use chrono::{DateTime, Datelike, NaiveDate, TimeZone, Timelike, Utc};
+use chrono::{Datelike, TimeZone, Timelike, Utc};
 use cluster::{ClusterAlloc, ClusterChain};
 use spec::{Bpb, Dirent, Header16, Header32, LfnEnt, attr};
 
 use crate::{
-    LogLevel,
     badgelib::{
         time::Timespec,
         utf8::{StaticString, StringLike},
@@ -1598,6 +1597,29 @@ struct FatFSDriver {
 
 impl VfsDriver for FatFSDriver {
     fn detect(&self, media: &Media) -> EResult<bool> {
+        // Read the BPB.
+        let mut bpb = [0u8; size_of::<Bpb>()];
+        media.read(0, &mut bpb)?;
+        let mut bpb = Bpb::from(bpb);
+        bpb.from_le();
+
+        // Checked signature #1: valid sector size.
+        // Sector size is an integer power of 2 from 512 to 4096.
+        if bpb.bytes_per_sector < 512
+            || bpb.bytes_per_sector > 4096
+            || bpb.bytes_per_sector.count_ones() != 1
+        {
+            return Ok(false);
+        }
+
+        // Checked signature #2: FAT BPB signature bytes.
+        let mut tmp = [0u8; 2];
+        media.read(510, &mut tmp)?;
+        if tmp != [0x55, 0xaa] {
+            return Ok(false);
+        }
+
+        // Both minor signature checks passed, this filesystem is probably FAT.
         Ok(false)
     }
 
