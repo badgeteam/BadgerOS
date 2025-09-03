@@ -179,9 +179,12 @@ impl FatVNode {
                 fatfs.short_name_to_str(&dirent.name, dirent.attr2, &mut sfn);
 
                 // Check validity of dirent.
-                if !dirent.name.iter().all(|&x| {
-                    fatfs.is_valid_short_char(unsafe { char::from_u32_unchecked(x as u32) })
-                }) {
+                if dirent.name != *b".          "
+                    && dirent.name != *b"..         "
+                    && !dirent.name.iter().all(|&x| {
+                        fatfs.is_valid_short_char(unsafe { char::from_u32_unchecked(x as u32) })
+                    })
+                {
                     arc_self.vfs.check_eio_failed();
                 } else if !(dirent_func(
                     offset,
