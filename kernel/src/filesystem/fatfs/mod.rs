@@ -107,7 +107,7 @@ impl FatVNode {
             }
             dirent.from_le();
 
-            for (i, &char) in dirent.get_name().iter().enumerate() {
+            for &char in dirent.get_name().iter() {
                 if dirent.order & 0x3f != order {
                     arc_self.vfs.check_eio_failed();
                     // Invalid LFN; ignore it.
