@@ -6,7 +6,7 @@ use core::{
     cell::UnsafeCell,
     fmt::{Debug, Write},
     ops::Range,
-    panic, str,
+    panic, ptr, str,
     sync::atomic::{AtomicU32, AtomicU64, Ordering},
 };
 
@@ -436,8 +436,8 @@ pub static FSDRIVERS: Mutex<BTreeMap<String, Box<dyn VfsDriver>>> =
     unsafe { Mutex::new_static(BTreeMap::new()) };
 
 /// Helper function that gets the root directory handle.
-fn root_vnode() -> EResult<Arc<VNode>> {
-    let _mount_guard = MOUNT_TABLE.lock_shared();
+fn root_vnode_unlocked(guard: &MountTable) -> EResult<Arc<VNode>> {
+    debug_assert!(ptr::addr_eq(guard, unsafe { MOUNT_TABLE.data() }));
     if let Some(fs) = &*ROOT_FS.lock_shared() {
         Ok(fs.root())
     } else {
@@ -448,19 +448,33 @@ fn root_vnode() -> EResult<Arc<VNode>> {
         Err(Errno::EAGAIN)
     }
 }
+/// Helper function that gets the root directory handle.
+fn root_vnode() -> EResult<Arc<VNode>> {
+    root_vnode_unlocked(&MOUNT_TABLE.lock_shared())
+}
 
 /// Helper function that gets the VNode for `at` parameters.
-fn at_vnode(at: Option<&dyn File>) -> EResult<Arc<VNode>> {
-    let _mount_guard = MOUNT_TABLE.lock_shared();
+fn at_vnode_unlocked(at: Option<&dyn File>, guard: &MountTable) -> EResult<Arc<VNode>> {
+    debug_assert!(ptr::addr_eq(guard, unsafe { MOUNT_TABLE.data() }));
     match at {
         Some(x) => x.get_vnode().ok_or(Errno::ENOTDIR),
-        None => root_vnode(),
+        None => root_vnode_unlocked(guard),
     }
 }
 
+/// Helper function that gets the VNode for `at` parameters.
+fn at_vnode(at: Option<&dyn File>) -> EResult<Arc<VNode>> {
+    at_vnode_unlocked(at, &*MOUNT_TABLE.lock_shared())
+}
+
 /// Walk down the filesystem to a certain path.
-fn walk(mut at: Arc<DentCache>, path: &[u8], follow_last_symlink: bool) -> EResult<Arc<DentCache>> {
-    let _mount_guard = MOUNT_TABLE.lock_shared();
+fn walk_unlocked(
+    mut at: Arc<DentCache>,
+    path: &[u8],
+    follow_last_symlink: bool,
+    guard: &MountTable,
+) -> EResult<Arc<DentCache>> {
+    debug_assert!(ptr::addr_eq(guard, unsafe { MOUNT_TABLE.data() }));
     if path.len() > PATH_MAX {
         // There is no distinction between the errno for NAME_MAX exceeded or PATH_MAX exceeded.
         return Err(Errno::ENAMETOOLONG);
@@ -502,7 +516,12 @@ fn walk(mut at: Arc<DentCache>, path: &[u8], follow_last_symlink: bool) -> EResu
     if path.len() == 0 {
         return Err(Errno::ENOENT);
     } else if path[0] == b'/' {
-        at = root_vnode()?.mtx.lock_shared().dentcache.clone().unwrap();
+        at = root_vnode_unlocked(guard)?
+            .mtx
+            .lock_shared()
+            .dentcache
+            .clone()
+            .unwrap();
     }
 
     loop {
@@ -558,7 +577,12 @@ fn walk(mut at: Arc<DentCache>, path: &[u8], follow_last_symlink: bool) -> EResu
                     if at.readlink()?.len() == 0 {
                         return Err(Errno::ENOENT);
                     } else if at.readlink()?[0] == b'/' {
-                        at = root_vnode()?.mtx.lock_shared().dentcache.clone().unwrap();
+                        at = root_vnode_unlocked(guard)?
+                            .mtx
+                            .lock_shared()
+                            .dentcache
+                            .clone()
+                            .unwrap();
                     } else {
                         at = next;
                     }
@@ -569,6 +593,11 @@ fn walk(mut at: Arc<DentCache>, path: &[u8], follow_last_symlink: bool) -> EResu
     }
 
     Ok(at)
+}
+
+/// Walk down the filesystem to a certain path.
+fn walk(at: Arc<DentCache>, path: &[u8], follow_last_symlink: bool) -> EResult<Arc<DentCache>> {
+    walk_unlocked(at, path, follow_last_symlink, &MOUNT_TABLE.lock_shared())
 }
 
 /// Helper function for [`oflags::CREATE`] logic in [`open`].
@@ -1254,8 +1283,8 @@ pub fn mount(
 
     // Get the directory that is requested for the mountpoint.
     let orig_at = at;
-    let at = at_vnode(at)?;
-    let cache = walk(
+    let at = at_vnode_unlocked(at, &mounts)?;
+    let cache = walk_unlocked(
         at.mtx
             .lock_shared()
             .dentcache
@@ -1263,6 +1292,7 @@ pub fn mount(
             .ok_or(Errno::ENOTDIR)?,
         path,
         true,
+        &mounts,
     )?
     .follow_mounts();
     // Lock it so no modifications can happen while mounting there.
