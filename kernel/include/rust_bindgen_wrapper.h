@@ -12,6 +12,7 @@
 #include "interrupt.h"
 #include "klifetime.h"
 #include "kmodule.h"
+#include "limine.h"
 #include "log.h"
 #include "malloc.h"
 #include "memprotect.h"

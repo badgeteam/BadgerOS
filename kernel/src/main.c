@@ -64,13 +64,17 @@ void basic_runtime_init() {
     bootp_early_init();
 
     // Announce that we're alive.
+    logk_from_isr(LOG_INFO, "================================================");
     logk_from_isr(LOG_INFO, "BadgerOS " CONFIGSTR_CPU " starting...");
+    logk_from_isr(LOG_INFO, "================================================");
 
     // Kernel memory allocator initialization.
     kernel_heap_init();
 
     // Post-heap memory protection initialization.
     memprotect_postheap_init();
+    // Post-heap protocol-dependent initialization.
+    bootp_postheap_init();
 
     // Global scheduler initialization.
     sched_init();
@@ -149,27 +153,8 @@ static void kernel_init() {
     }
     set_clear(&kinit_join_threads);
 
-    void fatfs_test();
-    fatfs_test();
-
-    /*
     // Try to mount the root filesystem.
-    errno_t res = fs_mount_root_fs();
-    if (res < 0) {
-        logkf(LOG_FATAL, "Failed to mount root filesystem: %{cs} (%{cs})", errno_get_name(-res),
-    errno_get_desc(-res)); panic_abort();
-    }
-    */
-
-    // Temporary filesystem image.
-    errno_t res;
-    res = fs_mount(FILE_NONE, "/", 1, "ramfs", NULL, 0);
-    assert_always(res >= 0);
-    res = fs_make_file(FILE_NONE, "/dev", 4, (make_file_spec_t){.type = NODE_TYPE_DIRECTORY});
-    assert_always(res >= 0);
-    res = fs_mount(FILE_NONE, "/dev", 4, "devtmpfs", NULL, 0);
-    assert_always(res >= 0);
-    init_ramfs();
+    fs_mount_root_fs();
 }
 
 

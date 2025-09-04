@@ -1,7 +1,6 @@
 use core::{
     cell::UnsafeCell,
     marker::PhantomData,
-    mem::MaybeUninit,
     ops::{Deref, DerefMut},
     sync::atomic::{Ordering, fence},
 };

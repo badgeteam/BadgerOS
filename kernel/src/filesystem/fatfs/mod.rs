@@ -968,6 +968,17 @@ impl VNodeOps for FatVNode {
             FatFileStorage::Clusters(chain) => chain.sync(fatfs),
         }
     }
+
+    unsafe fn close(&mut self, vnode_self: &VNode) {
+        if let FatFileStorage::Clusters(chain) = &self.storage
+            && self.dirent_disk_off.lock_shared().is_none()
+            && vnode_self.is_vfs_root().is_none()
+        {
+            // If this VNode was unlinked, mark the clusters as free now.
+            let fatfs = get_fatfs(&vnode_self.vfs);
+            fatfs.cluster_alloc.free_chain(chain);
+        }
+    }
 }
 
 /// FAT entry values.
@@ -1627,7 +1638,7 @@ impl VfsDriver for FatFSDriver {
         }
 
         // Both minor signature checks passed, this filesystem is probably FAT.
-        Ok(false)
+        Ok(true)
     }
 
     fn mount(&self, media: Option<Media>, _mflags: MFlags) -> EResult<Box<dyn VfsOps>> {
@@ -1738,4 +1749,4 @@ fn register_fatfs() {
         .insert("msdos".into(), Box::new(FatFSDriver { allow_lfn: false }));
 }
 
-register_kmodule!(ramfs, [1, 0, 0], register_fatfs);
+register_kmodule!(fatfs, [1, 0, 0], register_fatfs);

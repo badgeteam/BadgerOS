@@ -88,7 +88,7 @@ impl<T, const SHARED: bool> Mutex<T, SHARED> {
 impl<T: Clone> Mutex<T, true> {
     /// Read the value in the mutex.
     pub fn read(&self) -> T {
-        self.lock_shared().clone()
+        (*self.lock_shared()).clone()
     }
 }
 
@@ -107,6 +107,14 @@ pub struct MutexGuard<'a, T, const SHARED: bool> {
 }
 
 impl<'a, T, const SHARED: bool> MutexGuard<'a, T, SHARED> {
+    /// Create from an already locked mutex and a data pointer.
+    pub unsafe fn from_raw_parts(mutex: *mut mutex_t, data: &'a mut T) -> Self {
+        Self {
+            mutex,
+            data,
+            marker: PhantomData,
+        }
+    }
     /// Try to lock a mutex.
     pub unsafe fn try_new_raw(
         mutex: *mut mutex_t,
@@ -173,6 +181,14 @@ pub struct SharedMutexGuard<'a, T> {
 }
 
 impl<'a, T> SharedMutexGuard<'a, T> {
+    /// Create from an already locked mutex and a data pointer.
+    pub unsafe fn from_raw_parts(mutex: *mut mutex_t, data: &'a T) -> Self {
+        Self {
+            mutex,
+            data,
+            marker: PhantomData,
+        }
+    }
     /// Try to lock a mutex as shared.
     pub unsafe fn try_new_raw(
         mutex: *mut mutex_t,

@@ -179,6 +179,12 @@ typedef struct {
 
 // Filesystem is read-only.
 #define FS_M_READ_ONLY 0x00000001
+/// Do not follow symbolic links.
+#define FS_M_NOFOLLOW  0x00000020
+/// Try to cancel pending I/O operations; only supported on certain filesystems.
+#define FS_M_FORCE     0x00010000
+/// Lazily unmount; remove the filesystem from the tree now, and wait with unmount until open handles are closed.
+#define FS_M_DETACH    0x00020000
 
 // The maximum number of symlinks followed.
 #define LINK_MAX 32
@@ -192,17 +198,20 @@ typedef struct {
 // Mount a filesystem.
 errno_t
     fs_mount(file_t at, char const *path, size_t path_len, char const *type, fs_media_t *media, uint32_t mountflags);
+// Unmount a filesystem given mountpoint or media.
+errno_t fs_umount(file_t at, char const *path, size_t path_len, uint32_t mountflags);
+// Auto-mount the root filesystem according to kernel parameters, or panic if impossible.
+void    fs_mount_root_fs();
 
-
+// Create an unnamed pipe.
+fs_pipe_t fs_pipe(uint32_t oflags);
 
 // Open a file.
 errno_file_t fs_open(file_t at, char const *path, size_t path_len, uint32_t oflags);
-
 // Drop a share from a file descriptor.
-void fs_file_drop(file_t file);
-
+void         fs_file_drop(file_t file);
 // Create another share for a file descriptor.
-file_t fs_file_clone(file_t file);
+file_t       fs_file_clone(file_t file);
 
 // Create a new name for a tile.
 errno_t fs_link(
@@ -214,15 +223,12 @@ errno_t fs_link(
     size_t      new_path_len,
     uint32_t    append
 );
-
 // Remove a file or directory.
 // Uses POSIX `rmdir` semantics iff `is_rmdir`, otherwise POSIX unlink semantics.
 errno_t fs_unlink(file_t at, char const *path, size_t path_len, int is_rmdir);
-
 // Create a new file or directory.
 // The spec parameter should be defined as needed for NewFileSpec.
 errno_t fs_make_file(file_t at, char const *path, size_t path_len, make_file_spec_t spec);
-
 // Rename a file within the same filesystem.
 errno_t fs_rename(
     file_t      old_at,
@@ -233,17 +239,11 @@ errno_t fs_rename(
     size_t      new_path_len,
     uint32_t    flags
 );
-
 // Get the real path from some canonical path.
 // The result is written to out_path, which must have at least out_path_len bytes.
 errno_t fs_realpath(
     file_t at, char const *path, size_t path_len, int follow_last_symlink, char **out_path, size_t *out_path_len
 );
-
-// Create an unnamed pipe.
-fs_pipe_t fs_pipe(uint32_t oflags);
-
-
 
 // Get the device that this file represents, if any.
 bool         fs_get_device(file_t file, uint32_t *id_out);

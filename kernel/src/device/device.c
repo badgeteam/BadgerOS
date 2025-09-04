@@ -48,9 +48,9 @@ static uint32_t id_ctr;
 // Devices list mutex.
 mutex_t         devs_mtx     = MUTEX_T_INIT_SHARED;
 // Drivers set mutex.
-static mutex_t  drivers_mtx  = MUTEX_T_INIT_SHARED;
+mutex_t         drivers_mtx  = MUTEX_T_INIT_SHARED;
 // Set of drivers.
-static set_t    drivers      = PTR_SET_EMPTY;
+set_t           drivers      = PTR_SET_EMPTY;
 // Mutex guarding the act of changing the interrupt graph.
 mutex_t         irqconn_mtx  = MUTEX_T_INIT_SHARED;
 // Spinlock guarding changes to interrupt graph fields.
@@ -502,6 +502,7 @@ void device_pop_ref(device_t *device_base) {
                 rtree_clear(&device->block.cache);
             }
         } break;
+        case DEV_CLASS_CHAR: /* NOLINT; no action required. */ break;
         case DEV_CLASS_IRQCTL: /* NOLINT; no action required. */ break;
         case DEV_CLASS_TTY: /* NOLINT; no action required. */ break;
         case DEV_CLASS_PCICTL: /* NOLINT; no action required. */ break;

@@ -11,8 +11,6 @@
 
 static void add_builtin_drivers() {
     driver_add(&driver_generic_pcie.base);
-    // driver_add(&driver_generic_ahci.base);
-    // driver_add(&driver_generic_sata.base);
     void add_rust_builtin_drivers();
     add_rust_builtin_drivers();
 }
@@ -20,11 +18,11 @@ static void add_builtin_drivers() {
 static void dummy() {
 }
 
-static kmodule_t drivers = {
+static kmodule_t builtin_drivers = {
     .min_abi = KMODULE_ABI_VER,
     .mod_ver = {1, 0, 0},
     .name    = "drivers",
     .init    = add_builtin_drivers,
     .deinit  = dummy,
 };
-REGISTER_KMODULE(drivers);
+REGISTER_KMODULE(builtin_drivers);

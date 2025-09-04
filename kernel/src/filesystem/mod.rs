@@ -14,7 +14,7 @@ use access::Access;
 use alloc::{boxed::Box, collections::btree_map::BTreeMap, string::String, sync::Arc, vec::Vec};
 use device::{BlockDevFile, CharDevFile};
 use linkflags::LinkFlags;
-use media::{Media, MediaType};
+use media::Media;
 use oflags::OFlags;
 use vfs::{DentCache, DentCacheDir, DentCacheType, VNode, Vfs, VfsDriver, VfsFile, mflags::MFlags};
 
@@ -23,7 +23,7 @@ use crate::{
     badgelib::time::Timespec,
     bindings::{
         device::{
-            BaseDevice, DeviceFilters, HasBaseDevice,
+            BaseDevice, HasBaseDevice,
             class::{block::BlockDevice, char::CharDevice},
         },
         error::{EResult, Errno},
@@ -35,7 +35,7 @@ use crate::{
         fifo::{Fifo, FifoShared},
         vfs::{VNodeMtxInner, mflags, vnflags},
     },
-    logk_hexdump, logkf,
+    logkf,
 };
 
 pub mod c_api;
@@ -1163,6 +1163,7 @@ fn detect<'a>(
             return Ok(&*ent.0);
         }
     }
+    logkf!(LogLevel::Error, "Cannot detect filesystem type");
     return Err(Errno::ENOTSUP);
 }
 
@@ -1417,43 +1418,4 @@ pub fn pipe(oflags: OFlags) -> EResult<(Arc<dyn File>, Arc<dyn File>)> {
         shared,
     });
     Ok((write_end, read_end))
-}
-
-#[unsafe(no_mangle)]
-unsafe extern "C" fn fatfs_test() {
-    let devs = BlockDevice::filter(DeviceFilters::default()).unwrap();
-
-    // We assume the FAT FS to be at 4096 * 512 offset in the first block device.
-    let dev = devs.iter().next().unwrap().clone();
-    let media = Media {
-        offset: 4096 * 512,
-        size: 8192 * 512,
-        storage: MediaType::Block(dev.clone()),
-    };
-
-    // Mount the FAT filesystem.
-    mount(None, b"/", Some("vfat"), Some(media), 0).unwrap();
-
-    // Print contents of root dir.
-    let dirents = open(None, b"/", oflags::READ_ONLY)
-        .unwrap()
-        .get_dirents()
-        .unwrap();
-    logkf!(LogLevel::Debug, "Dirents: {:#?}", &dirents);
-
-    // Try printing the contents of a file.
-    let file = open(None, b"/.file", oflags::READ_ONLY).unwrap();
-    let mut buf = [0u8; 1024];
-    let read = file.read(&mut buf).unwrap();
-    assert!(read > 0);
-    logk_hexdump(
-        LogLevel::Debug,
-        "First bytes in the file:",
-        Some(0),
-        &buf[..read],
-    );
-    drop(file);
-
-    // Unmount the filesystem again.
-    umount(None, b"/", 0).unwrap();
 }

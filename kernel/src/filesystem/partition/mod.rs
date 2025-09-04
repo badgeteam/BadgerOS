@@ -1,4 +1,5 @@
 use alloc::{boxed::Box, string::String, vec::Vec};
+use uuid::Uuid;
 
 use crate::{
     bindings::{
@@ -20,10 +21,10 @@ pub struct Partition {
     pub offset: u64,
     /// On-disk byte size.
     pub size: u64,
-    /// Type GUID.
-    pub type_: u128,
-    /// Partition GUI.
-    pub uuid: u128,
+    /// Type UUID.
+    pub type_: Uuid,
+    /// Partition UUID.
+    pub uuid: Uuid,
     /// Partition name converted to UTF-8.
     pub name: String,
     /// Whether the partition is read-only.
@@ -36,8 +37,8 @@ impl Into<partition_t> for Partition {
         partition_t {
             offset: self.offset,
             size: self.size,
-            type_: [self.type_ as u64, (self.type_ >> 64) as u64],
-            uuid: [self.uuid as u64, (self.uuid >> 64) as u64],
+            type_: self.type_.as_u64_pair().into(),
+            uuid: self.uuid.as_u64_pair().into(),
             name: name.0,
             name_len: name.1,
             readonly: self.readonly,
@@ -52,8 +53,8 @@ pub struct VolumeInfo {
     pub parts: Vec<Partition>,
     /// Volume label / name.
     pub name: String,
-    /// Disk UUID.
-    pub uuid: u128,
+    /// Disk UUID converted to u128 with equivalent printed hex value.
+    pub uuid: Uuid,
 }
 
 impl Into<volume_info_t> for VolumeInfo {
@@ -66,7 +67,7 @@ impl Into<volume_info_t> for VolumeInfo {
             parts_len: parts.1,
             name: name.0,
             name_len: name.1,
-            uuid: [self.uuid as u64, (self.uuid >> 64) as u64],
+            uuid: self.uuid.as_u64_pair().into(),
         }
     }
 }

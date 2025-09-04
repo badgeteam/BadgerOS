@@ -202,6 +202,11 @@ struct dev_filter {
     uint32_t        parent_id;
 };
 
+// Drivers set mutex.
+extern mutex_t drivers_mtx;
+// Set of drivers.
+extern set_t   drivers;
+
 
 
 // Test a device info against a set of DTB compatible strings.

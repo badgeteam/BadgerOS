@@ -20,6 +20,7 @@
 #![feature(map_try_insert)]
 #![feature(iterator_try_collect)]
 
+#[macro_use]
 extern crate alloc;
 extern crate chrono;
 

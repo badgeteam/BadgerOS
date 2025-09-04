@@ -21,10 +21,7 @@ use super::{Dirent, File, MakeFileSpec, NodeType, SeekMode, Stat, media::Media};
 use crate::{
     LogLevel,
     bindings::{
-        device::{
-            BaseDevice,
-            class::{block::BlockDevice, char::CharDevice},
-        },
+        device::BaseDevice,
         error::{EResult, Errno},
         mutex::Mutex,
     },
@@ -278,6 +275,7 @@ impl VNode {
 
 impl Drop for VNode {
     fn drop(&mut self) {
+        unsafe { self.mtx.lock().ops.close(self) };
         self.vfs.vnodes.lock().remove(&self.ino);
     }
 }
@@ -345,6 +343,9 @@ pub trait VNodeOps {
     fn get_type(&self, arc_self: &Arc<VNode>) -> NodeType;
     /// Sync the underlying caches to disk.
     fn sync(&self, arc_self: &Arc<VNode>) -> EResult<()>;
+
+    /// Called in the [`Drop`] implementation of [`VNode`].
+    unsafe fn close(&mut self, _vnode_self: &VNode) {}
 }
 
 #[rustfmt::skip]

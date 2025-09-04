@@ -1,6 +1,9 @@
 use crate::{
     LogLevel,
-    bindings::raw::{dev_class_t, dev_filter_t, set_ent_t, timestamp_us_t},
+    bindings::{
+        self,
+        raw::{dev_class_t, dev_filter_t, set_ent_t, timestamp_us_t},
+    },
     filesystem::File,
     logkf,
 };
@@ -17,11 +20,12 @@ use crate::bindings::raw::mutex_t;
 
 use super::{
     error::{EResult, Errno},
+    mutex::SharedMutexGuard,
     raw::{
         self, dev_addr_t, dev_class_t_DEV_CLASS_BLOCK, dev_class_t_DEV_CLASS_CHAR,
         dev_class_t_DEV_CLASS_PCICTL, dev_class_t_DEV_CLASS_UNKNOWN, dev_state_t, device_block_t,
         device_char_t, device_info_t, device_pcictl_t, device_t, driver_t, dtb_handle_t,
-        dtb_node_t, irqno_t,
+        dtb_node_t, irqno_t, set_next,
     },
 };
 
@@ -709,4 +713,27 @@ pub fn add_driver(driver: &'static driver_t) -> EResult<()> {
 
 pub fn remove_driver(driver: &'static driver_t) -> EResult<()> {
     Errno::check(unsafe { raw::driver_remove(driver) })
+}
+
+pub fn iter_drivers(mut cb: impl FnMut(SharedMutexGuard<'static, driver_t>) -> bool) {
+    unsafe {
+        bindings::raw::mutex_acquire_shared(
+            &raw mut bindings::raw::drivers_mtx,
+            timestamp_us_t::MAX,
+        );
+
+        let mut iter = set_next(&raw const bindings::raw::drivers, 0 as *const set_ent_t);
+        while !iter.is_null() {
+            let guard = SharedMutexGuard::new_raw(
+                &raw mut bindings::raw::drivers_mtx,
+                &*((*iter).value as *const driver_t),
+            );
+            if !cb(guard) {
+                break;
+            }
+            iter = set_next(&raw const bindings::raw::drivers, iter);
+        }
+
+        bindings::raw::mutex_release(&raw mut bindings::raw::drivers_mtx);
+    };
 }

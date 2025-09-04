@@ -2,6 +2,7 @@ use core::mem::MaybeUninit;
 
 use alloc::{string::String, vec::Vec};
 use bytemuck::{AnyBitPattern, NoUninit, Zeroable, cast_slice_mut};
+use uuid::Uuid;
 
 use crate::{
     LogLevel,
@@ -147,14 +148,14 @@ impl GptDriver {
     ) -> EResult<Option<Partition>> {
         let mut type_ = [0u8; 16];
         drive.read_bytes(part_ent_offset, &mut type_)?;
-        let type_ = u128::from_le_bytes(type_);
-        if type_ == 0 {
+        let type_ = Uuid::from_bytes_le(type_);
+        if type_.as_u128() == 0 {
             return Ok(None);
         }
 
         let mut uuid = [0u8; 16];
         drive.read_bytes(part_ent_offset + 16, &mut uuid)?;
-        let uuid = u128::from_le_bytes(uuid);
+        let uuid = Uuid::from_bytes_le(uuid);
 
         let mut offset = [0u8; 8];
         drive.read_bytes(part_ent_offset + 32, &mut offset)?;
@@ -232,7 +233,7 @@ impl PartitionDriver for GptDriver {
         Ok(Some(VolumeInfo {
             parts,
             name: String::new(),
-            uuid: u128::from_le_bytes(active_gpt.uuid),
+            uuid: Uuid::from_bytes_le(active_gpt.uuid),
         }))
     }
 }

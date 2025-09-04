@@ -25,6 +25,7 @@ It can take the following forms:
 | `ROOT=PARTUUID=...` | The first partition found with this partition [UUID](#data-type-guiduuid)
 | `ROOT=PARTTYPE=...` | The first partition found with this type [UUID](#data-type-guiduuid)
 | `ROOT=PART=...`     | A zero-indexed decimal partition number on the root disk
+| `ROOT=WHOLEDISK`    | Use the entirety of `ROOTDISK` to mount the root filesystem
 
 A default value of `ROOT=PARTTYPE=0FC63DAF-8483-4772-8E79-3D69D8477DE4` is implied.
 
@@ -34,7 +35,13 @@ A default value of `ROOT=PARTTYPE=0FC63DAF-8483-4772-8E79-3D69D8477DE4` is impli
 
 ### Parameter: ROOTDISK
 Restricts which disks to search when looking for the root partition.
-It takes the following form: `ROOTDISK=<type><index>` where `type` is the block device driver's type code (e.g. `sata`) and `index` is the decimal zero-based index of the disk (the first disk of a type will get the lowest index).
+It can take the following forms:
+| format                   | description
+| :----------------------- | :----------
+| `ROOTDISK=UUID=...`      | Get the root disk by disk [UUID](#data-type-guiduuid)
+| `ROOTDISK=<type><index>` | Get the root disk by type and index
+
+For the latter form, `type` is the block device driver's type code (e.g. `sata`) and `index` is the decimal zero-based index of the disk (the first disk of a type will get the lowest index).
 
 Example value: Booting from the first SATA drive: `ROOTDISK=sata0`.
 

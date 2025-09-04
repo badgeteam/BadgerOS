@@ -1,4 +1,5 @@
 use alloc::string::String;
+use uuid::Uuid;
 
 use crate::bindings::error::EResult;
 
@@ -22,7 +23,7 @@ pub fn parse_utf16_le(raw: &[u8]) -> EResult<String> {
 }
 
 /// Try to parse a UUID from a string.
-pub fn parse_uuid_str(raw: &str) -> Option<u128> {
+pub fn parse_uuid_str(raw: &str) -> Option<Uuid> {
     let mut raw = raw.trim_ascii();
 
     // Trim the optional () or {} wrapper.
@@ -59,5 +60,5 @@ pub fn parse_uuid_str(raw: &str) -> Option<u128> {
         }
     }
 
-    Some(tmp)
+    Some(Uuid::from_u128(tmp))
 }

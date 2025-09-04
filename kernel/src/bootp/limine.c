@@ -1,13 +1,13 @@
 
 // SPDX-License-Identifier: MIT
 
-#include "assertions.h"
+#include "arrays.h"
 #include "bootp.h"
 #include "cpu/mmu.h"
 #include "device/class/pcictl.h"
 #include "device/dev_class.h"
 #include "device/device.h"
-#include "interrupt.h"
+#include "log.h"
 #include "panic.h"
 #include "rawprint.h"
 #include "set.h"
@@ -33,30 +33,40 @@ __attribute__((section(".requests_start"))) LIMINE_REQUESTS_START_MARKER;
 
 LIMINE_BASE_REVISION(3);
 
-static REQ struct limine_memmap_request mm_req = {
+REQ struct limine_memmap_request bootp_mm_req = {
     .id       = LIMINE_MEMMAP_REQUEST,
     .revision = 3,
 };
 
 #ifdef __riscv
-static REQ struct limine_dtb_request dtb_req = {
+REQ struct limine_dtb_request bootp_dtb_req = {
     .id       = LIMINE_DTB_REQUEST,
     .revision = 3,
 };
 #elif defined(__x86_64__)
-static REQ struct limine_rsdp_request rsdp_req = {
+REQ struct limine_rsdp_request bootp_rsdp_req = {
     .id       = LIMINE_RSDP_REQUEST,
     .revision = 3,
 };
 #endif
 
-static REQ struct limine_kernel_address_request addr_req = {
+REQ struct limine_kernel_address_request bootp_addr_req = {
     .id       = LIMINE_KERNEL_ADDRESS_REQUEST,
     .revision = 3,
 };
 
-static REQ struct limine_hhdm_request hhdm_req = {
+REQ struct limine_hhdm_request bootp_hhdm_req = {
     .id       = LIMINE_HHDM_REQUEST,
+    .revision = 3,
+};
+
+REQ struct limine_kernel_file_request bootp_kernel_file_req = {
+    .id       = LIMINE_KERNEL_FILE_REQUEST,
+    .revision = 3,
+};
+
+REQ struct limine_executable_cmdline_request bootp_cmdline_req = {
+    .id       = LIMINE_EXECUTABLE_CMDLINE_REQUEST,
     .revision = 3,
 };
 
@@ -65,8 +75,8 @@ __attribute__((section(".requests_end"))) LIMINE_REQUESTS_END_MARKER;
 #ifdef __x86_64__
 // Returns the PHYSICAL address of the RSDP structure via *out_rsdp_address.
 uacpi_status uacpi_kernel_get_rsdp(uacpi_phys_addr *out_rsdp_address) {
-    if (rsdp_req.response) {
-        *out_rsdp_address = (uacpi_phys_addr)rsdp_req.response->address - (uacpi_phys_addr)mmu_hhdm_vaddr;
+    if (bootp_rsdp_req.response) {
+        *out_rsdp_address = (uacpi_phys_addr)bootp_rsdp_req.response->address - (uacpi_phys_addr)mmu_hhdm_vaddr;
         return UACPI_STATUS_OK;
     } else {
         logk(LOG_WARN, "uACPI asked for RSDP, but it does not exist");
@@ -85,32 +95,32 @@ void bootp_early_init() {
     rawprint("\033[0m\033[2J");
 
     // Verify needed requests have been answered.
-    if (!mm_req.response) {
+    if (!bootp_mm_req.response) {
         logk_from_isr(LOG_FATAL, "Limine memmap response missing");
         panic_poweroff();
     }
 #ifdef __riscv
-    if (!dtb_req.response) {
+    if (!bootp_dtb_req.response) {
         logk_from_isr(LOG_FATAL, "Limine DTB response missing");
         panic_poweroff();
     }
 #elif defined(__x86_64__)
-    if (!rsdp_req.response) {
+    if (!bootp_rsdp_req.response) {
         logk_from_isr(LOG_FATAL, "Limine RSDP response missing");
         panic_poweroff();
     }
 #endif
-    if (!addr_req.response) {
+    if (!bootp_addr_req.response) {
         logk_from_isr(LOG_FATAL, "Limine kernel address response missing");
         panic_poweroff();
     }
-    if (!hhdm_req.response) {
+    if (!bootp_hhdm_req.response) {
         logk_from_isr(LOG_FATAL, "Limine HHDM response missing");
         panic_poweroff();
     }
 
     // Print memory map.
-    struct limine_memmap_response *mem     = mm_req.response;
+    struct limine_memmap_response *mem     = bootp_mm_req.response;
     char const *const              types[] = {
         [LIMINE_MEMMAP_USABLE]                 = "Usable",
         [LIMINE_MEMMAP_RESERVED]               = "Reserved",
@@ -130,13 +140,13 @@ void bootp_early_init() {
     size_t reclaim_len        = 0;
     for (uint64_t i = 0; i < mem->entry_count; i++) {
         struct limine_memmap_entry *entry = mem->entries[i];
-        // logkf_from_isr(
-        //     LOG_DEBUG,
-        //     "%{u64;x}-%{u64;x} %{cs}",
-        //     entry->base,
-        //     entry->base + entry->length - 1,
-        //     types[entry->type]
-        // );
+        logkf_from_isr(
+            LOG_INFO,
+            "%{u64;x}-%{u64;x} %{cs}",
+            entry->base,
+            entry->base + entry->length - 1,
+            types[entry->type]
+        );
         if (entry->type == LIMINE_MEMMAP_USABLE) {
             usable_len += entry->length;
         } else if (entry->type == LIMINE_MEMMAP_BOOTLOADER_RECLAIMABLE ||
@@ -148,8 +158,8 @@ void bootp_early_init() {
         }
 #ifdef __riscv
         // Workaround: Limine has a bug where the DTB is in usable, not reclaimable, memory.
-        if ((size_t)dtb_req.response->dtb_ptr - hhdm_req.response->offset < entry->base ||
-            (size_t)dtb_req.response->dtb_ptr - hhdm_req.response->offset >= entry->base + entry->length) {
+        if ((size_t)bootp_dtb_req.response->dtb_ptr - bootp_hhdm_req.response->offset < entry->base ||
+            (size_t)bootp_dtb_req.response->dtb_ptr - bootp_hhdm_req.response->offset >= entry->base + entry->length) {
 #endif
             // This second check was always there and just picks the largest candidate.
             if (entry->type == LIMINE_MEMMAP_USABLE && entry->length > biggest_pool_size) {
@@ -165,11 +175,11 @@ void bootp_early_init() {
     }
 
     // Pass info to memory protection.
-    mmu_hhdm_vaddr        = hhdm_req.response->offset;
+    mmu_hhdm_vaddr        = bootp_hhdm_req.response->offset;
     memprotect_hhdm_pages = (mmu_hhdm_size - 1) / CONFIG_PAGE_SIZE + 1;
-    memprotect_kernel_ppn = addr_req.response->physical_base / CONFIG_PAGE_SIZE;
-    memprotect_kernel_vpn = addr_req.response->virtual_base / CONFIG_PAGE_SIZE;
-    if (addr_req.response->physical_base % CONFIG_PAGE_SIZE) {
+    memprotect_kernel_ppn = bootp_addr_req.response->physical_base / CONFIG_PAGE_SIZE;
+    memprotect_kernel_vpn = bootp_addr_req.response->virtual_base / CONFIG_PAGE_SIZE;
+    if (bootp_addr_req.response->physical_base % CONFIG_PAGE_SIZE) {
         logkf_from_isr(LOG_FATAL, "Kernel is not aligned to page size");
         panic_poweroff();
     }
@@ -199,11 +209,18 @@ void bootp_early_init() {
     );
 }
 
+// Post-heap protocol-dependent initialization; after the boot announcement log.
+void bootp_postheap_init() {
+    // Call Rust function that loads kernel parameters.
+    void bootp_limine_load_kparams();
+    bootp_limine_load_kparams();
+}
+
 // Full hardware initialization.
 void bootp_full_init() {
 #ifdef __riscv
     // Parse and process DTB.
-    dtparse(dtb_req.response->dtb_ptr);
+    dtparse(bootp_dtb_req.response->dtb_ptr);
 #elif defined(__x86_64__)
     // Initialize ACPI.
     time_init_before_acpi();
@@ -230,20 +247,35 @@ void bootp_full_init() {
 
 // Reclaim bootloader memory.
 void bootp_reclaim_mem() {
-    // Reclaim all reclaimable memory.
+    typedef struct {
+        size_t base, length;
+    } reclaimable_t;
+    size_t         reclaimable_len = 0;
+    size_t         reclaimable_cap = 0;
+    reclaimable_t *reclaimable     = NULL;
+
+    // Collect all reclaimable memory in an array.
     size_t base = 0;
     size_t len  = 0;
-    for (uint64_t i = 0; i < mm_req.response->entry_count; i++) {
-        struct limine_memmap_entry *entry = mm_req.response->entries[i];
+    for (uint64_t i = 0; i < bootp_mm_req.response->entry_count; i++) {
+        struct limine_memmap_entry *entry = bootp_mm_req.response->entries[i];
         if (i == early_alloc_index ||
             (entry->type != LIMINE_MEMMAP_USABLE && entry->type != LIMINE_MEMMAP_BOOTLOADER_RECLAIMABLE)) {
             // TODO: LIMINE_MEMMAP_ACPI_RECLAIMABLE is currently not reclaimed.
             continue;
         }
         if (entry->base != base + len) {
-            if (len > 16 * CONFIG_PAGE_SIZE) {
+            if (len > 16lu * CONFIG_PAGE_SIZE) {
                 // logkf_from_isr(LOG_DEBUG, "Adding memory at 0x%{size;x}-0x%{size;x}", base, base + len - 1);
-                init_pool((void *)(base + mmu_hhdm_vaddr), (void *)(base + len + mmu_hhdm_vaddr), 0);
+                reclaimable_t ent = {base, len};
+                array_lencap_insert(
+                    &reclaimable,
+                    sizeof(reclaimable_t),
+                    &reclaimable_len,
+                    &reclaimable_cap,
+                    &ent,
+                    reclaimable_len
+                );
             }
             base = entry->base;
             len  = entry->length;
@@ -251,10 +283,28 @@ void bootp_reclaim_mem() {
             len += entry->length;
         }
     }
-    if (len >= 16 * CONFIG_PAGE_SIZE) {
+    if (len >= 16lu * CONFIG_PAGE_SIZE) {
         // logkf_from_isr(LOG_DEBUG, "Adding memory at 0x%{size;x}-0x%{size;x}", base, base + len - 1);
-        init_pool((void *)(base + mmu_hhdm_vaddr), (void *)(base + len + mmu_hhdm_vaddr), 0);
+        reclaimable_t ent = {base, len};
+        array_lencap_insert(
+            &reclaimable,
+            sizeof(reclaimable_t),
+            &reclaimable_len,
+            &reclaimable_cap,
+            &ent,
+            reclaimable_len
+        );
     }
+
+    // Reclaim all reclaimable memory.
+    for (size_t i = 0; i < reclaimable_len; i++) {
+        init_pool(
+            (void *)(reclaimable[i].base + mmu_hhdm_vaddr),
+            (void *)(reclaimable[i].base + reclaimable[i].length + mmu_hhdm_vaddr),
+            0
+        );
+    }
+    free(reclaimable);
 }
 
 // Send a single character to the log output.

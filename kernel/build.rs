@@ -11,6 +11,7 @@ fn main() {
             "-Iport/generic/include",
             &format!("-Icpu/{}/include", cpu),
             "-I../common/include",
+            "-Ilib/limine",
             "-I../common/badgelib/include",
             "-Wno-unknown-attributes",
             "-DBADGEROS_KERNEL",

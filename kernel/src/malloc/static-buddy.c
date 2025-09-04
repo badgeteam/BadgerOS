@@ -27,7 +27,7 @@
  * Each block has an index, finding the buddy of a block can thus be done quickly
  * if we know the index of the block and its order:
  *
- * buddy_index = index ^ (1 << block->order)
+ * buddy_index = index ^ (1lu << block->order)
  *
  * for instance, to find the buddy of block 8-11 order 2:
  *
@@ -185,7 +185,7 @@ __attribute__((always_inline)) static inline bool list_empty(buddy_block_t *list
 static void split_block(memory_pool_t *pool, buddy_block_t *block) {
     --block->order;
     size_t index       = block_to_index(pool, block);
-    size_t buddy_index = index ^ (1 << block->order); // Get buddy of our new lower order
+    size_t buddy_index = index ^ (1lu << block->order); // Get buddy of our new lower order
 
     buddy_block_t *new_block = index_to_block(pool, buddy_index);
     new_block->order         = block->order;
@@ -216,7 +216,7 @@ static void split_block(memory_pool_t *pool, buddy_block_t *block) {
 
 static buddy_block_t *try_merge_buddy(memory_pool_t *pool, buddy_block_t *block) {
     size_t index       = block_to_index(pool, block);
-    size_t buddy_index = index ^ (1 << block->order);
+    size_t buddy_index = index ^ (1lu << block->order);
 
     if (buddy_index > pool->pages + pool->max_order_waste) {
         return NULL;
@@ -342,7 +342,7 @@ void print_list(memory_pool_t *pool, buddy_block_t *list, size_t *total) {
         }
         ++blocks;
         block       = block->prev;
-        list_total += 1 << block->order;
+        list_total += 1lu << block->order;
         printf("(%zi) ", block_to_index(pool, block));
     }
     *total += list_total;
@@ -468,7 +468,7 @@ void *buddy_allocate(size_t size, enum block_type type, uint32_t flags) {
             --pool->max_order_free;
     }
 
-    pool->free_pages -= (1 << block->order);
+    pool->free_pages -= (1lu << block->order);
     block->type       = type;
     void *retval      = block_to_address(pool, block);
 
@@ -520,7 +520,7 @@ void buddy_deallocate(void *ptr) {
         return;
     }
 
-    pool->free_pages += (1 << block->order);
+    pool->free_pages += (1lu << block->order);
     block->type       = BLOCK_TYPE_FREE;
     free_block(pool, block);
 }
@@ -535,7 +535,7 @@ void buddy_split_allocated(void *ptr) {
 
     --block->order;
     size_t index       = block_to_index(pool, block);
-    size_t buddy_index = index ^ (1 << block->order); // Get buddy of our new lower order
+    size_t buddy_index = index ^ (1lu << block->order); // Get buddy of our new lower order
 
     buddy_block_t *new_block = index_to_block(pool, buddy_index);
     new_block->order         = block->order;
@@ -554,7 +554,7 @@ void *buddy_reallocate(void *ptr, size_t size) {
 
     size_t  pages            = (size + (PAGE_SIZE - 1)) / PAGE_SIZE;
     uint8_t allocation_order = get_order(pages);
-    size_t  old_size         = (1 << block->order) * PAGE_SIZE;
+    size_t  old_size         = (1lu << block->order) * PAGE_SIZE;
 
     if (block->order == allocation_order) {
         BADGEROS_MALLOC_MSG_DEBUG("buddy_reallocate(" FMT_P ", " FMT_ZI ") nothing to do", ptr, size);
@@ -599,6 +599,6 @@ size_t buddy_get_size(void *ptr) {
         return 0;
     }
 
-    BADGEROS_MALLOC_MSG_DEBUG("buddy_get_size(" FMT_P ") returning " FMT_I, ptr, (1 << block->order) * PAGE_SIZE);
-    return (1 << block->order) * PAGE_SIZE;
+    BADGEROS_MALLOC_MSG_DEBUG("buddy_get_size(" FMT_P ") returning " FMT_I, ptr, (1lu << block->order) * PAGE_SIZE);
+    return (1lu << block->order) * PAGE_SIZE;
 }

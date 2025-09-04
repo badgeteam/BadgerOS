@@ -1,5 +1,6 @@
 use alloc::{string::String, vec::Vec};
 use bytemuck::{AnyBitPattern, NoUninit, Zeroable, cast_slice_mut};
+use uuid::Uuid;
 
 use crate::{
     bindings::{device::class::block::BlockDevice, error::EResult},
@@ -66,8 +67,8 @@ impl MbrDriver {
                 parts.push(Partition {
                     offset: (part.lba_start as u64) << drive.block_size_exp(),
                     size: (part.sec_count as u64) << drive.block_size_exp(),
-                    type_: part.type_ as u128,
-                    uuid: 0,
+                    type_: Uuid::from_u128(part.type_ as u128),
+                    uuid: Uuid::from_u128(0),
                     name: String::new(),
                     readonly: glob_readonly,
                 });
@@ -82,13 +83,13 @@ impl MbrDriver {
         Ok(Some(VolumeInfo {
             parts,
             name: String::new(),
-            uuid: 0,
+            uuid: Uuid::from_u128(0),
         }))
     }
 
     /// Test whether a volume info, assuming it is MBR, is the protective MBR for a GPT disk.
     pub fn is_protective_mbr(info: &VolumeInfo) -> bool {
-        info.parts.len() == 1 && info.parts[0].type_ == 0xee
+        info.parts.len() == 1 && info.parts[0].type_.as_u128() == 0xee
     }
 }
 
