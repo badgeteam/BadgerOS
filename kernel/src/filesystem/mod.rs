@@ -40,6 +40,7 @@ use crate::{
 
 pub mod c_api;
 pub mod device;
+pub mod ext2;
 pub mod fatfs;
 pub mod fifo;
 pub mod media;
