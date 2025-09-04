@@ -238,6 +238,44 @@ pub struct VNode {
     pub(super) fifo: Option<Arc<FifoShared>>,
 }
 
+impl VNode {
+    /// Get the filesystem mounted here, if any.
+    pub fn get_mounted(&self) -> Option<Arc<Vfs>> {
+        self.mtx
+            .lock_shared()
+            .dentcache
+            .clone()?
+            .type_
+            .as_dir()?
+            .lock_shared()
+            .mounted
+            .clone()
+    }
+    /// Follow mounts here.
+    pub fn follow_mounts(self: &Arc<Self>) -> Arc<Self> {
+        let dentcache = self.mtx.lock_shared().dentcache.clone();
+        let dentcache = if let Some(dentcache) = dentcache {
+            dentcache
+        } else {
+            return self.clone();
+        };
+        dentcache
+            .follow_mounts()
+            .open_vnode()
+            .unwrap_or(self.clone())
+    }
+    /// Get the VFS that this is the root directory of, if any.
+    pub fn is_vfs_root(&self) -> Option<Arc<Vfs>> {
+        self.mtx
+            .lock_shared()
+            .dentcache
+            .as_ref()?
+            .parent
+            .is_none()
+            .then(|| self.vfs.clone())
+    }
+}
+
 impl Drop for VNode {
     fn drop(&mut self) {
         self.vfs.vnodes.lock().remove(&self.ino);
@@ -315,6 +353,12 @@ pub mod mflags {
     pub type MFlags = u32;
     /// Filesystem is read-only.
     pub const READ_ONLY: u32 = 0x0000_0001;
+    /// Do not follow symbolic links.
+    pub const NOFOLLOW:  u32 = 0x0000_0020;
+    /// Try to cancel pending I/O operations; only supported on certain filesystems.
+    pub const FORCE:     u32 = 0x0001_0000;
+    /// Lazily unmount; remove the filesystem from the tree now, and wait with unmount until open handles are closed.
+    pub const DETACH:    u32 = 0x0002_0000;
 }
 
 /// A mounted virtual filesystem.

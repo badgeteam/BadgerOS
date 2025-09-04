@@ -33,7 +33,7 @@ use crate::{
     filesystem::{
         c_api::ref_as_file,
         fifo::{Fifo, FifoShared},
-        vfs::{VNodeMtxInner, vnflags},
+        vfs::{VNodeMtxInner, mflags, vnflags},
     },
     logk_hexdump, logkf,
 };
@@ -460,6 +460,7 @@ fn at_vnode(at: Option<&dyn File>) -> EResult<Arc<VNode>> {
 
 /// Walk down the filesystem to a certain path.
 fn walk(mut at: Arc<DentCache>, path: &[u8], follow_last_symlink: bool) -> EResult<Arc<DentCache>> {
+    let _mount_guard = MOUNT_TABLE.lock_shared();
     if path.len() > PATH_MAX {
         // There is no distinction between the errno for NAME_MAX exceeded or PATH_MAX exceeded.
         return Err(Errno::ENAMETOOLONG);
@@ -1310,8 +1311,59 @@ pub fn mount(
 }
 
 /// Unmount an existing filesystem by mountpoint or device.
-pub fn umount(at: Option<&dyn File>, path: &[u8]) -> EResult<()> {
-    todo!()
+pub fn umount(at: Option<&dyn File>, path: &[u8], flags: MFlags) -> EResult<()> {
+    // Open the media / VFS root VNode.
+    let target = open(at, path, flags & oflags::NOFOLLOW)?
+        .get_vnode()
+        .unwrap();
+
+    // Now, lock the mount table; this will inhibit any new VNodes from being opened.
+    let mut mount_table = MOUNT_TABLE.lock();
+    // Get the target VFS from this VNode.
+    let mut vfs = target.follow_mounts().is_vfs_root();
+    if vfs.is_none() {
+        vfs = try {
+            let ops = &target.mtx.lock_shared().ops;
+            let device = ops.get_device(&target)?.as_block()?;
+            let offset = ops.get_part_offset(&target);
+            let media_key = MediaKey { device, offset };
+            mount_table.fs_by_media.get(&media_key).cloned()?
+        };
+    }
+    let vfs = vfs.ok_or(Errno::ENOENT)?;
+
+    // Assert that no files are open; only the root dir VNode should be present with refcount 2.
+    if flags & mflags::DETACH == 0 {
+        let root = unsafe { vfs.root.as_ref_unchecked() }.as_ref().unwrap();
+        for weak in vfs.vnodes.lock_shared().values() {
+            if weak
+                .upgrade()
+                .map(|arc| !Arc::ptr_eq(root, &arc))
+                .unwrap_or(false)
+            {
+                return Err(Errno::EBUSY);
+            }
+        }
+        debug_assert!(Arc::strong_count(root) >= 2);
+        if Arc::strong_count(root) > 2 {
+            return Err(Errno::EBUSY);
+        }
+    }
+
+    // OK to unmount, remove from mount table.
+    if let Some(key) = try { MediaKey::new(vfs.ops.lock_shared().media()?)? } {
+        mount_table.fs_by_media.remove(&key).unwrap();
+    }
+    let mountpoint = if let Some(vnode) = vfs.mountpoint.clone() {
+        let dentcache = vnode.mtx.lock_shared().dentcache.clone().unwrap();
+        dentcache.type_.as_dir().unwrap().lock().mounted = None;
+        &*(dentcache.realpath()?)
+    } else {
+        b"/"
+    };
+    mount_table.fs_by_mount.remove(mountpoint).unwrap();
+
+    Ok(())
 }
 
 /// Create an unnamed pipe.
@@ -1370,53 +1422,8 @@ unsafe extern "C" fn fatfs_test() {
         Some(0),
         &buf[..read],
     );
-
-    // Print the end of bigfile.
-    let file = open(None, b"/BIGFILE", oflags::READ_WRITE).unwrap();
-    let mut buf = [0u8; 1024];
-    let pos = file.seek(SeekMode::End, -1024).unwrap();
-    let read = file.read(&mut buf).unwrap();
-    assert!(read > 0);
-    logk_hexdump(
-        LogLevel::Debug,
-        "Last bytes in the file:",
-        Some(pos as usize),
-        &buf[..read],
-    );
-
-    make_file(None, b"/newdir", MakeFileSpec::Directory).unwrap();
-    rename(
-        None,
-        b"/BIGFILE",
-        None,
-        b"/newdir/file.big",
-        linkflags::FOLLOW_LINKS,
-    )
-    .unwrap();
-
-    // Write the the bigfile.
-    file.seek(SeekMode::Set, 0).unwrap();
-    file.write(b"This data brought to you by overwriting the beginning of the file.\n\n")
-        .unwrap();
-    logkf!(
-        LogLevel::Debug,
-        "Stat /BIGFILE: {:#?}",
-        &file.stat().unwrap()
-    );
     drop(file);
 
-    // Unlink the dotfile.
-    unlink(None, b"/.file", false).unwrap();
-
-    // Unlink the emptydirectory.
-    unlink(None, b"/emptydirectory", true).unwrap();
-
-    // Create the newfile.
-    let file = open(None, b"/new.file", oflags::READ_WRITE | oflags::CREATE).unwrap();
-    file.resize(0).unwrap();
-    file.write(b"This is contents of the newly created file")
-        .unwrap();
-
-    // Sync everything back to disk.
-    dev.sync_all(false).unwrap();
+    // Unmount the filesystem again.
+    umount(None, b"/", 0).unwrap();
 }

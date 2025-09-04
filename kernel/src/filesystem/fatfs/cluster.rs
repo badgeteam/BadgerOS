@@ -88,7 +88,7 @@ impl ClusterAlloc {
                 }
                 while let Err(x) = self.bitmap[i].compare_exchange(
                     cur,
-                    !mask,
+                    cur & !mask,
                     Ordering::Relaxed,
                     Ordering::Relaxed,
                 ) {
