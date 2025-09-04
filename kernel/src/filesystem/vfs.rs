@@ -5,6 +5,7 @@
 use core::{
     cell::UnsafeCell,
     hint::unlikely,
+    ops::Range,
     sync::atomic::{AtomicU32, AtomicU64, Ordering},
 };
 
@@ -20,7 +21,10 @@ use super::{Dirent, File, MakeFileSpec, NodeType, SeekMode, Stat, media::Media};
 use crate::{
     LogLevel,
     bindings::{
-        device::class::{block::BlockDevice, char::CharDevice},
+        device::{
+            BaseDevice,
+            class::{block::BlockDevice, char::CharDevice},
+        },
         error::{EResult, Errno},
         mutex::Mutex,
     },
@@ -96,6 +100,18 @@ impl VfsFile {
 }
 
 impl File for VfsFile {
+    fn get_device(&self) -> Option<BaseDevice> {
+        self.vnode.mtx.lock_shared().ops.get_device(&self.vnode)
+    }
+
+    fn get_part_offset(&self) -> Option<Range<u64>> {
+        self.vnode
+            .mtx
+            .lock_shared()
+            .ops
+            .get_part_offset(&self.vnode)
+    }
+
     fn stat(&self) -> EResult<Stat> {
         Ok(Stat {
             ino: self.vnode.ino,
@@ -230,12 +246,12 @@ impl Drop for VNode {
 
 /// Abstract vnode operations.
 pub trait VNodeOps {
-    /// Get the associated block device, if any.
-    fn get_blockdev(&self, _arc_self: &Arc<VNode>) -> Option<BlockDevice> {
+    /// Get the associated character device, if any.
+    fn get_device(&self, _arc_self: &Arc<VNode>) -> Option<BaseDevice> {
         None
     }
-    /// Get the associated character device, if any.
-    fn get_chardev(&self, _arc_self: &Arc<VNode>) -> Option<CharDevice> {
+    /// Get the partition offset and size that this file represents, if any.
+    fn get_part_offset(&self, _arc_self: &Arc<VNode>) -> Option<Range<u64>> {
         None
     }
 
@@ -359,13 +375,18 @@ impl Vfs {
         let ops = self.ops.lock_shared().open(self, dirent)?;
 
         let fifo = (dirent.type_ == NodeType::Fifo).then(|| FifoShared::new());
+        let ino = if uses_inodes {
+            dirent.ino
+        } else {
+            self.next_fake_ino.fetch_add(1, Ordering::Relaxed)
+        };
         let vnode = Arc::try_new(VNode {
             mtx: Mutex::new(VNodeMtxInner {
                 ops,
                 flags: 0,
                 dentcache,
             }),
-            ino: dirent.ino,
+            ino,
             vfs: self.clone(),
             flags: AtomicU32::new(0),
             type_: dirent.type_,
@@ -373,9 +394,8 @@ impl Vfs {
         })?;
 
         // Insert the new vnode.
-        if uses_inodes {
-            guard.insert(dirent.ino, Arc::downgrade(&vnode));
-        }
+        // This is done for inode-less filesystems so that we can tell whether any files are open.
+        guard.insert(ino, Arc::downgrade(&vnode));
 
         Ok(vnode)
     }
@@ -406,6 +426,8 @@ impl Vfs {
 
 /// Filesystem-wide operations for a [`Vfs`]; instance of a [`VfsDriver`].
 pub trait VfsOps: Sync {
+    /// Get the media that this VFS uses.
+    fn media(&self) -> Option<&Media>;
     /// Whether this type of filesystem has inode numers.
     /// If disabled, inode numbers will be spoofed when a [`VNode`] is opened.
     fn uses_inodes(&self) -> bool;

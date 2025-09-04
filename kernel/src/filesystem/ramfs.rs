@@ -5,6 +5,7 @@
 use core::{
     any::Any,
     cell::UnsafeCell,
+    ops::Range,
     sync::atomic::{AtomicU64, AtomicUsize, Ordering},
 };
 
@@ -14,7 +15,10 @@ use crate::{
     LogLevel,
     badgelib::time::{AtomicTimespec, Timespec},
     bindings::{
-        device::class::{block::BlockDevice, char::CharDevice},
+        device::{
+            BaseDevice, HasBaseDevice,
+            class::{block::BlockDevice, char::CharDevice},
+        },
         error::{EResult, Errno},
         irq,
         mutex::Mutex,
@@ -76,6 +80,10 @@ impl RamFS {
 }
 
 impl VfsOps for Arc<RamFS> {
+    fn media(&self) -> Option<&Media> {
+        None
+    }
+
     fn uses_inodes(&self) -> bool {
         true
     }
@@ -143,7 +151,7 @@ enum RamFSData {
     /// Directory.
     Directory(BTreeMap<Box<[u8]>, Dirent>),
     /// Block device.
-    BlockDev(BlockDevice),
+    BlockDev((BlockDevice, Option<Range<u64>>)),
     /// Regular file.
     Regular(Vec<u8>),
     /// Symbolic link.
@@ -228,19 +236,19 @@ struct RamVNode {
 }
 
 impl VNodeOps for RamVNode {
-    fn get_blockdev(&self, _arc_self: &Arc<VNode>) -> Option<BlockDevice> {
+    fn get_device(&self, _arc_self: &Arc<VNode>) -> Option<BaseDevice> {
         let inode = unsafe { self.inode.as_ref_unchecked() };
-        if let RamFSData::BlockDev(dev) = &inode.data {
-            Some(dev.clone())
-        } else {
-            None
+        match &inode.data {
+            RamFSData::CharDev(dev) => Some(dev.as_base().clone()),
+            RamFSData::BlockDev(dev) => Some(dev.0.as_base().clone()),
+            _ => None,
         }
     }
 
-    fn get_chardev(&self, _arc_self: &Arc<VNode>) -> Option<CharDevice> {
+    fn get_part_offset(&self, _arc_self: &Arc<VNode>) -> Option<Range<u64>> {
         let inode = unsafe { self.inode.as_ref_unchecked() };
-        if let RamFSData::CharDev(dev) = &inode.data {
-            Some(dev.clone())
+        if let RamFSData::BlockDev(dev) = &inode.data {
+            dev.1.clone()
         } else {
             None
         }

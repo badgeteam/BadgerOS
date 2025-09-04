@@ -211,12 +211,18 @@ unsafe extern "C" fn fs_make_file(
                         .ok_or(Errno::ENODEV)?,
                 ),
                 raw::node_type_t_NODE_TYPE_DIRECTORY => MakeFileSpec::Directory,
-                raw::node_type_t_NODE_TYPE_BLOCK_DEV => MakeFileSpec::BlockDev(
-                    Device::by_id(unsafe { spec.__bindgen_anon_1.char_dev })
-                        .ok_or(Errno::ENODEV)?
-                        .as_block()
-                        .ok_or(Errno::ENODEV)?,
-                ),
+                raw::node_type_t_NODE_TYPE_BLOCK_DEV => MakeFileSpec::BlockDev({
+                    let block_dev = unsafe { spec.__bindgen_anon_1.__bindgen_anon_1 };
+                    (
+                        Device::by_id(block_dev.block_dev)
+                            .ok_or(Errno::ENODEV)?
+                            .as_block()
+                            .ok_or(Errno::ENODEV)?,
+                        block_dev.is_partition.then_some(
+                            block_dev.part_offset..block_dev.part_offset + block_dev.part_size,
+                        ),
+                    )
+                }),
                 raw::node_type_t_NODE_TYPE_REGULAR => MakeFileSpec::Regular,
                 raw::node_type_t_NODE_TYPE_SYMLINK => MakeFileSpec::Symlink(unsafe {
                     &*slice_from_raw_parts(
@@ -309,6 +315,24 @@ pub extern "C" fn fs_get_device(file: file_t, id_out: *mut u32) -> bool {
         }
         None => false,
     }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn fs_get_part_offset(
+    file: file_t,
+    offset_out: *mut u64,
+    size_out: *mut u64,
+) -> bool {
+    let file = unsafe { file_as_ref(file) }.unwrap();
+    let res = file.get_part_offset();
+    match &res {
+        Some(part) => unsafe {
+            *offset_out = part.start;
+            *size_out = part.end - part.start;
+        },
+        None => (),
+    }
+    res.is_some()
 }
 
 #[unsafe(no_mangle)]

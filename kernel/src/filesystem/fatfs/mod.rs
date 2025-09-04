@@ -1476,6 +1476,10 @@ impl FatFS {
 }
 
 impl VfsOps for FatFS {
+    fn media(&self) -> Option<&Media> {
+        Some(&self.media)
+    }
+
     fn uses_inodes(&self) -> bool {
         false
     }

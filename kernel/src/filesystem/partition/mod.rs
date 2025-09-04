@@ -5,7 +5,7 @@ use crate::{
         device::class::block::BlockDevice,
         error::EResult,
         mutex::Mutex,
-        raw::{get_volume_info_t, kmodule_t, partition_t, volume_info_t},
+        raw::{get_volume_info_t, partition_t, volume_info_t},
     },
     filesystem::partition::{gpt::GptDriver, mbr::MbrDriver},
 };

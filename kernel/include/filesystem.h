@@ -59,8 +59,14 @@ typedef struct {
     union {
         // ID of the character device to attach.
         uint32_t char_dev;
-        // ID of the block device to attach.
-        uint32_t block_dev;
+        struct {
+            // Block device ID.
+            uint32_t block_dev;
+            // Has partition offset and size.
+            bool     is_partition;
+            // Partition offset and size.
+            uint64_t part_offset, part_size;
+        };
         // The symlink target.
         struct {
             // The path to the target of the symlink.
@@ -241,6 +247,8 @@ fs_pipe_t fs_pipe(uint32_t oflags);
 
 // Get the device that this file represents, if any.
 bool         fs_get_device(file_t file, uint32_t *id_out);
+// Get the partition offset and size that this file represents, if any.
+bool         fs_get_part_offset(file_t file, uint64_t *offset_out, uint64_t *size_out);
 // Get the stat info for this file's inode.
 errno_t      fs_stat(file_t file, stat_t *stat_out);
 // Get the position in the file.

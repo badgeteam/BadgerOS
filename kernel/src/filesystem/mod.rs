@@ -5,18 +5,13 @@
 use core::{
     cell::UnsafeCell,
     fmt::{Debug, Write},
+    ops::Range,
     panic, str,
     sync::atomic::{AtomicU32, AtomicU64, Ordering},
 };
 
 use access::Access;
-use alloc::{
-    boxed::Box,
-    collections::btree_map::BTreeMap,
-    string::String,
-    sync::{Arc, Weak},
-    vec::Vec,
-};
+use alloc::{boxed::Box, collections::btree_map::BTreeMap, string::String, sync::Arc, vec::Vec};
 use device::{BlockDevFile, CharDevFile};
 use linkflags::LinkFlags;
 use media::{Media, MediaType};
@@ -28,7 +23,7 @@ use crate::{
     badgelib::time::Timespec,
     bindings::{
         device::{
-            BaseDevice, DeviceFilters,
+            BaseDevice, DeviceFilters, HasBaseDevice,
             class::{block::BlockDevice, char::CharDevice},
         },
         error::{EResult, Errno},
@@ -278,6 +273,10 @@ pub trait File: Sync {
     fn get_device(&self) -> Option<BaseDevice> {
         None
     }
+    /// Get the partition offset and size that this file represents, if any.
+    fn get_part_offset(&self) -> Option<Range<u64>> {
+        None
+    }
     /// Get the stat info for this file's inode.
     fn stat(&self) -> EResult<Stat>;
     /// Get the position in the file.
@@ -306,7 +305,7 @@ pub enum MakeFileSpec<'a> {
     /// Directory.
     Directory,
     /// Block device.
-    BlockDev(BlockDevice),
+    BlockDev((BlockDevice, Option<Range<u64>>)),
     /// Regular file.
     Regular,
     /// Symbolic link.
@@ -371,12 +370,66 @@ pub const PATH_MAX: usize = 4096;
 /// The maximum filename length.
 pub const NAME_MAX: usize = 255;
 
+/// Key type used for filesystem by media table.
+#[derive(Clone)]
+struct MediaKey {
+    /// Device that the media references.
+    device: BlockDevice,
+    /// Partition offset.
+    offset: Option<Range<u64>>,
+}
+
+impl MediaKey {
+    fn new(media: &Media) -> Option<Self> {
+        let device = media.device()?;
+        Some(MediaKey {
+            offset: (media.offset != 0
+                || media.offset != device.block_count() << device.block_size_exp())
+            .then_some(media.offset..media.offset + media.size),
+            device,
+        })
+    }
+}
+
+impl PartialEq for MediaKey {
+    fn eq(&self, other: &Self) -> bool {
+        self.device.id() == other.device.id() && self.offset == other.offset
+    }
+}
+impl Eq for MediaKey {}
+impl PartialOrd for MediaKey {
+    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl Ord for MediaKey {
+    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
+        match self.device.id().cmp(&other.device.id()) {
+            core::cmp::Ordering::Equal => {}
+            ord => return ord,
+        }
+        let self_off = self.offset.clone().map(|x| x.start).unwrap_or(0);
+        let other_off = other.offset.clone().map(|x| x.start).unwrap_or(0);
+        self_off.cmp(&other_off)
+    }
+}
+
+/// Table of mounted filesystems.
+struct MountTable {
+    fs_by_media: BTreeMap<MediaKey, Arc<Vfs>>,
+    fs_by_mount: BTreeMap<Box<[u8]>, Arc<Vfs>>,
+}
+
 /// The currently mounted root filesystem.
 static ROOT_FS: Mutex<Option<Arc<Vfs>>> = unsafe { Mutex::new_static(None) };
 
 /// Table of mounted filesystems.
-static MOUNT_TABLE: Mutex<BTreeMap<Box<[u8]>, Arc<Vfs>>> =
-    unsafe { Mutex::new_static(BTreeMap::new()) };
+static MOUNT_TABLE: Mutex<MountTable> = unsafe {
+    Mutex::new_static(MountTable {
+        fs_by_media: BTreeMap::new(),
+        fs_by_mount: BTreeMap::new(),
+    })
+};
 
 /// Table of filesystem drivers.
 pub static FSDRIVERS: Mutex<BTreeMap<String, Box<dyn VfsDriver>>> =
@@ -384,6 +437,7 @@ pub static FSDRIVERS: Mutex<BTreeMap<String, Box<dyn VfsDriver>>> =
 
 /// Helper function that gets the root directory handle.
 fn root_vnode() -> EResult<Arc<VNode>> {
+    let _mount_guard = MOUNT_TABLE.lock_shared();
     if let Some(fs) = &*ROOT_FS.lock_shared() {
         Ok(fs.root())
     } else {
@@ -397,6 +451,7 @@ fn root_vnode() -> EResult<Arc<VNode>> {
 
 /// Helper function that gets the VNode for `at` parameters.
 fn at_vnode(at: Option<&dyn File>) -> EResult<Arc<VNode>> {
+    let _mount_guard = MOUNT_TABLE.lock_shared();
     match at {
         Some(x) => x.get_vnode().ok_or(Errno::ENOTDIR),
         None => root_vnode(),
@@ -913,6 +968,7 @@ pub fn make_file(at: Option<&dyn File>, path: &[u8], spec: MakeFileSpec) -> ERes
 }
 
 /// Rename a file within the same filesystem.
+/// TODO: Default POSIX semantics actually delete the target, this doesn't.
 pub fn rename(
     old_at: Option<&dyn File>,
     old_path: &[u8],
@@ -1072,7 +1128,12 @@ fn detect<'a>(
     media: &Media,
     drivers: &'a BTreeMap<String, Box<dyn VfsDriver>>,
 ) -> EResult<&'a str> {
-    todo!()
+    for ent in drivers {
+        if ent.1.detect(media)? {
+            return Ok(&*ent.0);
+        }
+    }
+    return Err(Errno::ENOTSUP);
 }
 
 /// Helper function that prepares a standalone [`Vfs`] to be used by [`mount`].
@@ -1162,15 +1223,30 @@ pub fn mount(
 
     // Lock mounts table while other mounting logic runs.
     let mut mounts = MOUNT_TABLE.lock();
+    let media_key = try { MediaKey::new(media.as_ref()?)? };
+
+    // Cloning mounts is currently unsupported.
+    if let Some(media_key) = &media_key
+        && mounts.fs_by_media.contains_key(media_key)
+    {
+        logkf!(
+            LogLevel::Warning,
+            "TODO: Cloning mounts is not supported yet"
+        );
+        return Err(Errno::EBUSY);
+    }
 
     // If the mounts table is empty (there is no root VFS), this must be mounted at `/`.
-    if mounts.len() == 0 {
+    if mounts.fs_by_mount.len() == 0 {
         if path != b"/" {
             logkf!(LogLevel::Error, "/ needs to be mounted first");
             return Err(Errno::ENOENT);
         }
         let vfs = create_vfs(&drivers, None, type_, media, mflags)?;
-        mounts.insert((*b"/").into(), vfs.clone());
+        mounts.fs_by_mount.insert((*b"/").into(), vfs.clone());
+        if let Some(media_key) = media_key {
+            mounts.fs_by_media.insert(media_key, vfs.clone());
+        }
         *ROOT_FS.lock() = Some(vfs);
         return Ok(());
     }
@@ -1198,13 +1274,21 @@ pub fn mount(
         return Err(Errno::ENOTEMPTY);
     } else if cache.is_vfs_root() {
         // Cannot stack mounts.
-        logkf!(LogLevel::Warning, "Stacked mounts are not supported yet");
+        logkf!(
+            LogLevel::Warning,
+            "TODO: Stacked mounts are not supported yet"
+        );
         return Err(Errno::ENOTSUP);
     }
 
     // Create and insert VFS.
     let vfs = create_vfs(&drivers, Some(cache.open_vnode()?), type_, media, mflags)?;
-    mounts.insert(cache.realpath()?.into(), vfs.clone());
+    mounts
+        .fs_by_mount
+        .insert(cache.realpath()?.into(), vfs.clone());
+    if let Some(media_key) = media_key {
+        mounts.fs_by_media.insert(media_key, vfs.clone());
+    }
     cache_guard.mounted = Some(vfs);
 
     drop(cache_guard);
@@ -1223,6 +1307,11 @@ pub fn mount(
     }
 
     Ok(())
+}
+
+/// Unmount an existing filesystem by mountpoint or device.
+pub fn umount(at: Option<&dyn File>, path: &[u8]) -> EResult<()> {
+    todo!()
 }
 
 /// Create an unnamed pipe.

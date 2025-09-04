@@ -24,8 +24,11 @@ impl CharDevFile {
                 .mtx
                 .lock_shared()
                 .ops
-                .get_chardev(&vnode)
-                .unwrap(),
+                .get_device(&vnode)
+                .unwrap()
+                .as_char()
+                .unwrap()
+                .clone(),
             vnode,
         }
     }
@@ -92,8 +95,11 @@ impl BlockDevFile {
                 .mtx
                 .lock_shared()
                 .ops
-                .get_blockdev(&vnode)
-                .unwrap(),
+                .get_device(&vnode)
+                .unwrap()
+                .as_block()
+                .unwrap()
+                .clone(),
             vnode,
             offset: AtomicU64::new(0),
             allow_read,
