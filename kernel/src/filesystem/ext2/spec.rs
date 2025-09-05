@@ -4,6 +4,8 @@
 
 use static_assertions::assert_eq_size;
 
+use crate::{bindings::error::Errno, filesystem::NodeType};
+
 /// Calls conversion function `$func` on integers in `$type`.
 #[rustfmt::skip]
 macro_rules! int_conv {
@@ -30,10 +32,10 @@ macro_rules! int_conv {
 macro_rules! struct_def {
     (
         // Parse struct definition.
-        $(#[doc = $structdoc: expr])?
+        $(#[doc = $structdoc: expr])*
         struct $struct: ident {
             $(
-                $(#[doc = $namedoc: expr])?
+                $(#[doc = $namedoc: expr])*
                 $name: ident : $type: tt
             ),*
             $(,)?
@@ -42,16 +44,23 @@ macro_rules! struct_def {
         // Define base struct.
         #[derive(Clone, Copy)]
         #[repr(packed)]
-        $(#[doc = $structdoc])?
+        $(#[doc = $structdoc])*
         pub struct $struct {
             $(
-                $(#[doc = $namedoc])?
+                $(#[doc = $namedoc])*
                 pub $name: $type,
             )*
         }
         // Define conversion from bytes.
         impl ::core::convert::From<[u8; ::core::mem::size_of::<$struct>()]> for $struct {
             fn from(value: [u8; ::core::mem::size_of::<$struct>()]) -> Self {
+                let mut tmp: Self = unsafe { ::core::mem::transmute(value) };
+                $(int_conv!{from_le, tmp.$name, $type})*
+                tmp
+            }
+        }
+        impl ::core::convert::From<::alloc::boxed::Box<[u8; ::core::mem::size_of::<$struct>()]>> for ::alloc::boxed::Box<$struct> {
+            fn from(value: ::alloc::boxed::Box<[u8; ::core::mem::size_of::<$struct>()]>) -> Self {
                 let mut tmp: Self = unsafe { ::core::mem::transmute(value) };
                 $(int_conv!{from_le, tmp.$name, $type})*
                 tmp
@@ -64,6 +73,12 @@ macro_rules! struct_def {
                 unsafe { ::core::mem::transmute(self) }
             }
         }
+        impl ::core::convert::Into<::alloc::boxed::Box<[u8; ::core::mem::size_of::<$struct>()]>> for ::alloc::boxed::Box<$struct> {
+            fn into(mut self) -> ::alloc::boxed::Box<[u8; ::core::mem::size_of::<$struct>()]> {
+                $(int_conv!{to_le, self.$name, $type})*
+                unsafe { ::core::mem::transmute(self) }
+            }
+        }
         // Define default to be zeroed.
         impl ::core::default::Default for $struct {
             fn default() -> Self {
@@ -72,6 +87,14 @@ macro_rules! struct_def {
         }
     };
 }
+
+/// Bad blocks inode number.
+pub const BADBLOCKS_INO: u32 = 1;
+/// Root directory inode number.
+pub const ROOT_INO: u32 = 2;
+
+/// Identifies a filesystem as EXT2; superblock field [`Superblock::magic`].
+pub const MAGIC: u16 = 0xef53;
 
 struct_def! {
     /// EXT2 superblock; filesystem metadata.
@@ -141,18 +164,93 @@ assert_eq_size!(Superblock, [u8; 1024]);
 
 struct_def! {
     /// Block group descriptor table.
-    struct BlockGroup {
+    struct BlockGroupDesc {
+        /// Index of the first block in this group.
+        /// The block bitmap also starts here.
         block_bitmap:     u32,
+        /// Index of the first block of the inode bitmap in this group.
         inode_bitmap:     u32,
+        /// Index of the first block of the inode table in this group.
         inode_table:      u32,
+        /// Number of free blocks in this group.
         free_block_count: u16,
+        /// Number of free inodes in this group.
         free_inode_count: u16,
+        /// Number of inodes reserved to be directories in this group.
         used_dirs_count:  u16,
-        pad:              u16,
-        _padding0:        [u8; 12],
+        _resvd0:          u16,
+        _resvd1:          [u8; 12],
     }
 }
-assert_eq_size!(BlockGroup, [u8; 32]);
+assert_eq_size!(BlockGroupDesc, [u8; 32]);
+
+/// Ext2 node types as seen in the mode fields.
+#[repr(u16)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mode {
+    /// UNIX socket.
+    UnixSocket = 0xC000,
+    /// Symlink.
+    Symlink = 0xA000,
+    /// Regular file.
+    Regular = 0x8000,
+    /// Block device.
+    BlockDev = 0x6000,
+    /// Directory.
+    Directory = 0x4000,
+    /// Character device.
+    CharDev = 0x2000,
+    /// FIFO / named pipe.
+    Fifo = 0x1000,
+}
+
+impl Into<NodeType> for Mode {
+    fn into(self) -> NodeType {
+        match self {
+            Mode::UnixSocket => NodeType::UnixSocket,
+            Mode::Symlink => NodeType::Symlink,
+            Mode::Regular => NodeType::Regular,
+            Mode::BlockDev => NodeType::BlockDev,
+            Mode::Directory => NodeType::Directory,
+            Mode::CharDev => NodeType::CharDev,
+            Mode::Fifo => NodeType::Fifo,
+        }
+    }
+}
+
+impl TryFrom<NodeType> for Mode {
+    type Error = Errno;
+
+    fn try_from(value: NodeType) -> Result<Self, Errno> {
+        match value {
+            NodeType::UnixSocket => Ok(Mode::UnixSocket),
+            NodeType::Symlink => Ok(Mode::Symlink),
+            NodeType::Regular => Ok(Mode::Regular),
+            NodeType::BlockDev => Ok(Mode::BlockDev),
+            NodeType::Directory => Ok(Mode::Directory),
+            NodeType::CharDev => Ok(Mode::CharDev),
+            NodeType::Fifo => Ok(Mode::Fifo),
+            _ => Err(Errno::EINVAL),
+        }
+    }
+}
+
+impl TryFrom<u16> for Mode {
+    type Error = Errno;
+
+    fn try_from(value: u16) -> Result<Self, Self::Error> {
+        match value & 0xf000 {
+            0xC000 => Ok(Self::UnixSocket),
+            0xA000 => Ok(Self::Symlink),
+            0x8000 => Ok(Self::Regular),
+            0x6000 => Ok(Self::BlockDev),
+            0x4000 => Ok(Self::Directory),
+            0x2000 => Ok(Self::CharDev),
+            0x1000 => Ok(Self::Fifo),
+            _ => Err(Errno::EIO),
+        }
+    }
+}
 
 struct_def! {
     /// Inode structure.
@@ -179,3 +277,117 @@ struct_def! {
     }
 }
 assert_eq_size!(Inode, [u8; 128]);
+
+/// Ext2 node types as seen in dirent file type fields.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(non_camel_case_types)]
+pub enum FileType {
+    /// Unknown File Type
+    Unknown = 0,
+    /// Regular File
+    Regular = 1,
+    /// Directory File
+    Directory = 2,
+    /// Character Device
+    CharDev = 3,
+    /// Block Device
+    BlockDev = 4,
+    /// Buffer File
+    Fifo = 5,
+    /// Socket File
+    UnixSocket = 6,
+    /// Symbolic Link
+    Symlink = 7,
+}
+
+impl Into<NodeType> for FileType {
+    fn into(self) -> NodeType {
+        match self {
+            FileType::UnixSocket => NodeType::UnixSocket,
+            FileType::Symlink => NodeType::Symlink,
+            FileType::Regular => NodeType::Regular,
+            FileType::BlockDev => NodeType::BlockDev,
+            FileType::Directory => NodeType::Directory,
+            FileType::CharDev => NodeType::CharDev,
+            FileType::Fifo => NodeType::Fifo,
+            FileType::Unknown => NodeType::Unknown,
+        }
+    }
+}
+
+impl From<NodeType> for FileType {
+    fn from(value: NodeType) -> Self {
+        match value {
+            NodeType::UnixSocket => FileType::UnixSocket,
+            NodeType::Symlink => FileType::Symlink,
+            NodeType::Regular => FileType::Regular,
+            NodeType::BlockDev => FileType::BlockDev,
+            NodeType::Directory => FileType::Directory,
+            NodeType::CharDev => FileType::CharDev,
+            NodeType::Fifo => FileType::Fifo,
+            NodeType::Unknown => FileType::Unknown,
+        }
+    }
+}
+
+struct_def! {
+    /// Dirent format for linked list directories.
+    /// The name is placed after the struct and is `name_len` bytes long.
+    struct LinkedDent {
+        ino: u32,
+        record_len: u16,
+        name_len: u8,
+        /// On Ext2 rev. 0, upper 16 bits of `name_len`.
+        file_type: u8,
+    }
+}
+assert_eq_size!(LinkedDent, [u8; 8]);
+
+/// Ext2 indexed dirent hash types.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DentHashVer {
+    Legacy,
+    HalfMd4,
+    Tea,
+}
+
+struct_def! {
+    /// Indexed directory root structure.
+    struct IndexedDentRoot {
+        /// Reserved; should be 0.
+        _resvd0: u32,
+        /// What hashing algorithm is used.
+        hash_ver: u8,
+        /// How large this info struct is.
+        info_len: u8,
+        /// How many levels of indirect indexing are used (0-1).
+        indirect_levels: u8,
+        /// Reserved; should be 0.
+        _resvd1: u8,
+    }
+}
+assert_eq_size!(IndexedDentRoot, [u8; 8]);
+
+struct_def! {
+    /// Indexed directory limit structure.
+    struct IndexedDentLimit {
+        /// Maximum number of indexed dirents that will fit.
+        limit: u16,
+        /// Actual number of indexed dirents.
+        count: u16,
+    }
+}
+assert_eq_size!(IndexedDentLimit, [u8; 4]);
+
+struct_def! {
+    /// Indexed directory entry structure.
+    struct IndexedDent {
+        /// Hash value of this dirent.
+        hash: u32,
+        /// Directory block offset of the [`LinkedDirent`] pointed to by this entry.
+        block: u32,
+    }
+}
+assert_eq_size!(IndexedDent, [u8; 8]);
