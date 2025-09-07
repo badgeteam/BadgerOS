@@ -95,11 +95,9 @@ amd64_syscall_entry:
     # Clear temporary registers.
     xor  %rdi, %rdi
     xor  %rsi, %rsi
-    xor  %rcx, %rcx
     xor  %r8, %r8
     xor  %r9, %r9
     xor  %r10, %r10
-    xor  %r11, %r11
     
     # Restore callee-save registers.
     mov  %rcx, [%gs:isr_ctx_t_regs+cpu_regs_t_rip]
