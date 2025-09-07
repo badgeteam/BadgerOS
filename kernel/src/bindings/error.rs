@@ -219,14 +219,14 @@ impl Errno {
     pub fn name(&self) -> &'static str {
         unsafe {
             let cs = raw::errno_get_name(*self as i32);
-            str::from_raw_parts(cs, raw::strlen(cs))
+            str::from_raw_parts(cs as *const u8, raw::strlen(cs))
         }
     }
     /// Get a brief description of this errno.
     pub fn desc(&self) -> &'static str {
         unsafe {
             let cs = raw::errno_get_desc(*self as i32);
-            str::from_raw_parts(cs, raw::strlen(cs))
+            str::from_raw_parts(cs as *const u8, raw::strlen(cs))
         }
     }
     /// Create an `EResult` from some integer.

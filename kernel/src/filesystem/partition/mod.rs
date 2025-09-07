@@ -1,3 +1,5 @@
+use core::ffi::c_char;
+
 use alloc::{boxed::Box, string::String, vec::Vec};
 use uuid::Uuid;
 
@@ -39,7 +41,7 @@ impl Into<partition_t> for Partition {
             size: self.size,
             type_: self.type_.as_u64_pair().into(),
             uuid: self.uuid.as_u64_pair().into(),
-            name: name.0,
+            name: name.0 as *mut c_char,
             name_len: name.1,
             readonly: self.readonly,
         }
@@ -65,7 +67,7 @@ impl Into<volume_info_t> for VolumeInfo {
         volume_info_t {
             parts: parts.0,
             parts_len: parts.1,
-            name: name.0,
+            name: name.0 as *mut c_char,
             name_len: name.1,
             uuid: self.uuid.as_u64_pair().into(),
         }

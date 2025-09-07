@@ -64,7 +64,7 @@ struct LogWriter {}
 impl Write for LogWriter {
     fn write_str(&mut self, s: &str) -> core::fmt::Result {
         let bytes = s.as_bytes();
-        unsafe { raw::rawprint_substr(bytes.as_ptr(), bytes.len()) };
+        unsafe { raw::rawprint_substr(bytes.as_ptr() as *const c_char, bytes.len()) };
         Ok(())
     }
 }

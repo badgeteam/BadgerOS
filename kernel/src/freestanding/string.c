@@ -91,3 +91,42 @@ void *memset(void *dest, uint8_t value, size_t size) {
 
     return dest;
 }
+
+
+
+// Implementation of the memcmp loop with variable read size.
+#define MEMCMP_IMPL(type, alignment, a, b, size)                                                                       \
+    {                                                                                                                  \
+        type const *a_ptr = (a); /* NOLINT*/                                                                           \
+        type const *b_ptr = (b); /* NOLINT*/                                                                           \
+        size_t      _size = (size) / (alignment);                                                                      \
+        for (size_t i = 0; i < _size; i++) {                                                                           \
+            if (a_ptr[i] != b_ptr[i]) {                                                                                \
+                for (size_t j = i * (size); j < (i + 1) * (size); j++) {                                               \
+                    uint8_t tmp = ((uint8_t *)(a))[j] - ((uint8_t *)(b))[j];                                           \
+                    if (tmp) {                                                                                         \
+                        return tmp;                                                                                    \
+                    }                                                                                                  \
+                }                                                                                                      \
+                __builtin_unreachable();                                                                               \
+            }                                                                                                          \
+        }                                                                                                              \
+    }
+
+// Test the equality of two memory areas.
+int memcmp(void const *a, void const *b, size_t size) {
+    size_t align_detector = (size_t)a | (size_t)b | (size_t)size;
+
+    // Optimise for alignment.
+    if (align_detector & 1) {
+        MEMCMP_IMPL(uint8_t, 1, a, b, size)
+    } else if (align_detector & 2) {
+        MEMCMP_IMPL(uint16_t, 2, a, b, size)
+    } else if (align_detector & 4) {
+        MEMCMP_IMPL(uint32_t, 4, a, b, size)
+    } else {
+        MEMCMP_IMPL(uint64_t, 8, a, b, size)
+    }
+
+    return 0;
+}

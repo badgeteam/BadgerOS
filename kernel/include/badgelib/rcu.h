@@ -5,12 +5,6 @@
 
 #pragma once
 
-#include "assertions.h"
-#include "interrupt.h"
-#include "isr_ctx.h"
-
-
-
 // CPU-local RCU state.
 typedef struct {
     int generation;
@@ -19,7 +13,10 @@ typedef struct {
 #endif
 } rcu_cpulocal_t;
 
+#include "assertions.h"
 #include "cpulocal.h"
+#include "interrupt.h"
+#include "isr_ctx.h"
 
 // Scheduler function callback; checks for the advance of an RCU generation.
 // WARNING: Must be called one final time *after* running_sched_count is decreased on scheduler exit!

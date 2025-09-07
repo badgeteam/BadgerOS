@@ -20,10 +20,8 @@ endif()
 include(../.config/config.cmake)
 include(config_helper.cmake)
 set(CMAKE_C_COMPILER ${CONFIG_COMPILER})
-set(CONFIG_TARGET generic)
 
 # Include port-specific.
-# include(port/${CONFIG_TARGET}/CMakeLists.txt)
 include(cpu/${CONFIG_CPU}/CMakeLists.txt)
 
 
@@ -36,10 +34,12 @@ if("${CONFIG_CPU}" STREQUAL "riscv32")
         "esp32p4" "esp32c6"
     )
     config_const(ENABLE_ACPI false "Enable ACPI support")
+    config_bool(ENABLE_DTB true "Enable DTB support")
 else()
     config_const(BOOT_PROTOCOL "limine" "Boot protocol")
     config_const(SOC "generic" "Boot protocol")
     config_bool(ENABLE_ACPI true "Enable ACPI support")
+    config_bool(ENABLE_DTB true "Enable DTB support")
 endif()
 
 config_enum(
@@ -130,8 +130,6 @@ set(kernel_src
     ${CMAKE_CURRENT_LIST_DIR}/src/device/class/char.c
     ${CMAKE_CURRENT_LIST_DIR}/src/device/class/pcictl.c
     ${CMAKE_CURRENT_LIST_DIR}/src/device/class/tty.c
-    ${CMAKE_CURRENT_LIST_DIR}/src/device/dtb/dtb.c
-    ${CMAKE_CURRENT_LIST_DIR}/src/device/dtb/dtparse.c
     ${CMAKE_CURRENT_LIST_DIR}/src/device/builtin_drivers.c
     ${CMAKE_CURRENT_LIST_DIR}/src/device/device.c
     
@@ -184,6 +182,15 @@ if(${CONFIG_ENABLE_ACPI})
     set(kernel_include ${kernel_include} ${UACPI_INCLUDES})
 endif()
 
+if(${CONFIG_ENABLE_DTB})
+    include(lib/uacpi/uacpi.cmake)
+    set(kernel_src ${kernel_src}
+        ${CMAKE_CURRENT_LIST_DIR}/src/device/dtb/dtb.c
+        ${CMAKE_CURRENT_LIST_DIR}/src/device/dtb/dtparse.c
+    )
+    set(kernel_include ${kernel_include} ${UACPI_INCLUDES})
+endif()
+
 add_executable(${target}
     ${kernel_src}
     ${cpu_src}
@@ -201,15 +208,8 @@ endforeach()
 file(CONFIGURE OUTPUT "cmake_config.rs" CONTENT "${RUST_CONFIG_FILE}")
 
 # Integrate Rust.
-if("${CONFIG_CPU}" STREQUAL "x86_64")
-    set(rust_target "x86_64-unknown-linux-gnu")
-elseif("${CONFIG_CPU}" STREQUAL "riscv32")
-    set(rust_target "riscv32imac-unknown-none-elf")
-elseif("${CONFIG_CPU}" STREQUAL "riscv64")
-    set(rust_target "riscv64imac-unknown-none-elf")
-endif()
-set(rust_lib ${CMAKE_CURRENT_LIST_DIR}/target/${rust_target}/debug/libbadgeros_kernel.a)
-set(ENV{RUSTFLAGS} "-C target-feature=+frame-pointer")
+set(rust_target ${CMAKE_CURRENT_LIST_DIR}/misc/rust_target/${CONFIG_CPU}.json)
+set(rust_lib ${CMAKE_CURRENT_LIST_DIR}/target/${CONFIG_CPU}/debug/libbadgeros_kernel.a)
 add_custom_target(
     rust.target ALL
     cargo +nightly build -Z build-std=core,alloc --target=${rust_target}

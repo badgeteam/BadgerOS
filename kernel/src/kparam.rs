@@ -46,7 +46,7 @@ pub unsafe extern "C" fn bootp_limine_load_kparams() {
             return;
         } else {
             &*slice_from_raw_parts(
-                (*CMDLINE.response).cmdline,
+                (*CMDLINE.response).cmdline as *mut u8,
                 strlen((*CMDLINE.response).cmdline),
             )
         }

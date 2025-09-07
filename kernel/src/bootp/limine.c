@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 #include "arrays.h"
+#include "assertions.h"
 #include "bootp.h"
 #include "cpu/mmu.h"
 #include "device/class/pcictl.h"

@@ -11,6 +11,7 @@
 
 
 
+#if CONFIG_ENABLE_DTB
 // Extract ranges from DTB.
 static errno_t pci_dtb_ranges(device_pcictl_t *device, dtb_handle_t *handle, dtb_node_t *node) {
     dtb_prop_t *ranges = dtb_get_prop(handle, node, "ranges");
@@ -118,13 +119,20 @@ static errno_t pci_dtb_irqmap(device_pcictl_t *device, dtb_handle_t *handle, dtb
 
     return 0;
 }
+#endif
 
 
 
 bool pcie_generic_match(device_info_t *info) {
-    return device_test_dtb_compat(info, 1, (char const *const[]){"pci-host-ecam-generic"});
+#if CONFIG_ENABLE_DTB
+    if (device_test_dtb_compat(info, 1, (char const *const[]){"pci-host-ecam-generic"})) {
+        return true;
+    }
+#endif
+    return false;
 }
 
+#if CONFIG_ENABLE_DTB
 errno_t pcie_generic_add_ecam_from_dtb(device_pcictl_t *device) {
     // Read bus range.
     dtb_prop_t *bus_range = dtb_get_prop(device->base.info.dtb_handle, device->base.info.dtb_node, "bus-range");
@@ -149,9 +157,13 @@ errno_t pcie_generic_add_ecam_from_dtb(device_pcictl_t *device) {
 
     return 0;
 }
+#endif
 
 errno_t pcie_generic_add(device_t *device) {
+#if CONFIG_ENABLE_DTB
     return pcie_generic_add_ecam_from_dtb((device_pcictl_t *)device);
+#endif
+    return -ENOTSUP;
 }
 
 void pcie_generic_remove(device_t *device) {
