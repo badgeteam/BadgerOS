@@ -105,7 +105,6 @@ project(badgeros C ASM)
 set(target badger-os.elf)
 
 set(kernel_src
-    ${CMAKE_CURRENT_LIST_DIR}/build/fs_root.c
     ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/badge_format_str.c
     ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/fifo.c
     ${CMAKE_CURRENT_LIST_DIR}/src/badgelib/hash.c

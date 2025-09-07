@@ -96,6 +96,41 @@ pub const ROOT_INO: u32 = 2;
 /// Identifies a filesystem as EXT2; superblock field [`Superblock::magic`].
 pub const MAGIC: u16 = 0xef53;
 
+#[rustfmt::skip]
+pub mod feat {
+    pub mod compat {
+        /// Block pre-allocation for new directories
+        pub const DIR_PREALLOC:  u32 = 0x0001;
+        pub const IMAGIC_INODES: u32 = 0x0002;
+        /// An Ext3 journal exists
+        pub const HAS_JOURNAL:   u32 = 0x0004;
+        /// Extended inode attributes are present
+        pub const EXT_ATTR:      u32 = 0x0008;
+        /// Non-standard inode size used
+        pub const RESIZE_INO:    u32 = 0x0010;
+        /// Directory indexing (HTree)
+        pub const DIR_INDEX:     u32 = 0x0020;
+    }
+    
+    pub mod incompat {
+        /// Disk/File compression is used
+        pub const COMPRESSION: u32 = 0x0001;
+        pub const FILETYPE:    u32 = 0x0002;
+        pub const RECOVER:     u32 = 0x0004;
+        pub const JOURNAL_DEV: u32 = 0x0008;
+        pub const META_BG:     u32 = 0x0010;
+    }
+    
+    pub mod compat_ro {
+        /// Sparse Superblock
+        pub const SPARSE_SUPER: u32 = 0x0001;
+        /// Large file support, 64-bit file size
+        pub const LARGE_FILE:   u32 = 0x0002;
+        /// Binary tree sorted directory files
+        pub const BTREE_DIR:    u32 = 0x0004;
+    }
+}
+
 struct_def! {
     /// EXT2 superblock; filesystem metadata.
     struct Superblock {
@@ -255,25 +290,26 @@ impl TryFrom<u16> for Mode {
 struct_def! {
     /// Inode structure.
     struct Inode {
-        mode:       u16,
-        uid:        u16,
-        size:       u32,
-        atime:      u32,
-        ctime:      u32,
-        mtime:      u32,
-        dtime:      u32,
-        gid:        u16,
-        links:      u16,
-        blocks:     u32,
-        flags:      u32,
-        _osd1:      [u8; 4],
-        block:      [u32; 15],
-        generation: u32,
-        file_acl:   u32,
+        mode:        u16,
+        uid:         u16,
+        size:        u32,
+        atime:       u32,
+        ctime:       u32,
+        mtime:       u32,
+        dtime:       u32,
+        gid:         u16,
+        nlink:       u16,
+        /// Actual amount of allocated disk space divide ceil by 512.
+        realsize:    u32,
+        flags:       u32,
+        _osd1:       [u8; 4],
+        data_blocks: [u32; 15],
+        generation:  u32,
+        file_acl:    u32,
         /// For regular files, high 32 bits of size.
-        dir_acl:    u32,
-        _obsolete:  u32,
-        _osd2:      [u8; 12],
+        dir_acl:     u32,
+        _obsolete:   u32,
+        _osd2:       [u8; 12],
     }
 }
 assert_eq_size!(Inode, [u8; 128]);
@@ -299,6 +335,24 @@ pub enum FileType {
     UnixSocket = 6,
     /// Symbolic Link
     Symlink = 7,
+}
+
+impl TryFrom<u8> for FileType {
+    type Error = Errno;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(FileType::Unknown),
+            1 => Ok(FileType::Regular),
+            2 => Ok(FileType::Directory),
+            3 => Ok(FileType::CharDev),
+            4 => Ok(FileType::BlockDev),
+            5 => Ok(FileType::Fifo),
+            6 => Ok(FileType::UnixSocket),
+            7 => Ok(FileType::Symlink),
+            _ => Err(Errno::EIO),
+        }
+    }
 }
 
 impl Into<NodeType> for FileType {
