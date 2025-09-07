@@ -2,7 +2,10 @@
 // SPDX-FileType: SOURCE
 // SPDX-License-Identifier: MIT
 
-use core::num::{NonZeroU32, NonZeroU64};
+use core::{
+    any::Any,
+    num::{NonZeroU32, NonZeroU64},
+};
 
 use alloc::{
     boxed::Box,
@@ -31,12 +34,6 @@ use super::{
 
 mod spec;
 
-/// Helper function to get the RAMFS from a VFS.
-#[inline(always)]
-fn get_e2fs(vfs: &Arc<Vfs>) -> &E2Fs {
-    unsafe { &*(vfs.ops.data().as_ref() as *const dyn VfsOps as *const E2Fs) }
-}
-
 struct E2VNode {
     /// Inode number.
     ino: u32,
@@ -53,7 +50,7 @@ struct E2VNode {
 impl E2VNode {
     /// Helper function to get one block ID from the inode.
     fn get_block(&self, arc_self: &Arc<VNode>, mut block: u32) -> EResult<Option<NonZeroU32>> {
-        let e2fs = get_e2fs(&arc_self.vfs);
+        let e2fs = arc_self.vfs.get_ops_as::<E2Fs>();
 
         let block_size_exp = e2fs.block_size_exp;
         let block_ptrs_exp = block_size_exp - 2;
@@ -127,7 +124,7 @@ impl E2VNode {
         if length == 0 {
             return Ok(()); // Prevents underflow subtractions
         }
-        let e2fs = get_e2fs(&arc_self.vfs);
+        let e2fs = arc_self.vfs.get_ops_as::<E2Fs>();
 
         // Convert the range into a range on disk.
         let block_size_exp = e2fs.block_size_exp;
@@ -186,7 +183,7 @@ impl E2VNode {
         arc_self: &Arc<VNode>,
         cb: &mut dyn FnMut(&LinkedDent, u64, &[u8]) -> EResult<bool>,
     ) -> EResult<()> {
-        let e2fs = get_e2fs(&arc_self.vfs);
+        let e2fs = arc_self.vfs.get_ops_as::<E2Fs>();
         let block_size_exp = e2fs.block_size_exp;
         let mut offset = 0u64;
         let mut name = [0u8; NAME_MAX];
@@ -238,7 +235,7 @@ impl E2VNode {
 
 impl VNodeOps for E2VNode {
     fn write(&self, arc_self: &Arc<VNode>, offset: u64, wdata: &[u8]) -> EResult<()> {
-        let e2fs = get_e2fs(&arc_self.vfs);
+        let e2fs = arc_self.vfs.get_ops_as::<E2Fs>();
         self.iter_blocks(
             arc_self,
             offset,
@@ -257,7 +254,7 @@ impl VNodeOps for E2VNode {
     }
 
     fn read(&self, arc_self: &Arc<VNode>, offset: u64, rdata: &mut [u8]) -> EResult<()> {
-        let e2fs = get_e2fs(&arc_self.vfs);
+        let e2fs = arc_self.vfs.get_ops_as::<E2Fs>();
         self.iter_blocks(
             arc_self,
             offset,
@@ -281,7 +278,7 @@ impl VNodeOps for E2VNode {
     }
 
     fn find_dirent(&self, arc_self: &Arc<VNode>, name: &[u8]) -> EResult<Dirent> {
-        let e2fs = get_e2fs(&arc_self.vfs);
+        let e2fs = arc_self.vfs.get_ops_as::<E2Fs>();
         let mut res = Err(Errno::ENOENT);
         self.iter_dirents(arc_self, &mut |dent, _offset, dent_name| {
             if *name == *dent_name {
@@ -304,7 +301,7 @@ impl VNodeOps for E2VNode {
     }
 
     fn get_dirents(&self, arc_self: &Arc<VNode>) -> EResult<Vec<Dirent>> {
-        let e2fs = get_e2fs(&arc_self.vfs);
+        let e2fs = arc_self.vfs.get_ops_as::<E2Fs>();
         let mut out = Vec::new();
         self.iter_dirents(arc_self, &mut |dent, offset, name| try {
             let type_ = e2fs.get_inode_type(&arc_self.vfs, dent)?;
@@ -372,7 +369,7 @@ impl VNodeOps for E2VNode {
     }
 
     fn stat(&self, arc_self: &Arc<VNode>) -> EResult<Stat> {
-        let e2fs = get_e2fs(&arc_self.vfs);
+        let e2fs = arc_self.vfs.get_ops_as::<E2Fs>();
         Ok(Stat {
             dev: e2fs
                 .media
@@ -417,7 +414,7 @@ impl VNodeOps for E2VNode {
     }
 
     fn sync(&self, arc_self: &Arc<VNode>) -> EResult<()> {
-        let e2fs = get_e2fs(&arc_self.vfs);
+        let e2fs = arc_self.vfs.get_ops_as::<E2Fs>();
         self.iter_blocks(arc_self, 0, self.size, &mut |_fileoff, diskoff, len| {
             if let Some(diskoff) = diskoff {
                 e2fs.media.sync(diskoff.into(), len)

@@ -2,7 +2,7 @@ use core::{
     cell::UnsafeCell,
     fmt::Debug,
     marker::PhantomData,
-    mem::MaybeUninit,
+    mem::{ManuallyDrop, MaybeUninit},
     ops::{Deref, DerefMut},
 };
 
@@ -107,6 +107,26 @@ pub struct MutexGuard<'a, T, const SHARED: bool> {
 }
 
 impl<'a, T, const SHARED: bool> MutexGuard<'a, T, SHARED> {
+    /// Convert into raw parts.
+    pub fn to_raw_parts(self) -> (*mut mutex_t, &'a mut T) {
+        // Using this unsafe block to bypass borrow checker from preventing the `core::mem::forget`.
+        let tmp = unsafe { (self.mutex, &mut *(self.data as *mut T)) };
+        core::mem::forget(self);
+        tmp
+    }
+    /// Convert this guard into one of a different type referencing the same mutex.
+    pub fn convert<U: 'a>(
+        self,
+        f: impl FnOnce(&'a mut T) -> &'a mut U,
+    ) -> MutexGuard<'a, U, SHARED> {
+        let (mutex, data) = self.to_raw_parts();
+        let res = MutexGuard {
+            mutex,
+            data: f(data),
+            marker: PhantomData,
+        };
+        res
+    }
     /// Create from an already locked mutex and a data pointer.
     pub unsafe fn from_raw_parts(mutex: *mut mutex_t, data: &'a mut T) -> Self {
         Self {
@@ -181,6 +201,32 @@ pub struct SharedMutexGuard<'a, T> {
 }
 
 impl<'a, T> SharedMutexGuard<'a, T> {
+    /// Convert into raw parts.
+    pub fn to_raw_parts(self) -> (*mut mutex_t, &'a T) {
+        // Using this unsafe block to bypass borrow checker from preventing the `core::mem::forget`.
+        let tmp = unsafe { (self.mutex, &*(self.data as *const T)) };
+        core::mem::forget(self);
+        tmp
+    }
+    /// Create a clone of this mutex guard.
+    pub fn share(&self) -> Self {
+        unsafe { raw::mutex_acquire_shared(self.mutex, timestamp_us_t::MAX) };
+        Self {
+            mutex: self.mutex,
+            data: self.data,
+            marker: PhantomData,
+        }
+    }
+    /// Convert this guard into one of a different type referencing the same mutex.
+    pub fn convert<U: 'a>(self, f: impl FnOnce(&'a T) -> &'a U) -> SharedMutexGuard<'a, U> {
+        let (mutex, data) = self.to_raw_parts();
+        let res = SharedMutexGuard {
+            mutex,
+            data: f(data),
+            marker: PhantomData,
+        };
+        res
+    }
     /// Create from an already locked mutex and a data pointer.
     pub unsafe fn from_raw_parts(mutex: *mut mutex_t, data: &'a T) -> Self {
         Self {

@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: MIT
 
 use core::{
+    any::Any,
     cell::UnsafeCell,
     hint::unlikely,
     ops::Range,
@@ -23,7 +24,7 @@ use crate::{
     bindings::{
         device::BaseDevice,
         error::{EResult, Errno},
-        mutex::Mutex,
+        mutex::{Mutex, SharedMutexGuard},
     },
     filesystem::fifo::FifoShared,
 };
@@ -380,6 +381,16 @@ pub struct Vfs {
 unsafe impl Sync for Vfs {}
 
 impl Vfs {
+    /// Lock the ops mutex shared and convert to type `U`.
+    /// # Panics
+    /// - If the ops are not of type `U`
+    #[inline(always)]
+    pub(super) fn get_ops_as<'a, U: VfsOps>(self: &'a Vfs) -> SharedMutexGuard<'a, U> {
+        self.ops
+            .lock_shared()
+            .convert(|x| (x.as_ref() as &dyn Any).downcast_ref().unwrap())
+    }
+
     /// Helper function to get [`Vfs::root`], which must already be initialized.
     pub(super) fn root(&self) -> Arc<VNode> {
         unsafe {
@@ -470,7 +481,7 @@ impl Vfs {
 }
 
 /// Filesystem-wide operations for a [`Vfs`]; instance of a [`VfsDriver`].
-pub trait VfsOps: Sync {
+pub trait VfsOps: Sync + Any {
     /// Get the media that this VFS uses.
     fn media(&self) -> Option<&Media>;
     /// Whether this type of filesystem has inode numers.
