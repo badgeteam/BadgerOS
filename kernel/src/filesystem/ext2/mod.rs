@@ -23,6 +23,7 @@ use crate::{
         mutex::Mutex,
     },
     filesystem::NAME_MAX,
+    util::MaybeMut,
 };
 use spec::*;
 
@@ -38,7 +39,7 @@ struct E2VNode {
     /// Inode number.
     ino: u32,
     /// Cached inode structure.
-    inode: Inode,
+    inode: Mutex<Inode>,
     /// On-disk inode structure offset.
     inode_offset: u64,
     /// Current size.
@@ -49,67 +50,119 @@ struct E2VNode {
 
 impl E2VNode {
     /// Helper function to get one block ID from the inode.
-    fn get_block(&self, arc_self: &Arc<VNode>, mut block: u32) -> EResult<Option<NonZeroU32>> {
+    fn get_block(
+        &self,
+        arc_self: &Arc<VNode>,
+        block: u32,
+        de_sparse: bool,
+    ) -> EResult<Option<NonZeroU32>> {
+        if de_sparse {
+            let mut guard = self.inode.lock();
+            self.get_block_unlocked(arc_self, block, MaybeMut::Mut(&mut guard))
+        } else {
+            let guard = self.inode.lock_shared();
+            self.get_block_unlocked(arc_self, block, MaybeMut::Const(&guard))
+        }
+    }
+
+    /// Recursive implementation of `get_block`.
+    fn get_block_recursive(
+        &self,
+        e2fs: &E2Fs,
+        level: u8,
+        fileblk: u32,
+        block_ptr: NonZeroU32,
+        group_hint: u32,
+        de_sparse: bool,
+    ) -> EResult<Option<NonZeroU32>> {
+        if level == 0 {
+            return Ok(Some(block_ptr));
+        }
+
+        let index =
+            (fileblk >> (e2fs.block_size_exp * level as u32)) % (1u32 << e2fs.block_size_exp);
+        let block_ptr = ((u32::from(block_ptr) as u64) << e2fs.block_size_exp) + 4 * index as u64;
+        let mut tmp = [0u8; 4];
+        e2fs.media.read(block_ptr, &mut tmp)?;
+
+        let mut block = u32::from_le_bytes(tmp);
+        if block == 0 {
+            if de_sparse {
+                block = e2fs.alloc_block(group_hint)?.into();
+                e2fs.media.write(block_ptr, &block.to_le_bytes())?;
+            } else {
+                return Ok(None);
+            }
+        }
+        let block = unsafe { NonZeroU32::new_unchecked(block) };
+
+        self.get_block_recursive(
+            e2fs,
+            level - 1,
+            fileblk,
+            block,
+            u32::from(block) / e2fs.blocks_per_group,
+            de_sparse,
+        )
+    }
+
+    /// Helper function to get one block ID from the inode.
+    fn get_block_unlocked(
+        &self,
+        arc_self: &Arc<VNode>,
+        block: u32,
+        mut inode: MaybeMut<'_, Inode>,
+    ) -> EResult<Option<NonZeroU32>> {
         let e2fs = arc_self.vfs.get_ops_as::<E2Fs>();
+        let group_hint = (self.ino - 1) / e2fs.inodes_per_group;
 
         let block_size_exp = e2fs.block_size_exp;
         let block_ptrs_exp = block_size_exp - 2;
-        let ind1_ptr = (self.inode.data_blocks[12] as u64) << block_size_exp;
-        let ind2_ptr = (self.inode.data_blocks[13] as u64) << block_size_exp;
-        let ind3_ptr = (self.inode.data_blocks[14] as u64) << block_size_exp;
         let ind1_blocks = 1u32 << block_ptrs_exp;
         let ind2_blocks = 1u32 << (2 * block_ptrs_exp);
         let ind3_blocks = 1u32 << (3 * block_ptrs_exp);
 
+        let index: usize;
+        let level: u8;
+        let fileblk: u32;
+
         if block < 12 {
             // Direct blocks.
-            return Ok(NonZeroU32::new(self.inode.data_blocks[block as usize]));
-        }
-
-        block -= 12;
-        if block < ind1_blocks {
+            index = block as usize;
+            fileblk = 0;
+            level = 0;
+        } else if block - 12 < ind1_blocks {
             // Indirect blocks.
-            let mut tmp = [0u8; 4];
-            e2fs.media.read(ind1_ptr + block as u64 * 4, &mut tmp)?;
-            return Ok(NonZeroU32::new(u32::from_le_bytes(tmp)));
-        }
-
-        block -= ind1_blocks;
-        if block < ind2_blocks {
+            index = 12;
+            fileblk = block - 12;
+            level = 1;
+        } else if block - 12 - ind1_blocks < ind2_blocks {
             // Doubly indirect blocks.
-            let mut tmp = [0u8; 4];
-            e2fs.media
-                .read(ind2_ptr + (block / ind1_blocks) as u64 * 4, &mut tmp)?;
-            let ind1_ptr = (u32::from_le_bytes(tmp) as u64) << block_size_exp;
-
-            let mut tmp = [0u8; 4];
-            e2fs.media
-                .read(ind1_ptr + (block % ind1_blocks) as u64 * 4, &mut tmp)?;
-            return Ok(NonZeroU32::new(u32::from_le_bytes(tmp)));
-        }
-
-        block -= ind2_blocks;
-        if block < ind3_blocks {
+            index = 13;
+            fileblk = block - 12 - ind1_blocks;
+            level = 2;
+        } else if block - 12 - ind1_blocks - ind2_blocks < ind3_blocks {
             // Triply indirect blocks.
-            let mut tmp = [0u8; 4];
-            e2fs.media
-                .read(ind3_ptr + (block / ind2_blocks) as u64 * 4, &mut tmp)?;
-            let ind2_ptr = (u32::from_le_bytes(tmp) as u64) << block_size_exp;
-
-            let mut tmp = [0u8; 4];
-            e2fs.media.read(
-                ind2_ptr + (block % ind2_blocks / ind1_blocks) as u64 * 4,
-                &mut tmp,
-            )?;
-            let ind1_ptr = (u32::from_le_bytes(tmp) as u64) << block_size_exp;
-
-            let mut tmp = [0u8; 4];
-            e2fs.media
-                .read(ind1_ptr + (block % ind1_blocks) as u64 * 4, &mut tmp)?;
-            return Ok(NonZeroU32::new(u32::from_le_bytes(tmp)));
+            index = 13;
+            fileblk = block - 12 - ind1_blocks - ind2_blocks;
+            level = 3;
+        } else {
+            unreachable!("Block index into inode too high");
         }
 
-        unreachable!("Block index into inode too high");
+        let block_ptr = NonZeroU32::new(inode.data_blocks[index]);
+        let block_ptr = if let Some(x) = block_ptr {
+            x
+        } else if let Some(inode) = &mut inode.try_mut() {
+            let x = e2fs.alloc_block(group_hint)?;
+            (*inode).data_blocks[index] = x.into();
+            e2fs.media
+                .write(self.inode_offset, &Into::<[u8; _]>::into(**inode))?;
+            x
+        } else {
+            return Ok(None);
+        };
+        self.get_block_recursive(&e2fs, level, fileblk, block_ptr, group_hint, inode.is_mut())
     }
 
     /// Helper function to iterate blocks within a certain range of this file.
@@ -119,6 +172,7 @@ impl E2VNode {
         arc_self: &Arc<VNode>,
         offset: u64,
         length: u64,
+        de_sparse: bool,
         cb: &mut dyn FnMut(u64, Option<NonZeroU64>, u64) -> EResult<()>,
     ) -> EResult<()> {
         if length == 0 {
@@ -158,7 +212,11 @@ impl E2VNode {
         let mut prev = None::<NonZeroU32>;
 
         for fileblk in fileblk_start..fileblk_end {
-            let block = self.get_block(arc_self, fileblk)?;
+            let mut block = self.get_block(arc_self, fileblk, false)?;
+            if de_sparse && block.is_none() {
+                block = self.get_block(arc_self, fileblk, true)?;
+                debug_assert!(block.is_some());
+            }
             if let Some(y) = start
                 && prev.map(|x| unsafe { NonZeroU32::new_unchecked(u32::from(x) + 1) }) != block
             {
@@ -240,15 +298,12 @@ impl VNodeOps for E2VNode {
             arc_self,
             offset,
             wdata.len() as u64,
-            &mut |fileoff, diskoff, len| {
-                if let Some(diskoff) = diskoff {
-                    e2fs.media.write(
-                        diskoff.into(),
-                        &wdata[(fileoff - offset) as usize..(fileoff + len - offset) as usize],
-                    )
-                } else {
-                    todo!("De-sparse inode blocks");
-                }
+            true,
+            &mut |fileoff, diskoff, len| try {
+                e2fs.media.write(
+                    diskoff.unwrap().into(),
+                    &wdata[(fileoff - offset) as usize..(fileoff + len - offset) as usize],
+                )?;
             },
         )
     }
@@ -259,6 +314,7 @@ impl VNodeOps for E2VNode {
             arc_self,
             offset,
             rdata.len() as u64,
+            false,
             &mut |fileoff, diskoff, len| {
                 if let Some(diskoff) = diskoff {
                     e2fs.media.read(
@@ -356,10 +412,10 @@ impl VNodeOps for E2VNode {
         let mut link = Vec::try_with_capacity(self.size as usize)?;
         link.resize(self.size as usize, 0);
         if self.size <= 60 {
+            let data_blocks = &self.inode.lock_shared().data_blocks;
             let mut block_bytes = [0u8; 60];
             for i in 0..15 {
-                block_bytes[i * 4..i * 4 + 4]
-                    .copy_from_slice(&self.inode.data_blocks[i].to_le_bytes());
+                block_bytes[i * 4..i * 4 + 4].copy_from_slice(&data_blocks[i].to_le_bytes());
             }
             link.copy_from_slice(&block_bytes[..self.size as usize]);
         } else {
@@ -370,6 +426,7 @@ impl VNodeOps for E2VNode {
 
     fn stat(&self, arc_self: &Arc<VNode>) -> EResult<Stat> {
         let e2fs = arc_self.vfs.get_ops_as::<E2Fs>();
+        let inode = self.inode.lock_shared();
         Ok(Stat {
             dev: e2fs
                 .media
@@ -378,24 +435,24 @@ impl VNodeOps for E2VNode {
                 .map(|dev| ((u32::from(dev.id()) as u64) << 32) | dev.class() as u64)
                 .unwrap_or(0),
             ino: self.ino as u64,
-            mode: self.inode.mode,
-            nlink: self.inode.nlink,
-            uid: self.inode.uid,
-            gid: self.inode.gid,
+            mode: inode.mode,
+            nlink: inode.nlink,
+            uid: inode.uid,
+            gid: inode.gid,
             rdev: 0,
             size: self.size,
             blksize: 1u64 << e2fs.block_size_exp,
-            blocks: self.inode.realsize as u64,
+            blocks: inode.realsize as u64,
             atim: Timespec {
-                sec: self.inode.atime as u64,
+                sec: inode.atime as u64,
                 nsec: 0,
             },
             mtim: Timespec {
-                sec: self.inode.mtime as u64,
+                sec: inode.mtime as u64,
                 nsec: 0,
             },
             ctim: Timespec {
-                sec: self.inode.ctime as u64,
+                sec: inode.ctime as u64,
                 nsec: 0,
             },
         })
@@ -415,13 +472,19 @@ impl VNodeOps for E2VNode {
 
     fn sync(&self, arc_self: &Arc<VNode>) -> EResult<()> {
         let e2fs = arc_self.vfs.get_ops_as::<E2Fs>();
-        self.iter_blocks(arc_self, 0, self.size, &mut |_fileoff, diskoff, len| {
-            if let Some(diskoff) = diskoff {
-                e2fs.media.sync(diskoff.into(), len)
-            } else {
-                Ok(())
-            }
-        })
+        self.iter_blocks(
+            arc_self,
+            0,
+            self.size,
+            false,
+            &mut |_fileoff, diskoff, len| {
+                if let Some(diskoff) = diskoff {
+                    e2fs.media.sync(diskoff.into(), len)
+                } else {
+                    Ok(())
+                }
+            },
+        )
     }
 }
 
@@ -433,10 +496,17 @@ struct E2BlockGroup {
 }
 
 struct E2Fs {
-    /// Cached superblock.
-    superblock: Box<Superblock>,
+    /// How many inodes are associated with each block group.
+    inodes_per_group: u32,
+    /// How many blocks are associated with each block group.
+    blocks_per_group: u32,
+    /// How many bytes large an inode table entry is.
+    inode_size: u16,
+    /// Enabled COMPAT features.
     feature_compat: u32,
+    /// Enabled INCOMPAT features.
     feature_incompat: u32,
+    /// Enabled RO_COMPAT features.
     feature_ro_compat: u32,
     /// Log-base 2 of block size.
     block_size_exp: u32,
@@ -449,9 +519,19 @@ struct E2Fs {
 }
 
 impl E2Fs {
+    /// Try to allocate a block, starting in block group `group`.
+    fn alloc_block(&self, group_hint: u32) -> EResult<NonZeroU32> {
+        todo!()
+    }
+
+    /// Mark a block as free.
+    fn free_block(&self, block: NonZeroU32) -> EResult<()> {
+        todo!()
+    }
+
     /// Helper function to get the inode type for a dirent.
     /// Will query the actual inode for ext2 rev. 0.
-    fn get_inode_type(&self, arc_self: &Arc<Vfs>, dent: &LinkedDent) -> EResult<NodeType> {
+    fn get_inode_type(&self, _arc_self: &Arc<Vfs>, dent: &LinkedDent) -> EResult<NodeType> {
         if self.feature_incompat & feat::incompat::FILETYPE == 0 {
             todo!()
         } else {
@@ -460,7 +540,7 @@ impl E2Fs {
     }
 
     /// Get block group descriptor by block group index.
-    fn get_block_group(&self, arc_self: &Arc<Vfs>, index: u32) -> EResult<Arc<E2BlockGroup>> {
+    fn get_block_group(&self, _arc_self: &Arc<Vfs>, index: u32) -> EResult<Arc<E2BlockGroup>> {
         if let Some(res) = try { self.block_group_desc.lock_shared().get(&index)?.upgrade()? } {
             return Ok(res.clone());
         }
@@ -488,14 +568,14 @@ impl E2Fs {
 
     /// Implementation of [`Self::open_root`] and [`Self::open`].
     fn open_impl(&self, arc_self: &Arc<Vfs>, ino: u32) -> EResult<Box<dyn VNodeOps>> {
-        let block_group = ino.checked_sub(1).ok_or(Errno::EIO)? / self.superblock.inodes_per_group;
-        let index = (ino - 1) % self.superblock.inodes_per_group;
+        let block_group = ino.checked_sub(1).ok_or(Errno::EIO)? / self.inodes_per_group;
+        let index = (ino - 1) % self.inodes_per_group;
 
         // Load the inode structure from disk.
         let block_group = self.get_block_group(arc_self, block_group)?;
         let inode_offset = ((block_group.desc.lock_shared().inode_table as u64)
             << self.block_size_exp)
-            + index as u64 * self.superblock.inode_size as u64;
+            + index as u64 * self.inode_size as u64;
         let mut inode = [0u8; size_of::<Inode>()];
         self.media.read(inode_offset, &mut inode)?;
         let inode = Inode::from(inode);
@@ -514,7 +594,7 @@ impl E2Fs {
         // Loaded successfully, make VNode.
         Ok(Box::<dyn VNodeOps>::from(Box::try_new(E2VNode {
             ino,
-            inode,
+            inode: Mutex::new(inode),
             inode_offset,
             size,
             type_,
@@ -565,9 +645,9 @@ struct E2FsDriver {}
 impl VfsDriver for E2FsDriver {
     fn detect(&self, media: &Media) -> EResult<bool> {
         // Load the superblock.
-        let mut superblock = Box::new([0u8; 1024]);
-        media.read(1024, superblock.as_mut())?;
-        let superblock = Box::<Superblock>::from(superblock);
+        let mut superblock = [0u8; size_of::<Superblock>()];
+        media.read(1024, &mut superblock)?;
+        let superblock = Superblock::from(superblock);
 
         // Check the magic value.
         Ok(superblock.magic == MAGIC)
@@ -577,9 +657,9 @@ impl VfsDriver for E2FsDriver {
         let media = media.ok_or(Errno::ENODEV)?;
 
         // Load the superblock.
-        let mut superblock = Box::new([0u8; 1024]);
-        media.read(1024, superblock.as_mut())?;
-        let superblock = Box::<Superblock>::from(superblock);
+        let mut superblock = [0u8; size_of::<Superblock>()];
+        media.read(1024, &mut superblock)?;
+        let superblock = Superblock::from(superblock);
         let block_size_exp = superblock.block_size_exp + 10;
 
         // Check the magic value.
@@ -629,12 +709,14 @@ impl VfsDriver for E2FsDriver {
         let vfs = Box::try_new(E2Fs {
             block_size_exp,
             bgdt_offset: (superblock.first_data_block as u64 + 1) << block_size_exp,
-            superblock,
             feature_compat,
             feature_incompat,
             feature_ro_compat,
             media,
             block_group_desc: Mutex::new(BTreeMap::new()),
+            inodes_per_group: superblock.inodes_per_group,
+            inode_size: superblock.inode_size,
+            blocks_per_group: superblock.blocks_per_group,
         })?;
 
         Ok(Box::<dyn VfsOps>::from(vfs))
@@ -647,4 +729,4 @@ fn register_e2fs() {
         .insert("ext2".into(), Box::new(E2FsDriver {}));
 }
 
-register_kmodule!(e2fs, [1, 0, 0], register_e2fs);
+register_kmodule!(ext2, [1, 0, 0], register_e2fs);

@@ -43,7 +43,7 @@ macro_rules! struct_def {
     ) => {
         // Define base struct.
         #[derive(Clone, Copy)]
-        #[repr(packed)]
+        #[repr(C)]
         $(#[doc = $structdoc])*
         pub struct $struct {
             $(
@@ -168,7 +168,7 @@ struct_def! {
         feature_compat:    u32,
         feature_incompat:  u32,
         feature_ro_compat: u32,
-        uuid:              u128,
+        uuid:              [u32; 4],
         volume_name:       [u8; 16],
         last_mounted:      [u8; 64],
         algo_bitmap:       u32,
@@ -179,7 +179,7 @@ struct_def! {
         _padding0:           [u8; 2],
 
         /* ==== Journalling support ==== */
-        journal_uuid: u128,
+        journal_uuid: [u32; 4],
         journal_inum: u32,
         journal_dev:  u32,
         last_orphan:  u32,
@@ -192,10 +192,9 @@ struct_def! {
         /* ==== Other options ==== */
         default_mount_options: u32,
         first_meta_blockgroup: u32,
-        _padding3:             [u8; 760],
     }
 }
-assert_eq_size!(Superblock, [u8; 1024]);
+assert_eq_size!(Superblock, [u8; 264]);
 
 struct_def! {
     /// Block group descriptor table.

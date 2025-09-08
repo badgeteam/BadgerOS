@@ -12,6 +12,7 @@ use crate::{
             limine_uuid, mem_equals, strlen,
         },
     },
+    filesystem::{oflags, open},
     kparam, util,
 };
 
@@ -300,6 +301,13 @@ fn mount_root_fs() {
     if let Err(x) = res {
         panic!("Unable to mount root filesystem: {}", x);
     }
+
+    // Ext2 filesystem test.
+    let file = open(None, b"/existfile", oflags::READ_WRITE | oflags::APPEND).unwrap();
+    file.write(b"This is append data\n").unwrap();
+
+    let file = open(None, b"/newfile", oflags::READ_WRITE | oflags::CREATE).unwrap();
+    file.write(b"This new file data\n").unwrap();
 }
 
 mod c_api {
