@@ -7,7 +7,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#ifdef __riscv
+#if CONFIG_ENABLE_DTB
 #include "device/dtb/dtb.h"
 #endif
 
@@ -50,10 +50,11 @@ bool           time_cancel_async_task(int64_t taskno);
 // Get current time in microseconds.
 timestamp_us_t time_us();
 
-#ifdef __riscv
+#if CONFIG_ENABLE_DTB
 // Initialise timer using the DTB.
 void time_init_dtb(dtb_handle_t *dtb);
-#else
+#endif
+#if CONFIG_ENABLE_ACPI
 // Early timer init before ACPI (but not DTB).
 void time_init_before_acpi();
 // Initialise timer using ACPI.

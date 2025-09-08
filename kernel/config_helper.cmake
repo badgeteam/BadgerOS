@@ -10,7 +10,10 @@ macro(config_enum VAR DEFAULT DESCRIPTION)
     set(_tmp_valid_values ${ARGN})
     list(FIND _tmp_valid_values "${CONFIG_${VAR}}" _tmp_index)
     if(_tmp_index EQUAL -1)
-        message(FATAL_ERROR "Invalid CONFIG_${VAR}; valid options are: ${ARGN}")
+        message(WARNING
+            "Invalid CONFIG_${VAR}; valid options are: ${ARGN}; setting to ${DEFAULT}"
+        )
+        set(CONFIG_${VAR} ${DEFAULT} CACHE STRING ${DESCRIPTION} FORCE)
     endif()
     add_definitions(
         -DCONFIG_${VAR}=${CONFIG_${VAR}}
