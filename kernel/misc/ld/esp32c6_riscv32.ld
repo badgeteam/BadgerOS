@@ -74,7 +74,8 @@ PROVIDE(CLINT_U = 0x20001C00);
 	.text : AT(LOADADDR(.espseg.0) + SIZEOF(.espseg.0)) {
 		. = ALIGN(256);
 		*(.interrupt_vector_table)
-		*(.text) *(.text.*)
+		*(.text.__trap_asm)
+		*(.text .text.*)
 		. = ALIGN(4);
 	} >xip :codeseg
 	__stop_text = .;

@@ -17,12 +17,13 @@ SECTIONS
     __start_badgeros_kernel = .;
 
     __start_text = .;
-    .text : {
-        *(.text .text.*)
-    } :text
     . = ALIGN(256);
     .interrupt_vector_table : {
         *(.interrupt_vector_table)
+    } :text
+    .text : {
+        *(.text.__trap_asm)
+        *(.text .text.*)
     } :text
     . = ALIGN(4096);
     __stop_text = .;

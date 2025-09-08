@@ -208,8 +208,8 @@ endforeach()
 file(CONFIGURE OUTPUT "cmake_config.rs" CONTENT "${RUST_CONFIG_FILE}")
 
 # Integrate Rust.
-set(rust_target ${CMAKE_CURRENT_LIST_DIR}/misc/rust_target/${CONFIG_CPU}.json)
-set(rust_lib ${CMAKE_CURRENT_LIST_DIR}/target/${CONFIG_CPU}/debug/libbadgeros_kernel.a)
+set(rust_target ${CMAKE_CURRENT_LIST_DIR}/misc/rust_target/${CONFIG_CPU}-kernel.json)
+set(rust_lib ${CMAKE_CURRENT_LIST_DIR}/target/${CONFIG_CPU}-kernel/debug/libbadgeros_kernel.a)
 add_custom_target(
     rust.target ALL
     cargo +nightly build -Z build-std=core,alloc --target=${rust_target}

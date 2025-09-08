@@ -275,7 +275,7 @@ isr_context_switch:
 
 
     # Trap and interrupt handler.
-    .text
+    .section ".text.__trap_asm", "ax", @progbits
     .type __trap_asm, %function
     .align 2
     .cfi_startproc
