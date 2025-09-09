@@ -22,7 +22,6 @@ add_custom_command(
     COMMAND mkdir -p ${boot_dir}/boot
     COMMAND cp ${limine_efi} ${boot_dir}/EFI/BOOT/
     COMMAND cp ${limine_boot} ${boot_dir}/boot/
-    COMMAND rsync -r ${CMAKE_CURRENT_LIST_DIR}/testdata/ ${boot_dir}
     COMMAND cp ${CMAKE_BINARY_DIR}/badger-os.stripped.elf ${boot_dir}/boot/badger-os.elf
     
     # Making a FAT filesystem image from it.

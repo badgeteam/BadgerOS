@@ -59,6 +59,14 @@ static vmm_info_t *vmm_free;
 
 
 
+// At least one naturally-aligned page of zeroes.
+uint8_t const *memprotect_zeroes;
+// At least one naturally-aligned page of zeroes.
+size_t         memprotect_zeroes_len;
+
+// At least one naturally-aligned page of zeroes.
+size_t memprotect_zeroes_paddr;
+
 // HHDM length in pages.
 size_t memprotect_hhdm_pages;
 // Kernel virtual page number.
@@ -558,7 +566,6 @@ void memprotect_postheap_init() {
         sect_len,
         MEMPROTECT_FLAG_RW | MEMPROTECT_FLAG_GLOBAL | MEMPROTECT_FLAG_KERNEL
     );
-
     // Switch over to new page table.
     atomic_thread_fence(memory_order_release);
     memprotect_swap_from_isr();
@@ -566,6 +573,13 @@ void memprotect_postheap_init() {
 
     // Run other MMU init code.
     mmu_init();
+
+    // Page-or-more of zeroes.
+    memprotect_zeroes_paddr = phys_page_alloc(1, false) * CONFIG_PAGE_SIZE;
+    memprotect_zeroes_len   = CONFIG_PAGE_SIZE;
+    size_t vaddr            = memprotect_alloc_vaddr(CONFIG_PAGE_SIZE);
+    memprotect_k(vaddr, memprotect_zeroes_paddr, memprotect_zeroes_len, MEMPROTECT_FLAG_R);
+    memprotect_commit(&mpu_global_ctx);
 }
 
 // Initialise memory protection driver.

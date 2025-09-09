@@ -18,6 +18,7 @@ use crate::{
         mutex::Mutex,
     },
     filesystem::{VNodeMtxInner, fatfs::spec::attr2, vfs::vnflags},
+    util::zeroes,
 };
 
 use super::NAME_MAX;
@@ -566,6 +567,7 @@ impl VNodeOps for FatVNode {
     }
 
     fn resize(&mut self, arc_self: &Arc<VNode>, new_size: u64) -> EResult<()> {
+        let old_size = self.len;
         let new_size = TryInto::<u32>::try_into(new_size).map_err(|_| Errno::ENOSPC)?;
         let fatfs = arc_self.vfs.get_ops_as::<FatFs>();
         let mut new_clusters =
@@ -632,6 +634,7 @@ impl VNodeOps for FatVNode {
                 }
             }
         }
+
         self.len = new_size;
         if let Some(dirent_disk_offset) = *dirent_disk_offset
             && arc_self.type_ == NodeType::Regular
@@ -639,6 +642,17 @@ impl VNodeOps for FatVNode {
             // Update length, but only for regular files.
             let len = new_size.to_le_bytes();
             fatfs.media.write(dirent_disk_offset + 0x1c, &len)?;
+        }
+
+        // Erase new bytes.
+        if new_size > old_size {
+            let zeroes = zeroes();
+            let mut offset = old_size;
+            while offset < new_size {
+                let len = zeroes.len().min((new_size - offset) as usize);
+                self.write(arc_self, offset as u64, &zeroes[..len])?;
+                offset += len as u32;
+            }
         }
 
         Ok(())

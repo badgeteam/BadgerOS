@@ -2,9 +2,12 @@ use core::{cell::UnsafeCell, fmt::Debug};
 
 use alloc::boxed::Box;
 
-use crate::bindings::{
-    device::{HasBaseDevice, class::block::BlockDevice},
-    error::{EResult, Errno},
+use crate::{
+    bindings::{
+        device::{HasBaseDevice, class::block::BlockDevice},
+        error::{EResult, Errno},
+    },
+    util::zeroes,
 };
 
 /// Specifies some type of media a filesystem can be mounted on.
@@ -38,6 +41,32 @@ pub struct Media {
 unsafe impl Sync for Media {}
 
 impl Media {
+    /// Write zeroes to the media.
+    pub fn write_zeroes(&self, offset: u64, len: u64) -> EResult<()> {
+        let offset = offset.checked_add(self.offset).ok_or(Errno::EIO)?;
+        let end = offset.checked_add(len as u64).ok_or(Errno::EIO)?;
+        if end > self.size {
+            return Err(Errno::EIO);
+        }
+        match &self.storage {
+            MediaType::Block(block_device) => {
+                let zeroes = zeroes();
+                let end = offset + len;
+                let mut offset = offset;
+                while offset < end {
+                    let max = (end - offset).min(zeroes.len() as u64) as usize;
+                    block_device.write_bytes(offset, &zeroes[..max])?;
+                    offset += max as u64;
+                }
+            }
+            MediaType::Ram(ram) => {
+                let buffer = unsafe { ram.as_mut_unchecked() };
+                buffer[offset as usize..offset as usize + len as usize].fill(0);
+            }
+        }
+        Ok(())
+    }
+
     /// Write data to the media.
     pub fn write(&self, offset: u64, data: &[u8]) -> EResult<()> {
         let offset = offset.checked_add(self.offset).ok_or(Errno::EIO)?;

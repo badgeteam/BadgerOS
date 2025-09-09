@@ -4,7 +4,9 @@
 
 use core::{
     any::Any,
+    mem::offset_of,
     num::{NonZeroU32, NonZeroU64},
+    sync::atomic::{AtomicU32, Ordering},
 };
 
 use alloc::{
@@ -21,9 +23,10 @@ use crate::{
         device::HasBaseDevice,
         error::{EResult, Errno},
         mutex::Mutex,
+        time_us,
     },
     filesystem::NAME_MAX,
-    util::MaybeMut,
+    util::{MaybeMut, zeroes},
 };
 use spec::*;
 
@@ -245,23 +248,22 @@ impl E2VNode {
         let block_size_exp = e2fs.block_size_exp;
         let mut offset = 0u64;
         let mut name = [0u8; NAME_MAX];
-        loop {
+        while offset < self.size {
             // Read dirent header.
             let mut dent = [0u8; size_of::<LinkedDent>()];
             self.read(arc_self, offset, &mut dent)?;
             let dent = LinkedDent::from(dent);
             let dent_end = offset.saturating_add(dent.record_len as u64);
-
-            if dent_end > self.size {
-                logkf!(LogLevel::Error, "Dirent overflows end of directory");
+            if dent.record_len % 4 != 0 || dent.record_len < size_of::<LinkedDent>() as u16 {
+                logkf!(LogLevel::Error, "Dirent has invalid record length");
                 arc_self.vfs.check_eio_failed();
                 break;
             } else if offset >> block_size_exp != (dent_end - 1) >> block_size_exp {
                 logkf!(LogLevel::Error, "Dirent spans block boundary");
                 arc_self.vfs.check_eio_failed();
                 break;
-            } else if dent.record_len % 4 != 0 || dent.record_len < size_of::<LinkedDent>() as u16 {
-                logkf!(LogLevel::Error, "Dirent has invalid record length");
+            } else if dent_end > self.size {
+                logkf!(LogLevel::Error, "Dirent overflows end of directory");
                 arc_self.vfs.check_eio_failed();
                 break;
             }
@@ -322,7 +324,7 @@ impl VNodeOps for E2VNode {
                         &mut rdata[(fileoff - offset) as usize..(fileoff + len - offset) as usize],
                     )
                 } else {
-                    rdata[fileoff as usize..(fileoff + len) as usize].fill(0);
+                    rdata[(fileoff - offset) as usize..(fileoff - offset + len) as usize].fill(0);
                     Ok(())
                 }
             },
@@ -330,7 +332,44 @@ impl VNodeOps for E2VNode {
     }
 
     fn resize(&mut self, arc_self: &Arc<VNode>, new_size: u64) -> EResult<()> {
-        todo!()
+        let e2fs = arc_self.vfs.get_ops_as::<E2Fs>();
+        let old_size = self.size;
+
+        if new_size > old_size {
+            // Erase new bytes.
+            self.iter_blocks(
+                arc_self,
+                old_size,
+                new_size - old_size,
+                false,
+                &mut |_fileoff, diskoff, len| try {
+                    if let Some(diskoff) = diskoff {
+                        e2fs.media.write_zeroes(diskoff.into(), len)?;
+                    }
+                },
+            )?;
+        } else {
+            // Garbage-collect blocks.
+            logkf!(LogLevel::Warning, "TODO: Free blocks when resizing inode");
+        }
+
+        // Update size in inode.
+        let mut inode = self.inode.lock();
+        inode.size = new_size as u32;
+        e2fs.media.write(
+            self.inode_offset + offset_of!(Inode, size) as u64,
+            &inode.size.to_le_bytes(),
+        )?;
+        if e2fs.feature_ro_compat & feat::compat_ro::LARGE_FILE != 0 {
+            inode.dir_acl = (new_size >> 32) as u32;
+            e2fs.media.write(
+                self.inode_offset + offset_of!(Inode, dir_acl) as u64,
+                &inode.dir_acl.to_le_bytes(),
+            )?;
+        }
+
+        self.size = new_size;
+        Ok(())
     }
 
     fn find_dirent(&self, arc_self: &Arc<VNode>, name: &[u8]) -> EResult<Dirent> {
@@ -339,7 +378,7 @@ impl VNodeOps for E2VNode {
         self.iter_dirents(arc_self, &mut |dent, _offset, dent_name| {
             if *name == *dent_name {
                 try {
-                    let type_ = e2fs.get_inode_type(&arc_self.vfs, dent)?;
+                    let type_ = e2fs.get_inode_type(dent)?;
                     res = Ok(Dirent {
                         ino: dent.ino as u64,
                         type_,
@@ -360,7 +399,7 @@ impl VNodeOps for E2VNode {
         let e2fs = arc_self.vfs.get_ops_as::<E2Fs>();
         let mut out = Vec::new();
         self.iter_dirents(arc_self, &mut |dent, offset, name| try {
-            let type_ = e2fs.get_inode_type(&arc_self.vfs, dent)?;
+            let type_ = e2fs.get_inode_type(dent)?;
             out.push(Dirent {
                 ino: dent.ino as u64,
                 type_,
@@ -510,8 +549,14 @@ struct E2Fs {
     feature_ro_compat: u32,
     /// Log-base 2 of block size.
     block_size_exp: u32,
+    /// Number of block groups.
+    block_groups: u32,
     /// Offset of the block group descriptor table.
     bgdt_offset: u64,
+    /// Number of available blocks.
+    free_blocks: AtomicU32,
+    /// Number of available inodes.
+    free_inodes: AtomicU32,
     /// Media that the filesystem is mounted on.
     media: Media,
     /// Cached block group descriptors.
@@ -520,8 +565,50 @@ struct E2Fs {
 
 impl E2Fs {
     /// Try to allocate a block, starting in block group `group`.
-    fn alloc_block(&self, group_hint: u32) -> EResult<NonZeroU32> {
-        todo!()
+    fn alloc_block(&self, mut group_hint: u32) -> EResult<NonZeroU32> {
+        // Reserve one block.
+        self.free_blocks
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |old| {
+                old.checked_sub(1)
+            })
+            .map_err(|_| Errno::ENOSPC)?;
+
+        loop {
+            let group = self.get_block_group(group_hint)?;
+            let mut guard = group.desc.lock();
+
+            if guard.free_block_count > 0 {
+                for i in 0..self.blocks_per_group.div_ceil(size_of::<usize>() as u32) {
+                    // Offset of the part of the bitmap being tested.
+                    let offset = ((guard.block_bitmap as u64) << self.block_size_exp)
+                        + i as u64 * size_of::<usize>() as u64;
+
+                    // Fetch bytes from the bitmap.
+                    let mut tmp = [0u8; size_of::<usize>()];
+                    self.media.read(offset, &mut tmp)?;
+                    let mut tmp = usize::from_le_bytes(tmp);
+
+                    if tmp != usize::MAX {
+                        // Mark block as used.
+                        let bitpos = tmp.trailing_ones();
+                        tmp |= 1usize << bitpos;
+                        self.media.write(offset, &tmp.to_le_bytes())?;
+
+                        // Return the newly allocated block.
+                        guard.free_block_count -= 1;
+                        return Ok(NonZeroU32::new(
+                            bitpos + i as u32 * usize::BITS + guard.block_bitmap,
+                        )
+                        .unwrap());
+                    }
+                }
+
+                // There should have been a free block by now.
+                return Err(Errno::EIO);
+            }
+
+            group_hint = (1 + group_hint) % self.block_groups;
+        }
     }
 
     /// Mark a block as free.
@@ -531,7 +618,7 @@ impl E2Fs {
 
     /// Helper function to get the inode type for a dirent.
     /// Will query the actual inode for ext2 rev. 0.
-    fn get_inode_type(&self, _arc_self: &Arc<Vfs>, dent: &LinkedDent) -> EResult<NodeType> {
+    fn get_inode_type(&self, dent: &LinkedDent) -> EResult<NodeType> {
         if self.feature_incompat & feat::incompat::FILETYPE == 0 {
             todo!()
         } else {
@@ -540,7 +627,7 @@ impl E2Fs {
     }
 
     /// Get block group descriptor by block group index.
-    fn get_block_group(&self, _arc_self: &Arc<Vfs>, index: u32) -> EResult<Arc<E2BlockGroup>> {
+    fn get_block_group(&self, index: u32) -> EResult<Arc<E2BlockGroup>> {
         if let Some(res) = try { self.block_group_desc.lock_shared().get(&index)?.upgrade()? } {
             return Ok(res.clone());
         }
@@ -567,12 +654,12 @@ impl E2Fs {
     }
 
     /// Implementation of [`Self::open_root`] and [`Self::open`].
-    fn open_impl(&self, arc_self: &Arc<Vfs>, ino: u32) -> EResult<Box<dyn VNodeOps>> {
+    fn open_impl(&self, ino: u32) -> EResult<Box<dyn VNodeOps>> {
         let block_group = ino.checked_sub(1).ok_or(Errno::EIO)? / self.inodes_per_group;
         let index = (ino - 1) % self.inodes_per_group;
 
         // Load the inode structure from disk.
-        let block_group = self.get_block_group(arc_self, block_group)?;
+        let block_group = self.get_block_group(block_group)?;
         let inode_offset = ((block_group.desc.lock_shared().inode_table as u64)
             << self.block_size_exp)
             + index as u64 * self.inode_size as u64;
@@ -611,12 +698,12 @@ impl VfsOps for E2Fs {
         true
     }
 
-    fn open_root(&self, arc_self: &Arc<Vfs>) -> EResult<Box<dyn VNodeOps>> {
-        self.open_impl(arc_self, ROOT_INO)
+    fn open_root(&self, _arc_self: &Arc<Vfs>) -> EResult<Box<dyn VNodeOps>> {
+        self.open_impl(ROOT_INO)
     }
 
-    fn open(&self, arc_self: &Arc<Vfs>, dirent: &Dirent) -> EResult<Box<dyn VNodeOps>> {
-        self.open_impl(arc_self, dirent.ino as u32)
+    fn open(&self, _arc_self: &Arc<Vfs>, dirent: &Dirent) -> EResult<Box<dyn VNodeOps>> {
+        self.open_impl(dirent.ino as u32)
     }
 
     fn rename(
@@ -653,7 +740,7 @@ impl VfsDriver for E2FsDriver {
         Ok(superblock.magic == MAGIC)
     }
 
-    fn mount(&self, media: Option<Media>, mflags: MFlags) -> EResult<Box<dyn VfsOps>> {
+    fn mount(&self, media: Option<Media>, _mflags: MFlags) -> EResult<Box<dyn VfsOps>> {
         let media = media.ok_or(Errno::ENODEV)?;
 
         // Load the superblock.
@@ -705,19 +792,41 @@ impl VfsDriver for E2FsDriver {
             }
         }
 
+        if superblock.frag_size_exp != superblock.block_size_exp {
+            logkf!(
+                LogLevel::Error,
+                "Different block size and fragment size is not supported"
+            );
+            return Err(Errno::ENOTSUP);
+        }
+
         // Construct VFS.
+        let block_groups = superblock.block_count.div_ceil(superblock.blocks_per_group);
         let vfs = Box::try_new(E2Fs {
             block_size_exp,
             bgdt_offset: (superblock.first_data_block as u64 + 1) << block_size_exp,
             feature_compat,
             feature_incompat,
             feature_ro_compat,
+            block_groups,
             media,
             block_group_desc: Mutex::new(BTreeMap::new()),
             inodes_per_group: superblock.inodes_per_group,
             inode_size: superblock.inode_size,
             blocks_per_group: superblock.blocks_per_group,
+            free_blocks: AtomicU32::new(0),
+            free_inodes: AtomicU32::new(0),
         })?;
+
+        // Test the number of free blocks and inodes.
+        for group in 0..block_groups {
+            let group = vfs.get_block_group(group)?;
+            let guard = group.desc.lock();
+            vfs.free_blocks
+                .fetch_add(guard.free_block_count as u32, Ordering::Relaxed);
+            vfs.free_inodes
+                .fetch_add(guard.free_inode_count as u32, Ordering::Relaxed);
+        }
 
         Ok(Box::<dyn VfsOps>::from(vfs))
     }

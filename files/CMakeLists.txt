@@ -45,3 +45,5 @@ endmacro()
 add_subdirectory(../common/badgelib badgelib)
 add_subdirectory(lib)
 add_subdirectory(sbin)
+
+install(FILES existfile DESTINATION .)
