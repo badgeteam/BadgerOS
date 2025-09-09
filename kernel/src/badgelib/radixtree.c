@@ -386,8 +386,11 @@ rtree_iter_t rtree_first(rtree_t *tree, uint64_t min_key) {
 // Get the next entry in the radix tree.
 rtree_iter_t rtree_next(rtree_t *tree, rtree_iter_t cur) {
     rcu_crit_assert();
-    if (cur.key % RTREE_ENTS_PER_NODE == RTREE_ENTS_PER_NODE - 1) {
+    while ((cur.key >> cur.node->height) % RTREE_ENTS_PER_NODE == RTREE_ENTS_PER_NODE - 1) {
         cur.node = cur.node->parent;
+        if (!cur.node) {
+            return (rtree_iter_t){NULL, 0, NULL};
+        }
     }
     cur.key++;
     return rtree_iter_impl(tree, cur);
