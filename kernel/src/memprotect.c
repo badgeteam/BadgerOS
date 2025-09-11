@@ -580,6 +580,7 @@ void memprotect_postheap_init() {
     size_t vaddr            = memprotect_alloc_vaddr(CONFIG_PAGE_SIZE);
     memprotect_k(vaddr, memprotect_zeroes_paddr, memprotect_zeroes_len, MEMPROTECT_FLAG_R);
     memprotect_commit(&mpu_global_ctx);
+    memprotect_zeroes = (void *)vaddr;
 }
 
 // Initialise memory protection driver.

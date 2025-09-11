@@ -978,7 +978,7 @@ impl VNodeOps for FatVNode {
         }
     }
 
-    unsafe fn close(&mut self, vnode_self: &VNode) {
+    fn close(&mut self, vnode_self: &VNode) {
         if let FatFileStorage::Clusters(chain) = &self.storage
             && self.dirent_disk_off.lock_shared().is_none()
             && vnode_self.is_vfs_root().is_none()

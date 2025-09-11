@@ -40,7 +40,7 @@ mod spec;
 
 struct E2VNode {
     /// Inode number.
-    ino: u32,
+    ino: NonZeroU32,
     /// Cached inode structure.
     inode: Mutex<Inode>,
     /// On-disk inode structure offset.
@@ -52,20 +52,21 @@ struct E2VNode {
 }
 
 impl E2VNode {
+    fn group(&self, e2fs: &E2Fs) -> u32 {
+        (u32::from(self.ino) - 1) / e2fs.inodes_per_group
+    }
+
     /// Helper function to get one block ID from the inode.
-    fn get_block(
-        &self,
-        arc_self: &Arc<VNode>,
-        block: u32,
-        de_sparse: bool,
-    ) -> EResult<Option<NonZeroU32>> {
+    fn get_block(&self, e2fs: &E2Fs, block: u32, de_sparse: bool) -> EResult<Option<NonZeroU32>> {
+        let guard = self.inode.lock_shared();
+        let mut res = self.get_block_unlocked(e2fs, block, MaybeMut::Const(&guard))?;
+        drop(guard);
         if de_sparse {
             let mut guard = self.inode.lock();
-            self.get_block_unlocked(arc_self, block, MaybeMut::Mut(&mut guard))
-        } else {
-            let guard = self.inode.lock_shared();
-            self.get_block_unlocked(arc_self, block, MaybeMut::Const(&guard))
+            res = self.get_block_unlocked(e2fs, block, MaybeMut::Mut(&mut guard))?;
+            debug_assert!(res.is_some());
         }
+        Ok(res)
     }
 
     /// Recursive implementation of `get_block`.
@@ -112,12 +113,11 @@ impl E2VNode {
     /// Helper function to get one block ID from the inode.
     fn get_block_unlocked(
         &self,
-        arc_self: &Arc<VNode>,
+        e2fs: &E2Fs,
         block: u32,
         mut inode: MaybeMut<'_, Inode>,
     ) -> EResult<Option<NonZeroU32>> {
-        let e2fs = arc_self.vfs.get_ops_as::<E2Fs>();
-        let group_hint = (self.ino - 1) / e2fs.inodes_per_group;
+        let group_hint = self.group(e2fs);
 
         let block_size_exp = e2fs.block_size_exp;
         let block_ptrs_exp = block_size_exp - 2;
@@ -172,7 +172,7 @@ impl E2VNode {
     /// Callback args: file offset, disk offset, length.
     fn iter_blocks(
         &self,
-        arc_self: &Arc<VNode>,
+        e2fs: &E2Fs,
         offset: u64,
         length: u64,
         de_sparse: bool,
@@ -181,7 +181,6 @@ impl E2VNode {
         if length == 0 {
             return Ok(()); // Prevents underflow subtractions
         }
-        let e2fs = arc_self.vfs.get_ops_as::<E2Fs>();
 
         // Convert the range into a range on disk.
         let block_size_exp = e2fs.block_size_exp;
@@ -215,9 +214,8 @@ impl E2VNode {
         let mut prev = None::<NonZeroU32>;
 
         for fileblk in fileblk_start..fileblk_end {
-            let mut block = self.get_block(arc_self, fileblk, false)?;
-            if de_sparse && block.is_none() {
-                block = self.get_block(arc_self, fileblk, true)?;
+            let block = self.get_block(e2fs, fileblk, de_sparse)?;
+            if de_sparse {
                 debug_assert!(block.is_some());
             }
             if let Some(y) = start
@@ -291,13 +289,10 @@ impl E2VNode {
         }
         Ok(())
     }
-}
 
-impl VNodeOps for E2VNode {
-    fn write(&self, arc_self: &Arc<VNode>, offset: u64, wdata: &[u8]) -> EResult<()> {
-        let e2fs = arc_self.vfs.get_ops_as::<E2Fs>();
+    fn write_impl(&self, e2fs: &E2Fs, offset: u64, wdata: &[u8]) -> EResult<()> {
         self.iter_blocks(
-            arc_self,
+            e2fs,
             offset,
             wdata.len() as u64,
             true,
@@ -310,10 +305,9 @@ impl VNodeOps for E2VNode {
         )
     }
 
-    fn read(&self, arc_self: &Arc<VNode>, offset: u64, rdata: &mut [u8]) -> EResult<()> {
-        let e2fs = arc_self.vfs.get_ops_as::<E2Fs>();
+    fn read_impl(&self, e2fs: &E2Fs, offset: u64, rdata: &mut [u8]) -> EResult<()> {
         self.iter_blocks(
-            arc_self,
+            e2fs,
             offset,
             rdata.len() as u64,
             false,
@@ -331,6 +325,80 @@ impl VNodeOps for E2VNode {
         )
     }
 
+    /// Allocate space for a new directory entry.
+    fn alloc_dirent(&mut self, arc_self: &Arc<VNode>, length: u16) -> EResult<(u64, u16)> {
+        let e2fs = arc_self.vfs.get_ops_as();
+
+        let mut res = None;
+        self.iter_dirents(arc_self, &mut |dent, offset, _name| try {
+            let min_record_len = dent.name_len.div_ceil(4) as u16 * 4 + 8;
+            if dent.record_len - min_record_len >= length {
+                self.write_impl(
+                    &e2fs,
+                    offset + offset_of!(LinkedDent, record_len) as u64,
+                    &min_record_len.to_le_bytes(),
+                )?;
+                res = Some((
+                    offset + min_record_len as u64,
+                    dent.record_len - min_record_len,
+                ));
+                false
+            } else {
+                true
+            }
+        })?;
+        if let Some(res) = res {
+            return Ok(res);
+        }
+
+        let pos = self.size;
+        self.resize(arc_self, pos + (1u64 << e2fs.block_size_exp))?;
+        Ok((pos, 1u16 << e2fs.block_size_exp))
+    }
+
+    /// Create a new directory entry.
+    fn create_dirent(
+        &mut self,
+        arc_self: &Arc<VNode>,
+        ino: NonZeroU32,
+        name: &[u8],
+        type_: FileType,
+    ) -> EResult<()> {
+        let e2fs = arc_self.vfs.get_ops_as::<E2Fs>();
+        if name.len() > 255 {
+            return Err(Errno::ENAMETOOLONG);
+        }
+        let record_len = (8 + name.len().div_ceil(4) * 4) as u16;
+        let (offset, record_len) = self.alloc_dirent(arc_self, record_len)?;
+
+        let dent = LinkedDent {
+            ino: ino.into(),
+            record_len,
+            name_len: name.len() as u8,
+            file_type: if e2fs.feature_incompat & feat::incompat::FILETYPE != 0 {
+                type_ as u8
+            } else {
+                0 // NAME_MAX is 255 anyway.
+            },
+        };
+        self.write_impl(&e2fs, offset, &Into::<[u8; 8]>::into(dent))?;
+        self.write_impl(&e2fs, offset + 8, name)?;
+
+        Ok(())
+    }
+}
+
+impl VNodeOps for E2VNode {
+    fn write(&self, arc_self: &Arc<VNode>, offset: u64, wdata: &[u8]) -> EResult<()> {
+        let e2fs = arc_self.vfs.get_ops_as::<E2Fs>();
+        self.write_impl(&e2fs, offset, wdata)
+    }
+
+    fn read(&self, arc_self: &Arc<VNode>, offset: u64, rdata: &mut [u8]) -> EResult<()> {
+        let e2fs = arc_self.vfs.get_ops_as::<E2Fs>();
+        self.read_impl(&e2fs, offset, rdata)
+    }
+
     fn resize(&mut self, arc_self: &Arc<VNode>, new_size: u64) -> EResult<()> {
         let e2fs = arc_self.vfs.get_ops_as::<E2Fs>();
         let old_size = self.size;
@@ -338,7 +406,7 @@ impl VNodeOps for E2VNode {
         if new_size > old_size {
             // Erase new bytes.
             self.iter_blocks(
-                arc_self,
+                &e2fs,
                 old_size,
                 new_size - old_size,
                 false,
@@ -432,7 +500,108 @@ impl VNodeOps for E2VNode {
         name: &[u8],
         spec: super::MakeFileSpec,
     ) -> EResult<(Dirent, Box<dyn VNodeOps>)> {
-        todo!()
+        // Allocate an empty inode.
+        let e2fs = arc_self.vfs.get_ops_as::<E2Fs>();
+        let (ino, inode_offset) = e2fs.alloc_inode(self.group(&e2fs))?;
+
+        // Create empty inode.
+        let mode = Mode::try_from(spec.node_type())?;
+        let now = Timespec::now().sec as u32;
+        let inode = Inode {
+            mode: mode as u16 | 0o777,
+            atime: now,
+            ctime: now,
+            mtime: now,
+            nlink: 1,
+            ..Default::default()
+        };
+        let mut ops = Box::try_new(E2VNode {
+            ino: ino.into(),
+            inode: Mutex::new(inode),
+            inode_offset,
+            size: 0,
+            type_: spec.node_type(),
+        })?;
+
+        let res: EResult<()> = try {
+            // Try to fill in the inode data.
+            match &spec {
+                crate::filesystem::MakeFileSpec::Directory => {
+                    // Create . and .. entries.
+                    let mut inode = ops.inode.lock();
+                    inode.nlink = 2;
+                    ops.size = 1u64 << e2fs.block_size_exp;
+                    inode.size = ops.size as u32;
+                    inode.realsize = 1u32 << (e2fs.block_size_exp - 9);
+
+                    let dent = LinkedDent {
+                        ino: ino.into(),
+                        record_len: 12,
+                        name_len: 1,
+                        file_type: FileType::Directory as u8,
+                    };
+                    ops.write_impl(&e2fs, 0, &Into::<[u8; 8]>::into(dent))?;
+                    ops.write_impl(&e2fs, 8, b".\0\0\0")?;
+
+                    let dent = LinkedDent {
+                        ino: self.ino.into(),
+                        record_len: (1u16 << e2fs.block_size_exp) - 12,
+                        name_len: 2,
+                        file_type: FileType::Directory as u8,
+                    };
+                    ops.write_impl(&e2fs, 12, &Into::<[u8; 8]>::into(dent))?;
+                    ops.write_impl(&e2fs, 16, b".\0\0\0")?;
+                }
+                crate::filesystem::MakeFileSpec::Symlink(value) => {
+                    ops.size = value.len() as u64;
+                    ops.inode.lock().size = ops.size as u32;
+                    if value.len() < 60 {
+                        // Short symlinks stored directly in inode buffer.
+                        let mut buffer = [0u8; 60];
+                        buffer[..value.len()].copy_from_slice(value);
+                        let mut inode = ops.inode.lock();
+                        inode.data_blocks = unsafe { core::mem::transmute(buffer) };
+                        for i in 0..15 {
+                            inode.data_blocks[i] = u32::from_le(inode.data_blocks[i]);
+                        }
+                    } else {
+                        // Long symlinks stored in blocks.
+                        ops.inode.lock().realsize = 1u32 << (e2fs.block_size_exp - 9);
+                        ops.write_impl(&e2fs, 0, value)?;
+                    }
+                }
+                _ => (),
+            }
+
+            // Create the dirent for this new file.
+            self.create_dirent(arc_self, ino, name, spec.node_type().into())?;
+        };
+        if let Err(x) = res {
+            let _ = e2fs.free_inode(ino);
+            return Err(x);
+        }
+
+        // Write the base inode struct.
+        e2fs.media.write(
+            inode_offset,
+            &Into::<[u8; _]>::into(*ops.inode.lock_shared()),
+        )?;
+        // Fill the space not covered by our inode struct with zeroes.
+        e2fs.media.write_zeroes(
+            inode_offset + size_of::<Inode>() as u64,
+            e2fs.inode_size as u64 - size_of::<Inode>() as u64,
+        )?;
+
+        // Create dummy dirent.
+        let dirent = Dirent {
+            ino: u32::from(ino) as u64,
+            type_: spec.node_type(),
+            name: name.into(),
+            dirent_disk_off: 0,
+            dirent_off: 0,
+        };
+
+        Ok((dirent, ops))
     }
 
     fn rename(
@@ -473,7 +642,7 @@ impl VNodeOps for E2VNode {
                 .as_ref()
                 .map(|dev| ((u32::from(dev.id()) as u64) << 32) | dev.class() as u64)
                 .unwrap_or(0),
-            ino: self.ino as u64,
+            ino: u32::from(self.ino) as u64,
             mode: inode.mode,
             nlink: inode.nlink,
             uid: inode.uid,
@@ -498,7 +667,7 @@ impl VNodeOps for E2VNode {
     }
 
     fn get_inode(&self) -> u64 {
-        self.ino as u64
+        u32::from(self.ino) as u64
     }
 
     fn get_size(&self, _arc_self: &Arc<VNode>) -> u64 {
@@ -511,30 +680,30 @@ impl VNodeOps for E2VNode {
 
     fn sync(&self, arc_self: &Arc<VNode>) -> EResult<()> {
         let e2fs = arc_self.vfs.get_ops_as::<E2Fs>();
-        self.iter_blocks(
-            arc_self,
-            0,
-            self.size,
-            false,
-            &mut |_fileoff, diskoff, len| {
-                if let Some(diskoff) = diskoff {
-                    e2fs.media.sync(diskoff.into(), len)
-                } else {
-                    Ok(())
-                }
-            },
-        )
+        e2fs.media
+            .sync(self.inode_offset, size_of::<Inode>() as u64)?;
+        self.iter_blocks(&e2fs, 0, self.size, false, &mut |_fileoff, diskoff, len| {
+            if let Some(diskoff) = diskoff {
+                e2fs.media.sync(diskoff.into(), len)
+            } else {
+                Ok(())
+            }
+        })
     }
 }
 
 struct E2BlockGroup {
     /// Block group index.
     index: u32,
+    /// On-disk offset of block group descriptor entry.
+    disk_offset: u64,
     /// Cached block group descriptor entry.
     desc: Mutex<BlockGroupDesc>,
 }
 
 struct E2Fs {
+    /// ID of the first data block.
+    first_data_block: u32,
     /// How many inodes are associated with each block group.
     inodes_per_group: u32,
     /// How many blocks are associated with each block group.
@@ -593,11 +762,20 @@ impl E2Fs {
                         let bitpos = tmp.trailing_ones();
                         tmp |= 1usize << bitpos;
                         self.media.write(offset, &tmp.to_le_bytes())?;
+                        // TODO: This sync should not be necessary, it makes me think pagecache has a bug in it.
+                        // self.media.sync(offset, size_of::<usize>() as u64)?;
 
                         // Return the newly allocated block.
                         guard.free_block_count -= 1;
+                        self.media.write(
+                            group.disk_offset + offset_of!(BlockGroupDesc, free_block_count) as u64,
+                            &guard.free_block_count.to_le_bytes(),
+                        )?;
                         return Ok(NonZeroU32::new(
-                            bitpos + i as u32 * usize::BITS + guard.block_bitmap,
+                            bitpos
+                                + i as u32 * usize::BITS
+                                + group_hint * self.blocks_per_group
+                                + self.first_data_block,
                         )
                         .unwrap());
                     }
@@ -614,6 +792,139 @@ impl E2Fs {
     /// Mark a block as free.
     fn free_block(&self, block: NonZeroU32) -> EResult<()> {
         todo!()
+    }
+
+    /// Allocate a new uninitialized inode.
+    fn alloc_inode(&self, mut group_hint: u32) -> EResult<(NonZeroU32, u64)> {
+        // Reserve one block.
+        self.free_blocks
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |old| {
+                old.checked_sub(1)
+            })
+            .map_err(|_| Errno::ENOSPC)?;
+
+        loop {
+            let group = self.get_block_group(group_hint)?;
+            let mut guard = group.desc.lock();
+
+            if guard.free_inode_count > 0 {
+                for i in 0..self.inodes_per_group.div_ceil(size_of::<usize>() as u32) {
+                    // Offset of the part of the bitmap being tested.
+                    let offset = ((guard.inode_bitmap as u64) << self.block_size_exp)
+                        + i as u64 * size_of::<usize>() as u64;
+
+                    // Fetch bytes from the bitmap.
+                    let mut tmp = [0u8; size_of::<usize>()];
+                    self.media.read(offset, &mut tmp)?;
+                    let mut tmp = usize::from_le_bytes(tmp);
+
+                    if tmp != usize::MAX {
+                        // Mark inode as used.
+                        let bitpos = tmp.trailing_ones();
+                        tmp |= 1usize << bitpos;
+                        self.media.write(offset, &tmp.to_le_bytes())?;
+
+                        // Return the newly allocated inode number.
+                        guard.free_inode_count -= 1;
+                        self.media.write(
+                            group.disk_offset + offset_of!(BlockGroupDesc, free_inode_count) as u64,
+                            &guard.free_inode_count.to_le_bytes(),
+                        )?;
+                        let ino = bitpos
+                            + i as u32 * usize::BITS
+                            + group_hint * self.inodes_per_group
+                            + 1;
+                        return Ok((
+                            NonZeroU32::new(ino).unwrap(),
+                            ((guard.inode_table as u64) << self.block_size_exp)
+                                + (ino - 1) as u64 * self.inode_size as u64,
+                        ));
+                    }
+                }
+
+                // There should have been a free inode by now.
+                return Err(Errno::EIO);
+            }
+
+            group_hint = (1 + group_hint) % self.block_groups;
+        }
+    }
+
+    /// Mark an inode as free without checking nlink.
+    fn free_inode(&self, ino: NonZeroU32) -> EResult<()> {
+        todo!();
+    }
+
+    /// Increase the links count on an inode.
+    fn link_inode(&self, arc_self: &Arc<Vfs>, inode: NonZeroU32) -> EResult<()> {
+        let ino = u32::from(inode);
+
+        // Prevents inode from being opened concurrently by another thread.
+        let block_group = (ino - 1) / self.inodes_per_group;
+        let block_group = self.get_block_group(block_group)?;
+        let index = (ino - 1) % self.inodes_per_group;
+        let guard = block_group.desc.lock();
+        let inode_offset = ((guard.inode_table as u64) << self.block_size_exp)
+            + index as u64 * self.inode_size as u64;
+
+        // If a VNode is present, the links count shall be updated therein as well.
+        let vnode = arc_self.get_vnode(u32::from(inode) as u64);
+        let ops = vnode.as_deref().map(|x| x.get_ops_as::<E2VNode>());
+        let mut inode = ops.as_deref().map(|x| x.inode.lock());
+
+        // Increase links number.
+        let mut links = [0u8; 2];
+        self.media
+            .read(inode_offset + offset_of!(Inode, nlink) as u64, &mut links)?;
+        let mut links = u16::from_le_bytes(links);
+        links = links.checked_add(1).ok_or(Errno::EMLINK)?;
+        self.media.write(
+            inode_offset + offset_of!(Inode, nlink) as u64,
+            &links.to_le_bytes(),
+        )?;
+        if let Some(inode) = &mut inode {
+            inode.nlink = links;
+        }
+
+        Ok(())
+    }
+
+    /// Decrease the links count on an inode.
+    fn unlink_inode(&self, arc_self: &Arc<Vfs>, inode: NonZeroU32) -> EResult<()> {
+        let ino = u32::from(inode);
+
+        // Prevents inode from being opened concurrently by another thread.
+        let block_group = (ino - 1) / self.inodes_per_group;
+        let block_group = self.get_block_group(block_group)?;
+        let index = (ino - 1) % self.inodes_per_group;
+        let guard = block_group.desc.lock();
+        let inode_offset = ((guard.inode_table as u64) << self.block_size_exp)
+            + index as u64 * self.inode_size as u64;
+
+        // If a VNode is present, the links count shall be updated therein as well.
+        let vnode = arc_self.get_vnode(u32::from(inode) as u64);
+        let ops = vnode.as_deref().map(|x| x.get_ops_as::<E2VNode>());
+        let mut inode = ops.as_deref().map(|x| x.inode.lock());
+
+        // Increase links number.
+        let mut links = [0u8; 2];
+        self.media
+            .read(inode_offset + offset_of!(Inode, nlink) as u64, &mut links)?;
+        let mut links = u16::from_le_bytes(links);
+        links = links.checked_sub(1).ok_or(Errno::EIO)?;
+        self.media.write(
+            inode_offset + offset_of!(Inode, nlink) as u64,
+            &links.to_le_bytes(),
+        )?;
+        if let Some(inode) = &mut inode {
+            inode.nlink = links;
+        }
+
+        if inode.is_none() {
+            logkf!(LogLevel::Warning, "TODO: Free inode");
+        }
+
+        Ok(())
     }
 
     /// Helper function to get the inode type for a dirent.
@@ -638,13 +949,12 @@ impl E2Fs {
         }
 
         let mut group_desc = [0u8; size_of::<BlockGroupDesc>()];
-        self.media.read(
-            self.bgdt_offset + index as u64 * size_of::<BlockGroupDesc>() as u64,
-            &mut group_desc,
-        )?;
+        let disk_offset = self.bgdt_offset + index as u64 * size_of::<BlockGroupDesc>() as u64;
+        self.media.read(disk_offset, &mut group_desc)?;
         let group_desc = BlockGroupDesc::from(group_desc);
 
         let ent = Arc::try_new(E2BlockGroup {
+            disk_offset,
             index,
             desc: Mutex::new(group_desc),
         })?;
@@ -654,9 +964,9 @@ impl E2Fs {
     }
 
     /// Implementation of [`Self::open_root`] and [`Self::open`].
-    fn open_impl(&self, ino: u32) -> EResult<Box<dyn VNodeOps>> {
-        let block_group = ino.checked_sub(1).ok_or(Errno::EIO)? / self.inodes_per_group;
-        let index = (ino - 1) % self.inodes_per_group;
+    fn open_impl(&self, ino: NonZeroU32) -> EResult<Box<dyn VNodeOps>> {
+        let block_group = (u32::from(ino) - 1) / self.inodes_per_group;
+        let index = (u32::from(ino) - 1) % self.inodes_per_group;
 
         // Load the inode structure from disk.
         let block_group = self.get_block_group(block_group)?;
@@ -687,6 +997,43 @@ impl E2Fs {
             type_,
         })?))
     }
+
+    /// Helper function to iterate all superblock backups by block group number.
+    fn iter_superblocks(
+        &self,
+        include_orig: bool,
+        cb: &mut dyn FnMut(u64, u64) -> EResult<()>,
+    ) -> EResult<()> {
+        if include_orig {
+            cb(1024, self.bgdt_offset)?;
+        }
+        if self.feature_ro_compat & feat::compat_ro::SPARSE_SUPER != 0 {
+            let mut i = 3;
+            while i < self.block_groups {
+                let offset = (i as u64 * self.blocks_per_group as u64) << self.block_size_exp;
+                cb(offset, offset + (1u64 << self.block_size_exp))?;
+                i *= 3;
+            }
+            let mut i = 5;
+            while i < self.block_groups {
+                let offset = (i as u64 * self.blocks_per_group as u64) << self.block_size_exp;
+                cb(offset, offset + (1u64 << self.block_size_exp))?;
+                i *= 5;
+            }
+            let mut i = 7;
+            while i < self.block_groups {
+                let offset = (i as u64 * self.blocks_per_group as u64) << self.block_size_exp;
+                cb(offset, offset + (1u64 << self.block_size_exp))?;
+                i *= 7;
+            }
+        } else {
+            for i in 1..self.block_groups {
+                let offset = (i as u64 * self.blocks_per_group as u64) << self.block_size_exp;
+                cb(offset, offset + (1u64 << self.block_size_exp))?;
+            }
+        }
+        Ok(())
+    }
 }
 
 impl VfsOps for E2Fs {
@@ -699,11 +1046,11 @@ impl VfsOps for E2Fs {
     }
 
     fn open_root(&self, _arc_self: &Arc<Vfs>) -> EResult<Box<dyn VNodeOps>> {
-        self.open_impl(ROOT_INO)
+        self.open_impl(NonZeroU32::new(ROOT_INO).unwrap())
     }
 
     fn open(&self, _arc_self: &Arc<Vfs>, dirent: &Dirent) -> EResult<Box<dyn VNodeOps>> {
-        self.open_impl(dirent.ino as u32)
+        self.open_impl(NonZeroU32::new(dirent.ino as u32).ok_or(Errno::EIO)?)
     }
 
     fn rename(
@@ -717,6 +1064,33 @@ impl VfsOps for E2Fs {
         dest_mutexinner: &mut VNodeMtxInner,
     ) -> EResult<Dirent> {
         todo!()
+    }
+
+    fn sync(&self) -> EResult<()> {
+        let free_blocks = self.free_blocks.load(Ordering::Relaxed);
+        let free_inodes = self.free_inodes.load(Ordering::Relaxed);
+
+        self.iter_superblocks(true, &mut |superblock, bgdt| try {
+            logkf!(
+                LogLevel::Debug,
+                "Saving data to superblock at 0x{:x}",
+                superblock
+            );
+            self.media.write(
+                superblock + offset_of!(Superblock, free_block_count) as u64,
+                &free_blocks.to_le_bytes(),
+            )?;
+            self.media.write(
+                superblock + offset_of!(Superblock, free_inode_count) as u64,
+                &free_inodes.to_le_bytes(),
+            )?;
+            self.media
+                .sync(superblock, size_of::<Superblock>() as u64)?;
+            self.media.sync(
+                bgdt,
+                self.block_groups as u64 * size_of::<BlockGroupDesc>() as u64,
+            )?;
+        })
     }
 }
 
@@ -803,6 +1177,7 @@ impl VfsDriver for E2FsDriver {
         // Construct VFS.
         let block_groups = superblock.block_count.div_ceil(superblock.blocks_per_group);
         let vfs = Box::try_new(E2Fs {
+            first_data_block: superblock.first_data_block,
             block_size_exp,
             bgdt_offset: (superblock.first_data_block as u64 + 1) << block_size_exp,
             feature_compat,
