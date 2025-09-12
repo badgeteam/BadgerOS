@@ -150,10 +150,12 @@ impl File for VfsFile {
     fn write(&self, wdata: &[u8]) -> EResult<usize> {
         if !self.allow_write {
             Err(Errno::EBADF)
+        } else if self.vnode.vfs.is_read_only() {
+            Err(Errno::EROFS)
         } else if self.is_append {
-            self.append_write(wdata)
+            self.vnode.vfs.check_eio(self.append_write(wdata))
         } else {
-            self.regular_write(wdata)
+            self.vnode.vfs.check_eio(self.regular_write(wdata))
         }
     }
 
@@ -187,15 +189,24 @@ impl File for VfsFile {
     }
 
     fn resize(&self, size: u64) -> EResult<()> {
+        if !self.allow_write {
+            return Err(Errno::EBADF);
+        } else if self.vnode.vfs.is_read_only() {
+            return Err(Errno::EROFS);
+        }
         let mut guard = self.vnode.mtx.lock();
-        guard.ops.resize(&self.vnode, size)?;
+        self.vnode
+            .vfs
+            .check_eio(guard.ops.resize(&self.vnode, size))?;
         self.offset
             .update(Ordering::Relaxed, Ordering::Relaxed, |f| f.min(size));
         Ok(())
     }
 
     fn sync(&self) -> EResult<()> {
-        self.vnode.mtx.lock_shared().ops.sync(&self.vnode)
+        self.vnode
+            .vfs
+            .check_eio(self.vnode.mtx.lock_shared().ops.sync(&self.vnode))
     }
 
     fn get_vnode(&self) -> Option<Arc<VNode>> {
@@ -393,6 +404,10 @@ pub struct Vfs {
 unsafe impl Sync for Vfs {}
 
 impl Vfs {
+    pub fn is_read_only(&self) -> bool {
+        self.flags.load(Ordering::Relaxed) & mflags::READ_ONLY != 0
+    }
+
     /// Lock the ops mutex shared and convert to type `U`.
     /// # Panics
     /// - If the ops are not of type `U`
@@ -505,6 +520,10 @@ pub trait VfsOps: Sync + Any {
     /// Whether this type of filesystem has inode numers.
     /// If disabled, inode numbers will be spoofed when a [`VNode`] is opened.
     fn uses_inodes(&self) -> bool;
+    /// Whether this filesystem must be mounted as read-only.
+    fn read_only(&self) -> bool {
+        false
+    }
 
     /// Open the root directory.
     fn open_root(&self, self_arc: &Arc<Vfs>) -> EResult<Box<dyn VNodeOps>>;

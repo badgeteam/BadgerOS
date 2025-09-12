@@ -1,6 +1,7 @@
 use core::{cell::UnsafeCell, fmt::Debug};
 
 use alloc::boxed::Box;
+use num::traits::{FromBytes, ToBytes};
 
 use crate::{
     bindings::{
@@ -103,6 +104,36 @@ impl Media {
             }
         }
         Ok(())
+    }
+
+    /// Write little-endian bytes.
+    pub fn write_le<T: ToBytes>(&self, offset: u64, data: T) -> EResult<()> {
+        self.write(offset, data.to_le_bytes().as_ref())
+    }
+
+    /// Read little-endian bytes.
+    pub fn read_le<T: FromBytes>(&self, offset: u64) -> EResult<T>
+    where
+        T: FromBytes<Bytes = [u8; size_of::<T>()]>,
+    {
+        let mut tmp = [0u8; _];
+        self.read(offset, &mut tmp)?;
+        Ok(T::from_le_bytes(&tmp))
+    }
+
+    /// Write big-endian bytes.
+    pub fn write_be<T: ToBytes>(&self, offset: u64, data: T) -> EResult<()> {
+        self.write(offset, data.to_be_bytes().as_ref())
+    }
+
+    /// Read big-endian bytes.
+    pub fn read_be<T: FromBytes>(&self, offset: u64) -> EResult<T>
+    where
+        T: FromBytes<Bytes = [u8; size_of::<T>()]>,
+    {
+        let mut tmp = [0u8; _];
+        self.read(offset, &mut tmp)?;
+        Ok(T::from_be_bytes(&tmp))
     }
 
     /// Sync a region of the media.

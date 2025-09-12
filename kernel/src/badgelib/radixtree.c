@@ -31,7 +31,7 @@ void *rtree_get(rtree_t *tree, uint64_t key) {
     bool ie = irq_disable();
     rcu_crit_enter();
     rtree_node_t *cur = atomic_load_explicit(&tree->root, memory_order_acquire);
-    if (!cur || (cur->height < 64 && (key >> cur->height) >= RTREE_BITS_PER_NODE)) {
+    if (!cur || (cur->height < 64 && (key >> cur->height) >= RTREE_ENTS_PER_NODE)) {
         // No content or the key is not covered by the root node.
         rcu_crit_exit();
         irq_enable_if(ie);
@@ -56,6 +56,7 @@ void *rtree_get(rtree_t *tree, uint64_t key) {
 
 // Garbage-collect nodes along the path to `key`.
 static void rtree_gc_key(rtree_t *tree, uint64_t key) {
+    return;
     size_t        to_free_len = 0;
     rtree_node_t *to_free[63 / RTREE_BITS_PER_NODE + 1];
     bool          ie = irq_disable();

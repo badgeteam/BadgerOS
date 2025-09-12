@@ -99,7 +99,7 @@ errno_t device_block_erase_blocks(device_block_t *device, uint64_t start, uint64
         return -EINVAL;
     }
 
-    logk(LOG_DEBUG, "TODO: device_block_erase_blocks");
+    logk(LOG_WARN, "TODO: device_block_erase_blocks");
 
     return 0;
 }
@@ -185,7 +185,6 @@ static errno_t iterate_block_ranges(
                     free(value);
                     rtree_set(&device->cache, block, NULL);
                 });
-                logkf(LOG_DEBUG, "+ %{u64;x} %{size;x}", block, value);
 
                 // Successfully read everything, now update the entry in the cache to this newly read one.
                 rtree_set(&device->cache, block, mark_dirty ? BLK_TAG_DIRTY(value) : value);
@@ -316,7 +315,6 @@ static errno_t
             }
             return res;
         }
-        logkf_from_isr(LOG_DEBUG, "- %{u64;x} %{size;x}", to_sync_blocks[i], to_sync_data[i]);
         rtree_set(&device->cache, to_sync_blocks[i], NULL);
     }
 
@@ -382,7 +380,6 @@ errno_t device_block_sync_blocks(device_block_t *device, uint64_t start, uint64_
         }
 
         // Add it to the buffer of things that must sync.
-        logkf_from_isr(LOG_DEBUG, "= %{u64;x} %{size;x}", iter.key, iter.value);
         to_sync_data[to_sync_len]   = iter.value;
         to_sync_blocks[to_sync_len] = iter.key;
         to_sync_len++;
