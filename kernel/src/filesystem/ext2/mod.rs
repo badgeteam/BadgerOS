@@ -25,7 +25,7 @@ use crate::{
         mutex::Mutex,
         time_us,
     },
-    filesystem::NAME_MAX,
+    filesystem::{MakeFileSpec, NAME_MAX},
     util::{MaybeMut, zeroes},
 };
 use spec::*;
@@ -485,11 +485,7 @@ impl E2VNode {
         name: &[u8],
         unlinked_ops: Option<&mut E2VNode>,
     ) -> EResult<()> {
-        // Decrease the inode's refcount.
-        {
-            let mut inode = unlinked_ops.as_ref().unwrap_or(&self).inode.lock();
-            inode.nlink = inode.nlink.checked_sub(1).ok_or(Errno::EIO)?;
-        }
+        let e2fs = vfs.get_ops_as::<E2Fs>();
 
         // Find target dirent.
         let mut prev = None;
@@ -510,7 +506,35 @@ impl E2VNode {
             return Err(Errno::EIO);
         }
 
-        todo!()
+        if let Some((prev_dent, prev_offset)) = prev
+            && prev_offset >> e2fs.block_size_exp == offset >> e2fs.block_size_exp
+        {
+            // Can merge with previous dirent.
+            let record_len = prev_dent.record_len + found.record_len;
+            self.write_impl(
+                &e2fs,
+                prev_offset + offset_of!(LinkedDent, record_len) as u64,
+                &record_len.to_le_bytes(),
+            )?;
+        } else {
+            // Mark this dirent as unused.
+            self.write_impl(
+                &e2fs,
+                offset + offset_of!(LinkedDent, ino) as u64,
+                &[0u8; 4],
+            )?;
+        }
+
+        // Decrease inode refcount.
+        let unlinked_ops = unlinked_ops.unwrap_or(self);
+        let mut inode = unlinked_ops.inode.lock();
+        inode.nlink = inode.nlink.checked_sub(1).ok_or(Errno::EIO)?;
+        e2fs.media.write_le(
+            unlinked_ops.inode_offset + offset_of!(Inode, nlink) as u64,
+            inode.nlink,
+        )?;
+
+        Ok(())
     }
 }
 
@@ -642,7 +666,7 @@ impl VNodeOps for E2VNode {
                 } else {
                     Err(Errno::ENOTEMPTY)
                 }
-            });
+            })?;
 
             // Remove `.` and `..` because `unlink_impl` doesn't do this automatically.
             unlinked_ops.unlink_impl(&arc_self.vfs, b".", None)?;
@@ -695,7 +719,7 @@ impl VNodeOps for E2VNode {
         &mut self,
         arc_self: &Arc<VNode>,
         name: &[u8],
-        spec: super::MakeFileSpec,
+        spec: MakeFileSpec,
     ) -> EResult<(Dirent, Box<dyn VNodeOps>)> {
         // Allocate an empty inode.
         let e2fs = arc_self.vfs.get_ops_as::<E2Fs>();
@@ -723,13 +747,18 @@ impl VNodeOps for E2VNode {
         let res: EResult<()> = try {
             // Try to fill in the inode data.
             match &spec {
-                crate::filesystem::MakeFileSpec::Directory => {
+                MakeFileSpec::Directory => {
                     // Create . and .. entries.
-                    let mut inode = ops.inode.lock();
-                    inode.nlink = 2;
-                    ops.size = 1u64 << e2fs.block_size_exp;
-                    inode.size = ops.size as u32;
-                    inode.realsize = 1u32 << (e2fs.block_size_exp - 9);
+                    if self.inode.lock_shared().nlink == u16::MAX {
+                        return Err(Errno::EMLINK);
+                    }
+
+                    {
+                        let mut inode = ops.inode.lock();
+                        inode.nlink = 2;
+                        ops.size = 1u64 << e2fs.block_size_exp;
+                        inode.size = ops.size as u32;
+                    }
 
                     let dent = LinkedDent {
                         ino: ino.into(),
@@ -747,9 +776,32 @@ impl VNodeOps for E2VNode {
                         file_type: FileType::Directory as u8,
                     };
                     ops.write_impl(&e2fs, 12, &Into::<[u8; 8]>::into(dent))?;
-                    ops.write_impl(&e2fs, 16, b".\0\0\0")?;
+                    ops.write_impl(&e2fs, 20, b"..\0\0")?;
+
+                    // Update link counts.
+                    {
+                        let mut inode = self.inode.lock();
+                        inode.nlink += 1;
+                        e2fs.media.write_le(
+                            self.inode_offset + offset_of!(Inode, nlink) as u64,
+                            inode.nlink,
+                        )?;
+                    }
+
+                    // Bump block group dirs count.
+                    {
+                        let group =
+                            e2fs.get_block_group((u32::from(ino) - 1) / e2fs.inodes_per_group)?;
+                        let mut desc = group.desc.lock();
+                        desc.used_dirs_count =
+                            desc.used_dirs_count.checked_add(1).ok_or(Errno::EIO)?;
+                        e2fs.media.write_le(
+                            group.disk_offset + offset_of!(BlockGroupDesc, used_dirs_count) as u64,
+                            desc.used_dirs_count,
+                        )?;
+                    }
                 }
-                crate::filesystem::MakeFileSpec::Symlink(value) => {
+                MakeFileSpec::Symlink(value) => {
                     ops.size = value.len() as u64;
                     ops.inode.lock().size = ops.size as u32;
                     if value.len() < 60 {
@@ -1019,12 +1071,12 @@ impl E2Fs {
         let block_group = self.get_block_group(group)?;
         let mut guard = block_group.desc.lock();
         let bitmap_off = ((guard.block_bitmap as u64) << self.block_size_exp)
-            + size_of::<usize>() as u64 * index as u64 / usize::BITS as u64;
+            + size_of::<usize>() as u64 * (index / usize::BITS) as u64;
 
         // Clear block from the bitmap.
         let mut tmp = self.media.read_le::<usize>(bitmap_off)?;
-        if (tmp >> (index % usize::BITS)) & 1 != 0 {
-            logkf!(LogLevel::Error, "Block marked as free twice");
+        if (tmp >> (index % usize::BITS)) & 1 == 0 {
+            logkf!(LogLevel::Error, "Block {} marked as free twice", block);
             return Err(Errno::EIO);
         }
         tmp &= !(1usize << (index % usize::BITS));
@@ -1105,7 +1157,58 @@ impl E2Fs {
 
     /// Mark an inode as free; writes 0 to nlink on disk and marks as free in the bitmap.
     fn free_inode(&self, ino: NonZeroU32) -> EResult<()> {
-        todo!();
+        let ino = u32::from(ino);
+        let group = (ino - 1) / self.inodes_per_group;
+        let index = (ino - 1) % self.inodes_per_group;
+
+        let block_group = self.get_block_group(group)?;
+        let mut guard = block_group.desc.lock();
+        let bitmap_off = ((guard.inode_bitmap as u64) << self.block_size_exp)
+            + size_of::<usize>() as u64 * (index / usize::BITS) as u64;
+        let inode_offset = ((guard.inode_table as u64) << self.block_size_exp)
+            + index as u64 * self.inode_size as u64;
+
+        // Clear inode from the bitmap.
+        let mut tmp = self.media.read_le::<usize>(bitmap_off)?;
+        if (tmp >> (index % usize::BITS)) & 1 == 0 {
+            logkf!(LogLevel::Error, "Inode {} marked as free twice", ino);
+            return Err(Errno::EIO);
+        }
+        tmp &= !(1usize << (index % usize::BITS));
+        self.media.write_le(bitmap_off, tmp)?;
+
+        // Update inode group free inode count.
+        guard.free_inode_count = guard.free_inode_count.checked_add(1).ok_or(Errno::EIO)?;
+        self.media.write_le(
+            block_group.disk_offset + offset_of!(BlockGroupDesc, free_inode_count) as u64,
+            guard.free_inode_count,
+        )?;
+        if Mode::try_from(
+            self.media
+                .read_le::<u16>(inode_offset + offset_of!(Inode, mode) as u64)?,
+        )? == Mode::Directory
+        {
+            guard.used_dirs_count = guard.used_dirs_count.checked_sub(1).ok_or(Errno::EIO)?;
+            self.media.write_le(
+                block_group.disk_offset + offset_of!(BlockGroupDesc, used_dirs_count) as u64,
+                guard.used_dirs_count,
+            )?;
+        }
+        // Mark backup BGDT entry out of date.
+        self.dirty_bgdt_ents.lock().insert(group);
+
+        // Clear inode to zeroes.
+        let _ = self
+            .media
+            .write_zeroes(inode_offset, self.inode_size as u64);
+        // Set inode dtime.
+        let _ = self.media.write_le(
+            inode_offset + offset_of!(Inode, dtime) as u64,
+            Timespec::now().sec as u32,
+        );
+
+        self.free_inodes.fetch_add(1, Ordering::Relaxed);
+        Ok(())
     }
 
     /// Increase the links count on an inode.

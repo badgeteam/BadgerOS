@@ -210,7 +210,7 @@ struct_def! {
         free_block_count: u16,
         /// Number of free inodes in this group.
         free_inode_count: u16,
-        /// Number of inodes reserved to be directories in this group.
+        /// Number of inodes that are directories in this group.
         used_dirs_count:  u16,
         _resvd0:          u16,
         _resvd1:          [u8; 12],

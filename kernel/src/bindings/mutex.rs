@@ -2,7 +2,7 @@ use core::{
     cell::UnsafeCell,
     fmt::Debug,
     marker::PhantomData,
-    mem::{ManuallyDrop, MaybeUninit},
+    mem::MaybeUninit,
     ops::{Deref, DerefMut},
 };
 

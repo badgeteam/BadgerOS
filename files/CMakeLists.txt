@@ -47,3 +47,4 @@ add_subdirectory(lib)
 add_subdirectory(sbin)
 
 install(FILES existfile DESTINATION .)
+install(FILES removedfile DESTINATION .)

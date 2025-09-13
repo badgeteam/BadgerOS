@@ -10,6 +10,7 @@ test = false
 [dependencies]
 bytemuck = "1.23.0"
 chrono = { version="0.4.41", default-features=false }
+compile-time = "0.2.0"
 crc = "3.3.0"
 num = { version="0.4.3", default-features=false }
 static_assertions = "1.1.0"
