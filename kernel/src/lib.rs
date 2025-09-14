@@ -39,6 +39,13 @@ pub mod filesystem;
 pub mod kparam;
 pub mod util;
 
+#[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
+#[path = "../cpu/riscv/src/mod.rs"]
+pub mod cpu;
+#[cfg(target_arch = "x86_64")]
+#[path = "../cpu/x86_64/src/mod.rs"]
+pub mod cpu;
+
 use core::{alloc::GlobalAlloc, ffi::c_void, ops::Deref, panic::PanicInfo};
 
 pub use bindings::log::*;

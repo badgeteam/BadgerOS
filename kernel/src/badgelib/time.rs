@@ -2,7 +2,10 @@
 // SPDX-FileType: SOURCE
 // SPDX-License-Identifier: MIT
 
-use crate::bindings::{self, irq, spinlock::Spinlock};
+use crate::{
+    bindings::{self, spinlock::Spinlock},
+    cpu,
+};
 
 // TODO: Replace this code with the chrono crate where possible.
 
@@ -36,15 +39,15 @@ impl AtomicTimespec {
     }
 
     pub fn load(&self) -> Timespec {
-        let ie = unsafe { irq::disable() };
+        let ie = unsafe { cpu::irq::disable() };
         let tmp = *self.0.lock_shared();
-        unsafe { irq::enable_if(ie) };
+        unsafe { cpu::irq::enable_if(ie) };
         tmp
     }
 
     pub fn store(&self, value: Timespec) {
-        let ie = unsafe { irq::disable() };
+        let ie = unsafe { cpu::irq::disable() };
         *self.0.lock() = value;
-        unsafe { irq::enable_if(ie) };
+        unsafe { cpu::irq::enable_if(ie) };
     }
 }

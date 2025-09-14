@@ -20,10 +20,10 @@ use crate::{
             class::{block::BlockDevice, char::CharDevice},
         },
         error::{EResult, Errno},
-        irq,
         mutex::Mutex,
         spinlock::Spinlock,
     },
+    cpu,
     filesystem::{VNodeMtxInner, vfs::mflags},
 };
 
@@ -336,12 +336,12 @@ impl VNodeOps for RamVNode {
         }
 
         // Pop refcount.
-        assert!(unsafe { irq::disable() });
+        assert!(unsafe { cpu::irq::disable() });
         let mut link_guard = ino.links.lock();
         let prev_links = *link_guard;
         *link_guard -= 1;
         drop(link_guard);
-        unsafe { irq::enable() };
+        unsafe { cpu::irq::enable() };
 
         if prev_links == 1 {
             // Last link removed.
@@ -368,7 +368,7 @@ impl VNodeOps for RamVNode {
             .ok_or(Errno::EIO)?;
 
         let ram_inode = unsafe { ram_inode.as_mut_unchecked() };
-        assert!(unsafe { irq::disable() });
+        assert!(unsafe { cpu::irq::disable() });
         let link_res = {
             let mut links = ram_inode.links.lock();
             assert!(*links > 0);
@@ -379,7 +379,7 @@ impl VNodeOps for RamVNode {
                 Ok(())
             }
         };
-        unsafe { irq::enable() };
+        unsafe { cpu::irq::enable() };
         link_res?;
 
         directory.insert(
@@ -491,9 +491,9 @@ impl VNodeOps for RamVNode {
     fn stat(&self, _arc_self: &Arc<VNode>) -> EResult<Stat> {
         let inode = unsafe { self.inode.as_ref_unchecked() };
         let size = inode.size.load(Ordering::Relaxed);
-        assert!(unsafe { irq::disable() });
+        assert!(unsafe { cpu::irq::disable() });
         let nlink = *inode.links.lock_shared();
-        unsafe { irq::enable() };
+        unsafe { cpu::irq::enable() };
         Ok(Stat {
             dev: 0,
             ino: 0,

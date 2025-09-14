@@ -17,7 +17,6 @@ pub mod kmodule;
 pub mod log;
 #[macro_use]
 pub mod error;
-pub mod irq;
 pub mod mutex;
 pub mod pmm;
 pub mod process;

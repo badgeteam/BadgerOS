@@ -9,12 +9,15 @@ use core::{
 
 use alloc::{boxed::Box, sync::Arc};
 
-use crate::bindings::{
-    error::{EResult, Errno},
-    irq,
-    raw::timestamp_us_t,
-    spinlock::Spinlock,
-    thread::Waitlist,
+use crate::{
+    badgelib::irq::IrqGuard,
+    bindings::{
+        error::{EResult, Errno},
+        raw::timestamp_us_t,
+        spinlock::Spinlock,
+        thread::Waitlist,
+    },
+    cpu::irq,
 };
 
 use super::{File, SeekMode, Stat, VNode};
@@ -271,7 +274,7 @@ impl FifoShared {
     /// Handle a file read for a FIFO.
     /// WARNING: May sporadically return 0 in a blocking multi-read scenario.
     fn read(&self, nonblock: bool, rdata: &mut [u8]) -> EResult<usize> {
-        let _noirq = unsafe { irq::IrqGuard::new() };
+        let _noirq = unsafe { IrqGuard::new() };
 
         let buffer = if nonblock {
             self.buffer.lock_shared()
@@ -306,7 +309,7 @@ impl FifoShared {
     /// Handle a file write for a FIFO.
     /// Raises EPIPE if `enforce_open` is true and the read end is closed.
     fn write(&self, nonblock: bool, wdata: &[u8], enforce_open: bool) -> EResult<usize> {
-        let _noirq = unsafe { irq::IrqGuard::new() };
+        let _noirq = unsafe { IrqGuard::new() };
         if enforce_open && self.read_count.load(Ordering::Relaxed) == 0 {
             return Err(Errno::EPIPE);
         }
