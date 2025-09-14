@@ -1211,83 +1211,20 @@ impl E2Fs {
         Ok(())
     }
 
-    /// Increase the links count on an inode.
-    fn link_inode(&self, arc_self: &Arc<Vfs>, inode: NonZeroU32) -> EResult<()> {
-        let ino = u32::from(inode);
-
-        // Prevents inode from being opened concurrently by another thread.
-        let block_group = (ino - 1) / self.inodes_per_group;
-        let block_group = self.get_block_group(block_group)?;
-        let index = (ino - 1) % self.inodes_per_group;
-        let guard = block_group.desc.lock();
-        let inode_offset = ((guard.inode_table as u64) << self.block_size_exp)
-            + index as u64 * self.inode_size as u64;
-
-        // If a VNode is present, the links count shall be updated therein as well.
-        let vnode = arc_self.get_vnode(u32::from(inode) as u64);
-        let ops = vnode.as_deref().map(|x| x.get_ops_as::<E2VNode>());
-        let mut inode = ops.as_deref().map(|x| x.inode.lock());
-
-        // Increase links number.
-        let mut links = [0u8; 2];
-        self.media
-            .read(inode_offset + offset_of!(Inode, nlink) as u64, &mut links)?;
-        let mut links = u16::from_le_bytes(links);
-        links = links.checked_add(1).ok_or(Errno::EMLINK)?;
-        self.media.write(
-            inode_offset + offset_of!(Inode, nlink) as u64,
-            &links.to_le_bytes(),
-        )?;
-        if let Some(inode) = &mut inode {
-            inode.nlink = links;
-        }
-
-        Ok(())
-    }
-
-    /// Decrease the links count on an inode.
-    fn unlink_inode(&self, arc_self: &Arc<Vfs>, inode: NonZeroU32) -> EResult<()> {
-        let ino = u32::from(inode);
-
-        // Prevents inode from being opened concurrently by another thread.
-        let block_group = (ino - 1) / self.inodes_per_group;
-        let block_group = self.get_block_group(block_group)?;
-        let index = (ino - 1) % self.inodes_per_group;
-        let guard = block_group.desc.lock();
-        let inode_offset = ((guard.inode_table as u64) << self.block_size_exp)
-            + index as u64 * self.inode_size as u64;
-
-        // If a VNode is present, the links count shall be updated therein as well.
-        let vnode = arc_self.get_vnode(u32::from(inode) as u64);
-        let ops = vnode.as_deref().map(|x| x.get_ops_as::<E2VNode>());
-        let mut inode = ops.as_deref().map(|x| x.inode.lock());
-
-        // Increase links number.
-        let mut links = [0u8; 2];
-        self.media
-            .read(inode_offset + offset_of!(Inode, nlink) as u64, &mut links)?;
-        let mut links = u16::from_le_bytes(links);
-        links = links.checked_sub(1).ok_or(Errno::EIO)?;
-        self.media.write(
-            inode_offset + offset_of!(Inode, nlink) as u64,
-            &links.to_le_bytes(),
-        )?;
-        if let Some(inode) = &mut inode {
-            inode.nlink = links;
-        }
-
-        if inode.is_none() {
-            logkf!(LogLevel::Warning, "TODO: Free inode");
-        }
-
-        Ok(())
-    }
-
     /// Helper function to get the inode type for a dirent.
     /// Will query the actual inode for ext2 rev. 0.
     fn get_inode_type(&self, dent: &LinkedDent) -> EResult<NodeType> {
         if self.feature_incompat & feat::incompat::FILETYPE == 0 {
-            todo!()
+            let group = dent.ino.checked_sub(1).ok_or(Errno::EIO)? / self.inodes_per_group;
+            let index = (dent.ino - 1) % self.inodes_per_group;
+            let block_group = self.get_block_group(group)?;
+            let inode_offset = ((block_group.desc.lock_shared().inode_table as u64)
+                << self.block_size_exp)
+                + self.inode_size as u64 * index as u64;
+            let mode: u16 = self
+                .media
+                .read_le(inode_offset + offset_of!(Inode, mode) as u64)?;
+            Ok(Mode::try_from(mode)?.into())
         } else {
             Ok(FileType::try_from(dent.file_type)?.into())
         }
