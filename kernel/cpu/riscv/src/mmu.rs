@@ -70,20 +70,38 @@ impl PTE {
 
 #[cfg(target_arch = "riscv32")]
 /// Maximum possible value of ASID.
-pub const ASID_MAX: usize = 0x1ff;
+pub const ASID_MAX: u32 = 0x1ff;
 #[cfg(target_arch = "riscv64")]
 /// Maximum possible value of ASID.
-pub const ASID_MAX: usize = 0xffff;
+pub const ASID_MAX: u32 = 0xffff;
 
 #[cfg(target_arch = "riscv32")]
 /// Number of virtual address bits per page table level.
-pub const BITS_PER_LEVEL: usize = 10;
+pub const BITS_PER_LEVEL: u32 = 10;
 #[cfg(target_arch = "riscv64")]
 /// Number of virtual address bits per page table level.
-pub const BITS_PER_LEVEL: usize = 9;
+pub const BITS_PER_LEVEL: u32 = 9;
+
+/// Heuristic for maximum number of pages to individually invalidate.
+pub const INVAL_PAGE_THRESHOLD: usize = 16;
 
 /// Whether Svpbmt is supported.
 static mut HAS_PBMT: bool = false;
+
+/// Perform early MMU initialization using the existing page tables (which were created by the bootloader).
+pub unsafe fn early_init() {
+    #[cfg(target_arch = "riscv32")]
+    unsafe {
+        PAGING_LEVELS = 2;
+    }
+    #[cfg(target_arch = "riscv64")]
+    unsafe {
+        let satp: usize;
+        asm!("csrr {r}, satp", r = out(reg) satp);
+        let mode = satp >> 60;
+        PAGING_LEVELS = mode as u32 - 8 + 3;
+    }
+}
 
 /// Initialize and detect capabilities of the MMU, given the constructed page table.
 pub unsafe fn init(root_ppn: PPN) {
@@ -91,7 +109,7 @@ pub unsafe fn init(root_ppn: PPN) {
         // Set the kernel page table with the maximum ASID to detect how many ASID bits are available.
         set_page_table(root_ppn, ASID_MAX);
         let asid = read_asid();
-        ASID_BITS = asid.trailing_ones() as u8;
+        ASID_BITS = asid.trailing_ones();
 
         // Set kernel page table with ASID 0 this time (which is reserved for the kernel itself).
         set_page_table(root_ppn, 0);
@@ -105,24 +123,25 @@ pub unsafe fn init(root_ppn: PPN) {
 
 #[inline(always)]
 /// Switch page table and address space ID.
-pub unsafe fn set_page_table(root_ppn: PPN, asid: usize) {
+pub unsafe fn set_page_table(root_ppn: PPN, asid: u32) {
     #[cfg(target_arch = "riscv32")]
     let new_val = root_ppn + (asid << 22) + (1 << 31);
     #[cfg(target_arch = "riscv64")]
-    let new_val = root_ppn + (asid << 44) + (unsafe { PAGING_LEVELS as usize - 3 + 8 } << 60);
+    let new_val =
+        root_ppn + ((asid as usize) << 44) + (unsafe { PAGING_LEVELS as usize - 3 + 8 } << 60);
     unsafe { asm!("csrw satp, {new_val}", new_val = in(reg) new_val) };
 }
 
 #[inline(always)]
 /// Read the current ASID out.
-fn read_asid() -> usize {
-    let val = 0usize;
-    unsafe { asm!("csrr {val}, satp", val = out(reg) _) };
+fn read_asid() -> u32 {
+    let val: usize;
+    unsafe { asm!("csrr {val}, satp", val = out(reg) val) };
     #[cfg(target_arch = "riscv32")]
     let res = (val >> 22) & 0x1ff;
     #[cfg(target_arch = "riscv64")]
     let res = (val >> 44) & 0xffff;
-    res
+    res as u32
 }
 
 #[inline(always)]

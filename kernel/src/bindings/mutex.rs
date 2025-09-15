@@ -100,13 +100,13 @@ impl<T: Clone> Mutex<T, false> {
 }
 
 /// Represents a locked mutex.
-pub struct MutexGuard<'a, T, const SHARED: bool> {
+pub struct MutexGuard<'a, T: ?Sized, const SHARED: bool> {
     mutex: *mut mutex_t,
-    data: &'a mut T,
-    marker: PhantomData<&'a Mutex<T, SHARED>>,
+    data: *mut T,
+    marker: PhantomData<&'a mutex_t>,
 }
 
-impl<'a, T, const SHARED: bool> MutexGuard<'a, T, SHARED> {
+impl<'a, T: ?Sized, const SHARED: bool> MutexGuard<'a, T, SHARED> {
     /// Convert into raw parts.
     pub fn to_raw_parts(self) -> (*mut mutex_t, &'a mut T) {
         // Using this unsafe block to bypass borrow checker from preventing the `core::mem::forget`.
@@ -138,7 +138,7 @@ impl<'a, T, const SHARED: bool> MutexGuard<'a, T, SHARED> {
     /// Try to lock a mutex.
     pub unsafe fn try_new_raw(
         mutex: *mut mutex_t,
-        data: &'a mut T,
+        data: *mut T,
         timeout: timestamp_us_t,
     ) -> EResult<Self> {
         unsafe {
@@ -152,9 +152,12 @@ impl<'a, T, const SHARED: bool> MutexGuard<'a, T, SHARED> {
         }
     }
     /// Lock a mutex.
-    pub unsafe fn new_raw(mutex: *mut mutex_t, data: &'a mut T) -> Self {
+    pub unsafe fn new_raw(mutex: *mut mutex_t, data: *mut T) -> Self {
         unsafe { Self::try_new_raw(mutex, data, timestamp_us_t::MAX) }.unwrap()
     }
+}
+
+impl<'a, T: Sized, const SHARED: bool> MutexGuard<'a, T, SHARED> {
     /// Try to lock a mutex.
     pub fn try_new(mutex: &'a Mutex<T, SHARED>, timeout: timestamp_us_t) -> EResult<Self> {
         unsafe {
@@ -173,34 +176,34 @@ impl<'a, T, const SHARED: bool> MutexGuard<'a, T, SHARED> {
     }
 }
 
-impl<'a, T, const SHARED: bool> Drop for MutexGuard<'a, T, SHARED> {
+impl<'a, T: ?Sized, const SHARED: bool> Drop for MutexGuard<'a, T, SHARED> {
     fn drop(&mut self) {
         unsafe { raw::mutex_release(self.mutex) };
     }
 }
 
-impl<T, const SHARED: bool> Deref for MutexGuard<'_, T, SHARED> {
+impl<T: ?Sized, const SHARED: bool> Deref for MutexGuard<'_, T, SHARED> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
-        self.data
+        unsafe { &*self.data }
     }
 }
 
-impl<T, const SHARED: bool> DerefMut for MutexGuard<'_, T, SHARED> {
+impl<T: ?Sized, const SHARED: bool> DerefMut for MutexGuard<'_, T, SHARED> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        self.data
+        unsafe { &mut *self.data }
     }
 }
 
 /// Represents a mutex locked shared.
-pub struct SharedMutexGuard<'a, T> {
+pub struct SharedMutexGuard<'a, T: ?Sized> {
     mutex: *mut mutex_t,
-    data: &'a T,
-    marker: PhantomData<&'a Mutex<T, true>>,
+    data: *const T,
+    marker: PhantomData<&'a mutex_t>,
 }
 
-impl<'a, T> SharedMutexGuard<'a, T> {
+impl<'a, T: ?Sized> SharedMutexGuard<'a, T> {
     /// Convert into raw parts.
     pub fn to_raw_parts(self) -> (*mut mutex_t, &'a T) {
         // Using this unsafe block to bypass borrow checker from preventing the `core::mem::forget`.
@@ -228,7 +231,7 @@ impl<'a, T> SharedMutexGuard<'a, T> {
         res
     }
     /// Create from an already locked mutex and a data pointer.
-    pub unsafe fn from_raw_parts(mutex: *mut mutex_t, data: &'a T) -> Self {
+    pub unsafe fn from_raw_parts(mutex: *mut mutex_t, data: *const T) -> Self {
         Self {
             mutex,
             data,
@@ -238,7 +241,7 @@ impl<'a, T> SharedMutexGuard<'a, T> {
     /// Try to lock a mutex as shared.
     pub unsafe fn try_new_raw(
         mutex: *mut mutex_t,
-        data: &'a T,
+        data: *const T,
         timeout: timestamp_us_t,
     ) -> EResult<Self> {
         unsafe {
@@ -252,9 +255,12 @@ impl<'a, T> SharedMutexGuard<'a, T> {
         }
     }
     /// Lock a mutex as shared.
-    pub unsafe fn new_raw(mutex: *mut mutex_t, data: &'a T) -> Self {
+    pub unsafe fn new_raw(mutex: *mut mutex_t, data: *const T) -> Self {
         unsafe { Self::try_new_raw(mutex, data, timestamp_us_t::MAX) }.unwrap()
     }
+}
+
+impl<'a, T: Sized> SharedMutexGuard<'a, T> {
     /// Try to lock a mutex as shared.
     pub fn try_new(mutex: &'a Mutex<T, true>, timeout: timestamp_us_t) -> EResult<Self> {
         unsafe {
@@ -273,16 +279,16 @@ impl<'a, T> SharedMutexGuard<'a, T> {
     }
 }
 
-impl<'a, T> Drop for SharedMutexGuard<'a, T> {
+impl<'a, T: ?Sized> Drop for SharedMutexGuard<'a, T> {
     fn drop(&mut self) {
         unsafe { raw::mutex_release_shared(self.mutex) };
     }
 }
 
-impl<'a, T> Deref for SharedMutexGuard<'a, T> {
+impl<'a, T: ?Sized> Deref for SharedMutexGuard<'a, T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
-        self.data
+        unsafe { &*self.data }
     }
 }

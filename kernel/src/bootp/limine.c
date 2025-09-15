@@ -92,6 +92,17 @@ uacpi_status uacpi_kernel_get_rsdp(uacpi_phys_addr *out_rsdp_address) {
 // Memory map entry selected to be early alloc pool.
 static size_t early_alloc_index;
 
+// Higher-half direct map virtual address.
+size_t rust_hhdm_size;
+// Higher-half direct map address offset (paddr -> vaddr).
+size_t rust_hhdm_vaddr;
+// Higher-half direct map size.
+size_t rust_hhdm_offset;
+// Kernel base virtual address.
+size_t rust_kernel_vaddr;
+// Kernel base physical address.
+size_t rust_kernel_paddr;
+
 // Early hardware initialization.
 void bootp_early_init() {
     rawprint("\033[0m\033[2J");
@@ -140,6 +151,8 @@ void bootp_early_init() {
     mmu_hhdm_size             = 0;
     size_t usable_len         = 0;
     size_t reclaim_len        = 0;
+    size_t hhdm_end           = 0;
+    size_t hhdm_start         = SIZE_MAX;
     for (uint64_t i = 0; i < mem->entry_count; i++) {
         struct limine_memmap_entry *entry = mem->entries[i];
         logkf_from_isr(
@@ -171,12 +184,18 @@ void bootp_early_init() {
 #ifdef __riscv
         }
 #endif
-        if (entry->type != LIMINE_MEMMAP_BAD_MEMORY && entry->type != LIMINE_MEMMAP_RESERVED) {
-            mmu_hhdm_size = entry->base + entry->length;
+        if (entry->type != LIMINE_MEMMAP_BAD_MEMORY && entry->type != LIMINE_MEMMAP_RESERVED &&
+            hhdm_start > entry->base + entry->length) {
+            hhdm_start = entry->base + entry->length;
+        }
+        if (entry->type != LIMINE_MEMMAP_BAD_MEMORY && entry->type != LIMINE_MEMMAP_RESERVED &&
+            hhdm_end < entry->base + entry->length) {
+            hhdm_end = entry->base + entry->length;
         }
     }
 
     // Pass info to memory protection.
+    mmu_hhdm_size         = hhdm_end;
     mmu_hhdm_vaddr        = bootp_hhdm_req.response->offset;
     memprotect_hhdm_pages = (mmu_hhdm_size - 1) / CONFIG_PAGE_SIZE + 1;
     memprotect_kernel_ppn = bootp_addr_req.response->physical_base / CONFIG_PAGE_SIZE;
@@ -186,6 +205,12 @@ void bootp_early_init() {
         panic_poweroff();
     }
     memprotect_kernel_pages = (kernel_len - 1) / CONFIG_PAGE_SIZE + 1;
+
+    rust_hhdm_size    = hhdm_end - hhdm_start;
+    rust_hhdm_offset  = bootp_hhdm_req.response->offset;
+    rust_hhdm_vaddr   = rust_hhdm_offset + hhdm_start;
+    rust_kernel_paddr = bootp_addr_req.response->physical_base;
+    rust_kernel_vaddr = bootp_addr_req.response->virtual_base;
 
     // Report memory stats.
     logkf_from_isr(
