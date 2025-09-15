@@ -73,6 +73,8 @@ void basic_runtime_init() {
 
     // Post-heap memory protection initialization.
     memprotect_postheap_init();
+    void rust_vmm_init();
+    rust_vmm_init();
     // Post-heap protocol-dependent initialization.
     bootp_postheap_init();
 

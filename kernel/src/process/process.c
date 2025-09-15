@@ -28,18 +28,18 @@
 
 
 // Globally unique PID number counter.
-static pid_t       pid_counter = 1;
+static pid_t      pid_counter = 1;
 // Global process lifetime mutex.
-mutex_t            proc_mtx    = MUTEX_T_INIT_SHARED;
+mutex_t           proc_mtx    = MUTEX_T_INIT_SHARED;
 // Number of processes.
-static size_t      procs_len   = 0;
+size_t            procs_len   = 0;
 // Capacity for processes.
-static size_t      procs_cap   = 0;
+size_t            procs_cap   = 0;
 // Process array.
-static process_t **procs       = NULL;
-extern atomic_int  kernel_shutdown_mode;
+process_t       **procs       = NULL;
+extern atomic_int kernel_shutdown_mode;
 // Allow process 1 to die without kernel panic.
-static bool        allow_proc1_death() {
+static bool       allow_proc1_death() {
     // While the kernel is shutting down and init is the only process left.
     return kernel_shutdown_mode && procs_len == 1;
 }

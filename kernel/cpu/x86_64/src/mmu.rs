@@ -36,6 +36,14 @@ pub const ASID_MAX: usize = 0xffff;
 /// Number of virtual address bits per page table level.
 pub const BITS_PER_LEVEL: usize = 9;
 
+/// Heuristic for maximum number of pages to individually invalidate.
+pub const INVAL_PAGE_THRESHOLD: usize = 16;
+
+/// Perform early MMU initialization using the existing page tables (which were created by the bootloader).
+pub unsafe fn early_init() {
+    todo!();
+}
+
 /// Initialize and detect capabilities of the MMU, given the constructed page table.
 pub unsafe fn init(root_ppn: PPN) {
     todo!();

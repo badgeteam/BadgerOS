@@ -8,7 +8,14 @@
 #include "process/process.h"
 #include "process/types.h"
 
-extern mutex_t proc_mtx;
+// Global process lifetime mutex.
+extern mutex_t     proc_mtx;
+// Number of processes.
+extern size_t      procs_len;
+// Capacity for processes.
+extern size_t      procs_cap;
+// Process array.
+extern process_t **procs;
 
 
 
