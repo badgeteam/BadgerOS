@@ -20,16 +20,11 @@
 #![feature(map_try_insert)]
 #![feature(iterator_try_collect)]
 #![feature(generic_const_exprs)]
+#![feature(int_lowest_highest_one)]
 
 #[macro_use]
 extern crate alloc;
 extern crate chrono;
-
-pub use core::{
-    include,
-    option::Option::{self, None, Some},
-    result::Result::{self, Err, Ok},
-};
 
 #[macro_use]
 pub mod bindings;
@@ -40,6 +35,7 @@ pub mod filesystem;
 #[macro_use]
 pub mod ktest;
 pub mod kparam;
+pub mod mem;
 pub mod util;
 
 #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
@@ -49,9 +45,8 @@ pub mod cpu;
 #[path = "../cpu/x86_64/src/mod.rs"]
 pub mod cpu;
 
+use bindings::log::*;
 use core::{alloc::GlobalAlloc, ffi::c_void, panic::PanicInfo};
-
-pub use bindings::log::*;
 
 #[global_allocator]
 pub static BADGEROS_RUST_MALLOC: BadgerOSMalloc = BadgerOSMalloc {};
