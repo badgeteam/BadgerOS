@@ -19,16 +19,11 @@
 #![feature(likely_unlikely)]
 #![feature(map_try_insert)]
 #![feature(iterator_try_collect)]
+#![feature(int_lowest_highest_one)]
 
 #[macro_use]
 extern crate alloc;
 extern crate chrono;
-
-pub use core::{
-    include,
-    option::Option::{self, None, Some},
-    result::Result::{self, Err, Ok},
-};
 
 #[macro_use]
 pub mod bindings;
@@ -37,6 +32,7 @@ pub mod config;
 pub mod device;
 pub mod filesystem;
 pub mod kparam;
+pub mod mem;
 pub mod util;
 
 #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
@@ -46,9 +42,8 @@ pub mod cpu;
 #[path = "../cpu/x86_64/src/mod.rs"]
 pub mod cpu;
 
+use bindings::log::*;
 use core::{alloc::GlobalAlloc, ffi::c_void, ops::Deref, panic::PanicInfo};
-
-pub use bindings::log::*;
 
 #[derive(Clone, Copy)]
 pub struct ReadOnly<T> {
