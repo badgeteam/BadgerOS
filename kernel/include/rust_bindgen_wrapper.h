@@ -15,7 +15,6 @@
 #include "limine.h"
 #include "log.h"
 #include "malloc.h"
-#include "memprotect.h"
 #include "mutex.h"
 #include "page_alloc.h"
 #include "panic.h"

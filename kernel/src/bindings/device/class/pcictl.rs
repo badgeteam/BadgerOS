@@ -2,10 +2,14 @@ use core::mem::MaybeUninit;
 
 use alloc::vec::Vec;
 
-use crate::bindings::{
-    device::{AbstractDevice, Device, DeviceFilters, addr::PciAddr},
-    error::{EResult, Errno},
-    raw::{self, dev_class_t_DEV_CLASS_PCICTL, device_pcictl_t, mpu_global_ctx, pci_bar_info_t},
+use crate::{
+    bindings::{
+        device::{AbstractDevice, Device, DeviceFilters, addr::PciAddr},
+        error::{EResult, Errno},
+        log::LogLevel,
+        raw::{self, dev_class_t_DEV_CLASS_PCICTL, device_pcictl_t, pci_bar_info_t},
+    },
+    logkf,
 };
 
 /// Representation of some mapped PCIe BAR memory.
@@ -22,11 +26,7 @@ impl MappedBar {
 
 impl Drop for MappedBar {
     fn drop(&mut self) {
-        unsafe {
-            raw::memprotect_k(self.vaddr, 0, self.info.len, 0);
-            raw::memprotect_commit(&raw mut mpu_global_ctx);
-            raw::memprotect_free_vaddr(self.vaddr);
-        }
+        logkf!(LogLevel::Warning, "TODO: Unmap PCI BAR memory");
     }
 }
 

@@ -11,7 +11,6 @@ use tock_registers::{
 use crate::{
     LogLevel,
     bindings::{
-        self,
         device::{
             BaseDriver, Device, DeviceInfoView, HasBaseDevice,
             addr::DevAddr,
@@ -19,14 +18,14 @@ use crate::{
         },
         error::{EResult, Errno},
         mutex::Mutex,
-        pmm::PhysBox,
-        raw::{driver_block_t, mpu_global_ctx},
+        raw::driver_block_t,
         thread::Thread,
         time_us,
     },
     block_driver_struct,
     device::builtin_driver::ahci::{AHCI_DRIVER, ata, fis},
     logk,
+    mem::{pmm::phys_box::PhysBox, vmm},
 };
 
 register_structs! {
@@ -250,12 +249,12 @@ impl SataDriver {
             let mut prdt = 0usize;
             while offset < data.len() {
                 let v2p = unsafe {
-                    bindings::raw::memprotect_virt2phys(
-                        &raw mut mpu_global_ctx,
-                        &data[offset] as *const u8 as usize,
+                    vmm::virt2phys(
+                        *vmm::KERNEL_PAGE_TABLE.lock_shared(),
+                        data.as_ptr() as usize + offset,
                     )
                 };
-                let len = v2p.page_size + v2p.page_paddr - v2p.paddr;
+                let len = v2p.size + v2p.page_paddr - v2p.paddr;
                 let len = len.min(data.len() - offset);
 
                 guard.hms.prdt[prdt].paddr.set(v2p.paddr as u64);

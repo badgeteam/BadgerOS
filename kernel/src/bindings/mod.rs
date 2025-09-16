@@ -18,7 +18,6 @@ pub mod log;
 #[macro_use]
 pub mod error;
 pub mod mutex;
-pub mod pmm;
 pub mod process;
 pub mod semaphore;
 pub mod spinlock;
