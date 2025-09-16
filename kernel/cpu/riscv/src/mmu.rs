@@ -107,7 +107,7 @@ pub unsafe fn early_init() {
 pub unsafe fn init(root_ppn: PPN) {
     unsafe {
         // Set the kernel page table with the maximum ASID to detect how many ASID bits are available.
-        set_page_table(root_ppn, ASID_MAX);
+        set_page_table(root_ppn, 0);
         let asid = read_asid();
         ASID_BITS = asid.trailing_ones();
 

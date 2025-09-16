@@ -5,7 +5,7 @@
 use core::ops::Range;
 
 use crate::{
-    bindings::error::EResult,
+    bindings::{error::EResult, log::print},
     config,
     cpu::mmu::{BITS_PER_LEVEL, PackedPTE},
     mem::pmm::{PPN, page_alloc},
@@ -177,6 +177,56 @@ pub unsafe fn walk(mut pgtable_ppn: PPN, vpn: VPN) -> PTE {
     }
 
     unreachable!("Valid non-leaf PTE at level 0");
+}
+
+unsafe fn dump_impl(pgtable_ppn: PPN, level: u8, min_level: u8, indent: u8) {
+    let mut empty = true;
+    for index in 0..(1usize << BITS_PER_LEVEL) {
+        let pte = unsafe { read_pte(pgtable_ppn, index) }.unpack(level);
+        if !pte.is_null() {
+            use flags::*;
+            empty = false;
+            print("\n");
+            for _ in 0..indent {
+                print("    ");
+            }
+            printf!(
+                "[{:3}] 0x{:x} {}{}{}{}{}{}{} {} {}",
+                index,
+                pte.ppn,
+                if pte.flags & R != 0 { 'R' } else { '-' },
+                if pte.flags & W != 0 { 'W' } else { '-' },
+                if pte.flags & X != 0 { 'X' } else { '-' },
+                if pte.flags & U != 0 { 'U' } else { '-' },
+                if pte.flags & G != 0 { 'G' } else { '-' },
+                if pte.flags & A != 0 { 'A' } else { '-' },
+                if pte.flags & D != 0 { 'D' } else { '-' },
+                if pte.flags & COW != 0 { "COW" } else { "---" },
+                if pte.flags & IO != 0 {
+                    "IO"
+                } else if pte.flags & NC != 0 {
+                    "NC"
+                } else {
+                    "--"
+                }
+            );
+            if pte.leaf {
+                print(" (leaf)");
+            } else if level > min_level {
+                unsafe { dump_impl(pte.ppn, level - 1, min_level, indent + 1) };
+            }
+        }
+    }
+    if empty {
+        print(" (empty)");
+    }
+    print("\n");
+}
+
+/// Debug-dump a page tbale.
+pub unsafe fn dump(pgtable_ppn: PPN, min_level: u8) {
+    printf!("0x{:x} (page table root)", pgtable_ppn);
+    unsafe { dump_impl(pgtable_ppn, PAGING_LEVELS as u8 - 1, min_level, 1) };
 }
 
 /// Determine whether an address is canonical.

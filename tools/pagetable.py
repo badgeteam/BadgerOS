@@ -182,7 +182,11 @@ class PageTable(Page):
             elif self.entries[i].v and self.entries[i].leaf():
                 self.entries[i].page = Page(pt_vpn, pt_ppn << 12, 1 << (12+9*level))
             elif self.entries[i].v:
-                self.entries[i].page = PageTable(pt_vpn, pt_ppn << 12, level-1, memory)
+                if level == 0:
+                    print(f"WARNING: Non-leaf PTE at level 0: {self.entries[i]}")
+                    self.entries[i].page = None
+                else:
+                    self.entries[i].page = PageTable(pt_vpn, pt_ppn << 12, level-1, memory)
     
     def __repr__(self) -> str:
         return f"PageTable(0x{self.vaddr:016x}, 0x{self.paddr:016x}, {self.level:d}, <...>)"
@@ -247,7 +251,10 @@ if __name__ == "__main__":
         args.pt_root = args.pt_root[2:]
     fd   = open(args.file, "rb")
     if args.raw:
-        mem = mmap(fd.fileno(), 0x100000000, prot=PROT_READ, flags=MAP_PRIVATE)
+        fd.seek(0, os.SEEK_END)
+        size = fd.tell()
+        fd.seek(0, os.SEEK_SET)
+        mem = mmap(fd.fileno(), size, prot=PROT_READ, flags=MAP_PRIVATE)
     else:
         mem = ELFFile(fd)
         for i in range(mem.num_segments()):
