@@ -163,7 +163,7 @@ set(kernel_src
     ${CMAKE_CURRENT_LIST_DIR}/src/housekeeping.c
     ${CMAKE_CURRENT_LIST_DIR}/src/interrupt.c
     ${CMAKE_CURRENT_LIST_DIR}/src/main.c
-    ${CMAKE_CURRENT_LIST_DIR}/src/memprotect.c
+    # ${CMAKE_CURRENT_LIST_DIR}/src/memprotect.c
     ${CMAKE_CURRENT_LIST_DIR}/src/page_alloc.c
     ${CMAKE_CURRENT_LIST_DIR}/src/smp.c
     ${CMAKE_CURRENT_LIST_DIR}/src/syscall.c

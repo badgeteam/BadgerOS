@@ -67,7 +67,7 @@ pub type AtomicVPN = AtomicUsize;
 pub type VPN = usize;
 
 /// Kernel page table root PPN.
-static KERNEL_PAGE_TABLE: Mutex<PPN> = unsafe { Mutex::new_static(0) };
+pub static KERNEL_PAGE_TABLE: Mutex<PPN> = unsafe { Mutex::new_static(0) };
 
 unsafe extern "C" {
     static __start_text: [u8; 0];
@@ -146,7 +146,7 @@ unsafe fn map_impl(
             )
         };
         for proc in guard.iter() {
-            let proc_pt_root = unsafe { (**proc).memmap.mpu_ctx.root_ppn };
+            let proc_pt_root = unsafe { (**proc).memmap.mem_ctx.pt_root_ppn };
             for index in
                 virt_base.div(root_pte_size)..(virt_base + virt_len).div_ceil(root_pte_size)
             {
@@ -251,6 +251,27 @@ pub unsafe fn map_u_at(
     unsafe { map_impl(pt_root_ppn, virt_base, virt_len, phys_base, flags) }
 }
 
+/// Describes the result of a virtual to physical address translation.
+pub struct Virt2Phys {
+    /// Virtual address of page start.
+    pub page_vaddr: VPN,
+    /// Physical address of page start.
+    pub page_paddr: PPN,
+    /// Size of the mapping in pages.
+    pub size: usize,
+    /// Physical address.
+    pub paddr: usize,
+    /// Flags of the mapping.
+    pub flags: u32,
+    /// Whether the mapping exists; if false, only `vpn` and `size` are valid.
+    pub valid: bool,
+}
+
+/// Translate a virtual to a physical address.
+pub unsafe fn virt2phys(pt_root_ppn: PPN, vaddr: usize) -> Virt2Phys {
+    todo!()
+}
+
 /// Initialize the virtual memory subsystem.
 pub unsafe fn init() {
     unsafe {
@@ -319,8 +340,17 @@ pub unsafe fn init() {
 }
 
 #[unsafe(no_mangle)]
-unsafe extern "C" fn rust_vmm_init() {
+unsafe extern "C" fn mem_vmm_init() {
     unsafe {
         init();
+    }
+}
+
+#[unsafe(no_mangle)]
+unsafe extern "C" fn mem_ctxswitch_from_isr() {
+    unsafe {
+        let proc = bindings::raw::proc_current();
+        cpu::mmu::set_page_table((*proc).memmap.mem_ctx.pt_root_ppn, 0);
+        cpu::mmu::vmem_fence(None, None);
     }
 }

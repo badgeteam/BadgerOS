@@ -5,7 +5,7 @@
 
 #include "filesystem.h"
 #include "list.h"
-#include "memprotect.h"
+#include "mem/mm.h"
 #include "mutex.h"
 #include "scheduler/scheduler.h"
 #include "signal.h"
@@ -34,8 +34,8 @@ typedef struct {
 
 // Process memory map information.
 typedef struct proc_memmap_t {
-    // Memory management cache.
-    mpu_ctx_t mpu_ctx;
+    // Memory management context.
+    mem_ctx_t mem_ctx;
     // Number of mapped regions.
     size_t    regions_len;
 #ifdef PROC_MEMMAP_MAX_REGIONS

@@ -13,7 +13,7 @@
 #include "ktest.h"
 #include "log.h"
 #include "malloc.h"
-#include "memprotect.h"
+#include "mem/mm.h"
 #include "panic.h"
 #include "process/process.h"
 #include "scheduler/scheduler.h"
@@ -59,8 +59,6 @@ void basic_runtime_init() {
 
     // ISR initialization.
     irq_init(&tmp_ctx);
-    // Early memory protection initialization.
-    memprotect_early_init();
     // Early platform initialization.
     bootp_early_init();
     ktests_runlevel(KTEST_WHEN_EARLY);
@@ -74,10 +72,8 @@ void basic_runtime_init() {
     kernel_heap_init();
     ktests_runlevel(KTEST_WHEN_HEAP);
 
-    // Post-heap memory protection initialization.
-    memprotect_postheap_init();
-    void rust_vmm_init();
-    rust_vmm_init();
+    // Page alloc ready, so VMM can be initialized.
+    mem_vmm_init();
     // Post-heap protocol-dependent initialization.
     bootp_postheap_init();
     ktests_runlevel(KTEST_WHEN_VMM);
