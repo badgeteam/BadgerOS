@@ -137,7 +137,21 @@ macro_rules! logkf {
     };
 }
 
+/// Write an unformatted message.
+pub fn print(msg: &str) {
+    unsafe {
+        raw::rawprint_substr(msg.as_ptr(), msg.len());
+    }
+}
+
 /// Write a formatted message.
+pub fn printf(thing: &dyn Display) {
+    let mut writer = LogWriter {};
+    let mut fmt = Formatter::new(&mut writer, Default::default());
+    let _ = thing.fmt(&mut fmt);
+}
+
+/// Print a formatted message.
 #[macro_export]
 macro_rules! printf {
     ($($args:expr),*) => {
