@@ -57,8 +57,7 @@ pub(super) unsafe fn write_pte(pgtable_ppn: PPN, index: usize, pte: PackedPTE) {
 
 /// Get the index in the given page table level for the given virtual address.
 fn get_vpn_index(vpn: VPN, level: u8) -> usize {
-    let vaddr_bits = unsafe { PAGING_LEVELS * BITS_PER_LEVEL } + config::PAGE_SIZE.ilog2();
-    (vpn >> (vaddr_bits - (level + 1) as u32 * BITS_PER_LEVEL)) % (1usize << BITS_PER_LEVEL)
+    (vpn >> (level as u32 * BITS_PER_LEVEL)) % (1usize << BITS_PER_LEVEL)
 }
 
 /// Try to allocate a new page table page.
@@ -179,54 +178,53 @@ pub unsafe fn walk(mut pgtable_ppn: PPN, vpn: VPN) -> PTE {
     unreachable!("Valid non-leaf PTE at level 0");
 }
 
-unsafe fn dump_impl(pgtable_ppn: PPN, level: u8, min_level: u8, indent: u8) {
-    let mut empty = true;
+unsafe fn dump_impl(pgtable_ppn: PPN, level: u8, min_level: u8, indent: u8, vpn: VPN) {
     for index in 0..(1usize << BITS_PER_LEVEL) {
         let pte = unsafe { read_pte(pgtable_ppn, index) }.unpack(level);
-        if !pte.is_null() {
-            use flags::*;
-            empty = false;
+        if pte.is_null() {
+            continue;
+        }
+        use flags::*;
+        for _ in 0..indent {
+            print("    ");
+        }
+        printf!(
+            "[{:3}] 0x{:x} {}{}{}{}{}{}{} {} {}",
+            index,
+            pte.ppn,
+            if pte.flags & R != 0 { 'R' } else { '-' },
+            if pte.flags & W != 0 { 'W' } else { '-' },
+            if pte.flags & X != 0 { 'X' } else { '-' },
+            if pte.flags & U != 0 { 'U' } else { '-' },
+            if pte.flags & G != 0 { 'G' } else { '-' },
+            if pte.flags & A != 0 { 'A' } else { '-' },
+            if pte.flags & D != 0 { 'D' } else { '-' },
+            if pte.flags & COW != 0 { "COW" } else { "---" },
+            if pte.flags & IO != 0 {
+                "IO"
+            } else if pte.flags & NC != 0 {
+                "NC"
+            } else {
+                "--"
+            }
+        );
+        let mut vpn = vpn + (index << (BITS_PER_LEVEL * level as u32));
+        if vpn >= canon_half_size() / PAGE_SIZE as usize {
+            vpn += higher_half_vaddr() / PAGE_SIZE as usize;
+        }
+        if pte.leaf {
+            printf!(" (leaf 0x{:x})\n", vpn);
+        } else if level > min_level {
             print("\n");
-            for _ in 0..indent {
-                print("    ");
-            }
-            printf!(
-                "[{:3}] 0x{:x} {}{}{}{}{}{}{} {} {}",
-                index,
-                pte.ppn,
-                if pte.flags & R != 0 { 'R' } else { '-' },
-                if pte.flags & W != 0 { 'W' } else { '-' },
-                if pte.flags & X != 0 { 'X' } else { '-' },
-                if pte.flags & U != 0 { 'U' } else { '-' },
-                if pte.flags & G != 0 { 'G' } else { '-' },
-                if pte.flags & A != 0 { 'A' } else { '-' },
-                if pte.flags & D != 0 { 'D' } else { '-' },
-                if pte.flags & COW != 0 { "COW" } else { "---" },
-                if pte.flags & IO != 0 {
-                    "IO"
-                } else if pte.flags & NC != 0 {
-                    "NC"
-                } else {
-                    "--"
-                }
-            );
-            if pte.leaf {
-                print(" (leaf)");
-            } else if level > min_level {
-                unsafe { dump_impl(pte.ppn, level - 1, min_level, indent + 1) };
-            }
+            unsafe { dump_impl(pte.ppn, level - 1, min_level, indent + 1, vpn) };
         }
     }
-    if empty {
-        print(" (empty)");
-    }
-    print("\n");
 }
 
 /// Debug-dump a page tbale.
 pub unsafe fn dump(pgtable_ppn: PPN, min_level: u8) {
-    printf!("0x{:x} (page table root)", pgtable_ppn);
-    unsafe { dump_impl(pgtable_ppn, PAGING_LEVELS as u8 - 1, min_level, 1) };
+    printf!("0x{:x} (page table root)\n", pgtable_ppn);
+    unsafe { dump_impl(pgtable_ppn, PAGING_LEVELS as u8 - 1, min_level, 1, 0) };
 }
 
 /// Determine whether an address is canonical.
@@ -264,7 +262,7 @@ pub fn is_canon_user_range(range: Range<usize>) -> bool {
 
 /// Get the size of a "half" of the canonical ranges.
 pub fn canon_half_size() -> usize {
-    (PAGE_SIZE as usize) << (BITS_PER_LEVEL * unsafe { PAGING_LEVELS })
+    (PAGE_SIZE as usize) << (BITS_PER_LEVEL * unsafe { PAGING_LEVELS } - 1)
 }
 
 /// Get the start of the higher half.

@@ -313,8 +313,6 @@ pub unsafe fn init() {
         };
         res.expect("Failed to create inital page table");
 
-        mmu::dump(*KERNEL_PAGE_TABLE.data(), 0);
-
         // Finalize MMU initialization and switch to new page table.
         cpu::mmu::init(*KERNEL_PAGE_TABLE.data());
     }
