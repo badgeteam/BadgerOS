@@ -24,6 +24,7 @@ impl PackedPTE {
             ppn: (self.0 >> 10) % (1usize << 57),
             flags: (self.0 & 0b11_1111_1110) as u32,
             valid: self.0 & 1 != 0,
+            leaf: self.0 & 0b1110 != 0,
             level,
         }
     }
@@ -35,7 +36,7 @@ impl PackedPTE {
             ppn: (self.0 >> 10) % (1usize << 57),
             flags: ((self.0 & 0b11_1111_1110) + (((self.0 >> 61) & 0b11) << 10)) as u32,
             valid: self.0 & 1 != 0,
-            leaf: self.0 & 0b1110 == 0,
+            leaf: self.0 & 0b1110 != 0,
             level,
         }
     }
