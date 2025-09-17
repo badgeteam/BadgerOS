@@ -23,10 +23,9 @@ use crate::{
         device::HasBaseDevice,
         error::{EResult, Errno},
         mutex::Mutex,
-        time_us,
     },
     filesystem::{MakeFileSpec, NAME_MAX},
-    util::{MaybeMut, zeroes},
+    util::MaybeMut,
 };
 use spec::*;
 
@@ -181,6 +180,110 @@ impl E2VNode {
             return Ok(None);
         };
         self.get_block_impl(&e2fs, level, fileblk, block_ptr, group_hint, inode)
+    }
+
+    /// Recursive implementation of `remove_block`.
+    fn remove_block_impl(
+        &self,
+        e2fs: &E2Fs,
+        level: u8,
+        fileblk: u32,
+        block_ptr: NonZeroU32,
+        inode: &mut Inode,
+    ) -> EResult<bool> {
+        if level == 0 {
+            return Ok(true);
+        }
+
+        let index =
+            (fileblk >> (e2fs.block_size_exp * level as u32)) % (1u32 << e2fs.block_size_exp);
+        let block_ptr = (u32::from(block_ptr) as u64) << e2fs.block_size_exp;
+        let mut tmp = [0u8; 4];
+        e2fs.media.read(block_ptr + 4 * index as u64, &mut tmp)?;
+
+        let block = u32::from_le_bytes(tmp);
+        if let Some(block) = NonZeroU32::new(block) {
+            if self.remove_block_impl(e2fs, level - 1, fileblk, block, inode)? {
+                // The entire block was freed, so free the pointer too.
+                e2fs.free_block(block)?;
+                e2fs.media.write(block_ptr + 4 * index as u64, &[0u8; 4])?;
+                inode.realsize -= 1u32 << (e2fs.block_size_exp - 9);
+            }
+        }
+
+        // Check whether this indirection block is now empty.
+        for i in 0..(1u32 << (e2fs.block_size_exp - 2)) {
+            let mut tmp = [0u8; 4];
+            e2fs.media.read(block_ptr + i as u64 * 4, &mut tmp)?;
+            if u32::from_le_bytes(tmp) != 0 {
+                // There is still at least one block left.
+                return Ok(false);
+            }
+        }
+
+        // This block is now empty.
+        Ok(true)
+    }
+
+    /// Helper function to set one block ID in the inode.
+    fn remove_block_unlocked(&self, e2fs: &E2Fs, block: u32, inode: &mut Inode) -> EResult<()> {
+        let block_size_exp = e2fs.block_size_exp;
+        let block_ptrs_exp = block_size_exp - 2;
+        let ind1_blocks = 1u32 << block_ptrs_exp;
+        let ind2_blocks = 1u32 << (2 * block_ptrs_exp);
+        let ind3_blocks = 1u32 << (3 * block_ptrs_exp);
+
+        let index: usize;
+        let level: u8;
+        let fileblk: u32;
+
+        if block < 12 {
+            // Direct blocks.
+            index = block as usize;
+            fileblk = 0;
+            level = 0;
+        } else if block - 12 < ind1_blocks {
+            // Indirect blocks.
+            index = 12;
+            fileblk = block - 12;
+            level = 1;
+        } else if block - 12 - ind1_blocks < ind2_blocks {
+            // Doubly indirect blocks.
+            index = 13;
+            fileblk = block - 12 - ind1_blocks;
+            level = 2;
+        } else if block - 12 - ind1_blocks - ind2_blocks < ind3_blocks {
+            // Triply indirect blocks.
+            index = 13;
+            fileblk = block - 12 - ind1_blocks - ind2_blocks;
+            level = 3;
+        } else {
+            unreachable!("Block index into inode too high");
+        }
+
+        let block_ptr = NonZeroU32::new(inode.data_blocks[index]);
+        let block_ptr = if let Some(x) = block_ptr {
+            x
+        } else {
+            return Ok(());
+        };
+        if self.remove_block_impl(&e2fs, level, fileblk, block_ptr, inode)? {
+            // The entire block was freed, so free the pointer too.
+            e2fs.free_block(block_ptr)?;
+            inode.data_blocks[index] = 0;
+            inode.realsize -= 1u32 << (e2fs.block_size_exp - 9);
+        }
+
+        e2fs.media.write(
+            self.inode_offset + offset_of!(Inode, data_blocks) as u64 + index as u64 * 4,
+            &[0u8; 4],
+        )?;
+        e2fs.media.write(
+            self.inode_offset + offset_of!(Inode, realsize) as u64,
+            &inode.realsize.to_le_bytes(),
+        )?;
+
+        Ok(())
     }
 
     /// Helper function to iterate blocks within a certain range of this file.
@@ -566,9 +669,14 @@ impl VNodeOps for E2VNode {
                     }
                 },
             )?;
-        } else {
+        } else if new_size < old_size {
             // Garbage-collect blocks.
-            logkf!(LogLevel::Warning, "TODO: Free blocks when resizing inode");
+            let mut inode = self.inode.lock();
+            let old_blocks = old_size.div_ceil(1u64 << e2fs.block_size_exp);
+            let new_blocks = new_size.div_ceil(1u64 << e2fs.block_size_exp);
+            for block in new_blocks..old_blocks {
+                self.remove_block_unlocked(&e2fs, block as u32, &mut inode)?;
+            }
         }
 
         // Update size in inode.

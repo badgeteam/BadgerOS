@@ -304,7 +304,8 @@ fn mount_root_fs() {
 
     // Ext2 filesystem test.
     let file = open(None, b"/existfile", oflags::READ_WRITE | oflags::APPEND).unwrap();
-    file.write(b"This is append data\n").unwrap();
+    file.resize(46).unwrap();
+    // file.write(b"This is append data\n").unwrap();
     file.sync().unwrap();
 
     let file = open(None, b"/newfile", oflags::READ_WRITE | oflags::CREATE).unwrap();
