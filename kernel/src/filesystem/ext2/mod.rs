@@ -505,6 +505,58 @@ impl E2VNode {
         Ok(())
     }
 
+    /// Delete a directory entry.
+    fn delete_dirent(
+        &mut self,
+        vfs: &Vfs,
+        name: &[u8],
+        check_ino: Option<NonZeroU32>,
+    ) -> EResult<()> {
+        let e2fs = vfs.get_ops_as::<E2Fs>();
+
+        // Find target dirent.
+        let mut prev = None;
+        let mut found = None;
+        self.iter_dirents(vfs, &mut |dent, offset, dent_name| {
+            if *name == *dent_name {
+                found = Some((*dent, offset));
+                Ok(false)
+            } else {
+                prev = Some((*dent, offset));
+                Ok(true)
+            }
+        })?;
+        let (found, offset) = found.ok_or(Errno::ENOENT)?;
+
+        // The target dirent should have the same ino.
+        if let Some(check_ino) = check_ino
+            && found.ino != check_ino.into()
+        {
+            return Err(Errno::EIO);
+        }
+
+        if let Some((prev_dent, prev_offset)) = prev
+            && prev_offset >> e2fs.block_size_exp == offset >> e2fs.block_size_exp
+        {
+            // Can merge with previous dirent.
+            let record_len = prev_dent.record_len + found.record_len;
+            self.write_impl(
+                &e2fs,
+                prev_offset + offset_of!(LinkedDent, record_len) as u64,
+                &record_len.to_le_bytes(),
+            )?;
+        } else {
+            // Mark this dirent as unused.
+            self.write_impl(
+                &e2fs,
+                offset + offset_of!(LinkedDent, ino) as u64,
+                &[0u8; 4],
+            )?;
+        }
+
+        Ok(())
+    }
+
     /// Helper function to recursively free all blocks owned by an inode.
     fn free_inode_blocks(e2fs: &E2Fs, data_blocks: [u32; 15]) -> EResult<()> {
         for i in 0..12 {
@@ -590,43 +642,8 @@ impl E2VNode {
     ) -> EResult<()> {
         let e2fs = vfs.get_ops_as::<E2Fs>();
 
-        // Find target dirent.
-        let mut prev = None;
-        let mut found = None;
-        self.iter_dirents(vfs, &mut |dent, offset, dent_name| {
-            if *name == *dent_name {
-                found = Some((*dent, offset));
-                Ok(false)
-            } else {
-                prev = Some((*dent, offset));
-                Ok(true)
-            }
-        })?;
-        let (found, offset) = found.ok_or(Errno::ENOENT)?;
-
-        // The target dirent should have the same ino.
-        if found.ino != unlinked_ops.as_ref().unwrap_or(&self).ino.into() {
-            return Err(Errno::EIO);
-        }
-
-        if let Some((prev_dent, prev_offset)) = prev
-            && prev_offset >> e2fs.block_size_exp == offset >> e2fs.block_size_exp
-        {
-            // Can merge with previous dirent.
-            let record_len = prev_dent.record_len + found.record_len;
-            self.write_impl(
-                &e2fs,
-                prev_offset + offset_of!(LinkedDent, record_len) as u64,
-                &record_len.to_le_bytes(),
-            )?;
-        } else {
-            // Mark this dirent as unused.
-            self.write_impl(
-                &e2fs,
-                offset + offset_of!(LinkedDent, ino) as u64,
-                &[0u8; 4],
-            )?;
-        }
+        // Delete the dirent.
+        self.delete_dirent(vfs, name, unlinked_ops.as_ref().map(|x| x.ino))?;
 
         // Decrease inode refcount.
         let unlinked_ops = unlinked_ops.unwrap_or(self);
@@ -967,7 +984,40 @@ impl VNodeOps for E2VNode {
         old_name: &[u8],
         new_name: &[u8],
     ) -> EResult<Dirent> {
-        todo!()
+        // Find source dirent.
+        let mut found = None;
+        self.iter_dirents(&arc_self.vfs, &mut |dent, offset, dent_name| {
+            if *old_name == *dent_name {
+                found = Some((*dent, offset));
+                Ok(false)
+            } else {
+                Ok(true)
+            }
+        })?;
+        let (found, _offset) = found.ok_or(Errno::ENOENT)?;
+
+        // Create new dirent.
+        self.create_dirent(
+            arc_self,
+            NonZeroU32::new(found.ino).ok_or(Errno::EIO)?,
+            new_name,
+            found.file_type.try_into()?,
+        )?;
+
+        // Delete old dirent.
+        self.delete_dirent(
+            &arc_self.vfs,
+            old_name,
+            Some(NonZeroU32::new(found.ino).unwrap()),
+        )?;
+
+        Ok(Dirent {
+            ino: found.ino as u64,
+            type_: FileType::try_from(found.file_type)?.into(),
+            name: new_name.into(),
+            dirent_disk_off: 0,
+            dirent_off: 0,
+        })
     }
 
     fn readlink(&self, arc_self: &Arc<VNode>) -> EResult<Box<[u8]>> {

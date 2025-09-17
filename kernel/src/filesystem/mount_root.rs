@@ -12,7 +12,7 @@ use crate::{
             limine_uuid, mem_equals, strlen,
         },
     },
-    filesystem::{MakeFileSpec, link, make_file, oflags, open, unlink},
+    filesystem::{MakeFileSpec, link, make_file, oflags, open, rename, unlink},
     kparam, util,
 };
 
@@ -301,43 +301,6 @@ fn mount_root_fs() {
     if let Err(x) = res {
         panic!("Unable to mount root filesystem: {}", x);
     }
-
-    // Ext2 filesystem test.
-    let file = open(None, b"/existfile", oflags::READ_WRITE | oflags::APPEND).unwrap();
-    file.resize(46).unwrap();
-    // file.write(b"This is append data\n").unwrap();
-    file.sync().unwrap();
-
-    let file = open(None, b"/newfile", oflags::READ_WRITE | oflags::CREATE).unwrap();
-    file.write(b"This new file data\n").unwrap();
-
-    unlink(None, b"/removedfile", false).unwrap();
-
-    link(None, b"/newfile", None, b"/hardlinked.newfile", 0).unwrap();
-    logkf!(LogLevel::Debug, "hardlink done");
-
-    make_file(
-        None,
-        b"/symlink",
-        MakeFileSpec::Symlink(b"Symlink.Content/ok"),
-    )
-    .unwrap();
-    logkf!(LogLevel::Debug, "symlink done");
-
-    make_file(None, b"/newdir", MakeFileSpec::Directory).unwrap();
-    logkf!(LogLevel::Debug, "newdir done");
-
-    make_file(None, b"/newdir/thenfile", MakeFileSpec::Regular).unwrap();
-    logkf!(LogLevel::Debug, "newdir then file done");
-
-    file.get_vnode()
-        .unwrap()
-        .vfs
-        .ops
-        .lock_shared()
-        .sync()
-        .unwrap();
-    disk.sync_all(false).unwrap();
 }
 
 mod c_api {
