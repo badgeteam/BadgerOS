@@ -3,7 +3,7 @@ use core::ops::{Deref, DerefMut};
 use crate::{
     bindings::{error::EResult, log::LogLevel},
     config::{self, PAGE_SIZE},
-    mem,
+    mem::{self, vmm::KERNEL_VMM_CTX},
 };
 
 /// A box for physical RAM allocations.
@@ -25,13 +25,18 @@ impl<T: Sized> PhysBox<T> {
             let flags = mem::vmm::flags::RW
                 + io as u32 * mem::vmm::flags::IO
                 + nc as u32 * mem::vmm::flags::NC;
-            let res = mem::vmm::map_k(aligned_size, paddr, flags);
+            let res = mem::vmm::map_k(aligned_size, ppn, flags);
             if let Err(e) = &res {
                 mem::pmm::page_free(ppn, page_count);
                 return Err(*e);
             }
             let vaddr = (res.unwrap() * PAGE_SIZE as usize) as *mut T;
-            core::ptr::write_bytes(vaddr, 0, aligned_size);
+            logkf!(
+                LogLevel::Debug,
+                "{:#?}",
+                mem::vmm::virt2phys(KERNEL_VMM_CTX.lock_shared().pt_root_ppn, vaddr as usize)
+            );
+            core::ptr::write_bytes(vaddr as *mut u8, 0, aligned_size);
 
             Ok(Self { paddr, vaddr })
         }

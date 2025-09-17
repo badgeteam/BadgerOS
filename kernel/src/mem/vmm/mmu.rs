@@ -217,6 +217,8 @@ unsafe fn dump_impl(pgtable_ppn: PPN, level: u8, min_level: u8, indent: u8, vpn:
         } else if level > min_level {
             print("\n");
             unsafe { dump_impl(pte.ppn, level - 1, min_level, indent + 1, vpn) };
+        } else {
+            print("\n");
         }
     }
 }
