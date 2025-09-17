@@ -403,7 +403,6 @@ impl BlockDriver for SataDriver {
     fn write_blocks(&self, start: u64, count: u64, data: &[u8]) -> EResult<()> {
         // Bounds check is required because do_ata_cmd doesn't check.
         self.access_bounds_check(start, count, Some(data))?;
-        logkf!(LogLevel::Debug, "Writing {} blocks at {}", count, start);
         unsafe {
             self.do_ata_cmd(
                 if self.supports_48bit {
@@ -423,7 +422,6 @@ impl BlockDriver for SataDriver {
     fn read_blocks(&self, start: u64, count: u64, data: &mut [u8]) -> EResult<()> {
         // Bounds check is required because do_ata_cmd doesn't check.
         self.access_bounds_check(start, count, Some(data))?;
-        logkf!(LogLevel::Debug, "Reading {} blocks at {}", count, start);
         unsafe {
             self.do_ata_cmd(
                 if self.supports_48bit {
@@ -449,7 +447,6 @@ impl BlockDriver for SataDriver {
     }
 
     fn sync_blocks(&self, _start: u64, _count: u64) -> EResult<()> {
-        logkf!(LogLevel::Debug, "Flushing cache");
         unsafe {
             self.do_ata_cmd(
                 if self.supports_48bit {

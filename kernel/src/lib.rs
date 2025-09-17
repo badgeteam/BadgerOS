@@ -20,6 +20,7 @@
 #![feature(map_try_insert)]
 #![feature(iterator_try_collect)]
 #![feature(int_lowest_highest_one)]
+#![feature(generic_const_exprs)]
 
 #[macro_use]
 extern crate alloc;

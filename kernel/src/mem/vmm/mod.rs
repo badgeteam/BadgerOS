@@ -67,6 +67,8 @@ pub mod flags {
 pub type AtomicVPN = AtomicUsize;
 /// Unsigned integer that can store a virtual page number.
 pub type VPN = usize;
+/// Naturally aligned slice that is a page or more of zeroes.
+static mut ZEROES: *const [u8] = unsafe { core::mem::zeroed() };
 
 /// Kernel page table root PPN.
 pub static KERNEL_PAGE_TABLE: Mutex<PPN> = unsafe { Mutex::new_static(0) };
@@ -274,6 +276,11 @@ pub unsafe fn virt2phys(pt_root_ppn: PPN, vaddr: usize) -> Virt2Phys {
     todo!()
 }
 
+/// Get a naturally aligned slice that is a page or more of zeroes.
+pub fn zeroes() -> &'static [u8] {
+    unsafe { &*ZEROES }
+}
+
 /// Initialize the virtual memory subsystem.
 pub unsafe fn init() {
     unsafe {
@@ -328,6 +335,15 @@ pub unsafe fn init() {
                 (HHDM_VADDR - HHDM_OFFSET) / PAGE_SIZE as usize,
                 flags::RW | flags::G,
             )?;
+
+            // Page of zeroes.
+            let zeroes_ppn = pmm::page_alloc(1)?;
+            let zeroes_vpn = map_k(1, zeroes_ppn, flags::R | flags::G)?;
+            ZEROES = slice_from_raw_parts(
+                (zeroes_vpn * PAGE_SIZE as usize) as *const u8,
+                PAGE_SIZE as usize,
+            );
+            (*(ZEROES as *mut [u8])).fill(0);
         };
         res.expect("Failed to create inital page table");
 

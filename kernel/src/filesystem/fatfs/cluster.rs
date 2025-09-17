@@ -17,7 +17,7 @@ use crate::{
     bindings::error::{EResult, Errno},
 };
 
-use super::FatFS;
+use super::FatFs;
 
 /// Allocates clusters from a FAT.
 pub(super) struct ClusterAlloc {
@@ -366,7 +366,7 @@ impl ClusterChain {
     }
 
     /// Helper function to write to media using this cluster chain.
-    pub(super) fn write(&self, fatfs: &FatFS, offset: u64, wdata: &[u8]) -> EResult<()> {
+    pub(super) fn write(&self, fatfs: &FatFs, offset: u64, wdata: &[u8]) -> EResult<()> {
         // Calculate the range of clusters that need to be accessed.
         let first_cluster = (offset >> fatfs.cluster_size_exp) as u32;
         let index = match self
@@ -406,7 +406,7 @@ impl ClusterChain {
     }
 
     /// Helper function to read from media using this cluster chain.
-    pub(super) fn read(&self, fatfs: &FatFS, offset: u64, rdata: &mut [u8]) -> EResult<()> {
+    pub(super) fn read(&self, fatfs: &FatFs, offset: u64, rdata: &mut [u8]) -> EResult<()> {
         // Calculate the range of clusters that need to be accessed.
         let first_cluster = (offset >> fatfs.cluster_size_exp) as u32;
         let index = match self
@@ -446,7 +446,7 @@ impl ClusterChain {
     }
 
     /// Helper function to sync the cluster chain to the media.
-    pub(super) fn sync(&self, fatfs: &FatFS) -> EResult<()> {
+    pub(super) fn sync(&self, fatfs: &FatFs) -> EResult<()> {
         for range in &self.data {
             fatfs.media.sync(
                 (range.range.start as u64 + fatfs.data_offset) << fatfs.cluster_size_exp,
