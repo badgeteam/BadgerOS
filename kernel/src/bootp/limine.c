@@ -2,14 +2,13 @@
 // SPDX-License-Identifier: MIT
 
 #include "arrays.h"
-#include "assertions.h"
 #include "bootp.h"
-#include "cpu/mmu.h"
 #include "device/class/pcictl.h"
 #include "device/dev_class.h"
 #include "device/device.h"
 #include "ktest.h"
 #include "log.h"
+#include "mem/vmm.h"
 #include "panic.h"
 #include "rawprint.h"
 #include "set.h"
@@ -92,17 +91,6 @@ uacpi_status uacpi_kernel_get_rsdp(uacpi_phys_addr *out_rsdp_address) {
 // Memory map entry selected to be early alloc pool.
 static size_t early_alloc_index;
 
-// Higher-half direct map virtual address.
-size_t rust_hhdm_size;
-// Higher-half direct map address offset (paddr -> vaddr).
-size_t rust_hhdm_vaddr;
-// Higher-half direct map size.
-size_t rust_hhdm_offset;
-// Kernel base virtual address.
-size_t rust_kernel_vaddr;
-// Kernel base physical address.
-size_t rust_kernel_paddr;
-
 // Early hardware initialization.
 void bootp_early_init() {
     rawprint("\033[0m\033[2J");
@@ -144,11 +132,9 @@ void bootp_early_init() {
         [LIMINE_MEMMAP_KERNEL_AND_MODULES]     = "Kernel",
         [LIMINE_MEMMAP_FRAMEBUFFER]            = "Framebuffer",
     };
-    // logkf_from_isr(LOG_DEBUG, "Memory map:");
-    size_t kernel_len         = 0;
+    logk_from_isr(LOG_INFO, "Memory map:");
     size_t biggest_pool_size  = 0;
     size_t biggest_pool_index = 0;
-    mmu_hhdm_size             = 0;
     size_t usable_len         = 0;
     size_t reclaim_len        = 0;
     size_t hhdm_end           = 0;
@@ -167,9 +153,6 @@ void bootp_early_init() {
         } else if (entry->type == LIMINE_MEMMAP_BOOTLOADER_RECLAIMABLE ||
                    entry->type == LIMINE_MEMMAP_ACPI_RECLAIMABLE) {
             reclaim_len += entry->length;
-        }
-        if (entry->type == LIMINE_MEMMAP_KERNEL_AND_MODULES) {
-            kernel_len = entry->length;
         }
 #ifdef __riscv
         // Workaround: Limine has a bug where the DTB is in usable, not reclaimable, memory.
@@ -195,22 +178,15 @@ void bootp_early_init() {
     }
 
     // Pass info to memory protection.
-    mmu_hhdm_size         = hhdm_end;
-    mmu_hhdm_vaddr        = bootp_hhdm_req.response->offset;
-    memprotect_hhdm_pages = (mmu_hhdm_size - 1) / CONFIG_PAGE_SIZE + 1;
-    memprotect_kernel_ppn = bootp_addr_req.response->physical_base / CONFIG_PAGE_SIZE;
-    memprotect_kernel_vpn = bootp_addr_req.response->virtual_base / CONFIG_PAGE_SIZE;
     if (bootp_addr_req.response->physical_base % CONFIG_PAGE_SIZE) {
         logkf_from_isr(LOG_FATAL, "Kernel is not aligned to page size");
         panic_poweroff();
     }
-    memprotect_kernel_pages = (kernel_len - 1) / CONFIG_PAGE_SIZE + 1;
-
-    rust_hhdm_size    = hhdm_end - hhdm_start;
-    rust_hhdm_offset  = bootp_hhdm_req.response->offset;
-    rust_hhdm_vaddr   = rust_hhdm_offset + hhdm_start;
-    rust_kernel_paddr = bootp_addr_req.response->physical_base;
-    rust_kernel_vaddr = bootp_addr_req.response->virtual_base;
+    vmm_hhdm_size    = hhdm_end - hhdm_start;
+    vmm_hhdm_offset  = bootp_hhdm_req.response->offset;
+    vmm_hhdm_vaddr   = vmm_hhdm_offset + hhdm_start;
+    vmm_kernel_paddr = bootp_addr_req.response->physical_base;
+    vmm_kernel_vaddr = bootp_addr_req.response->virtual_base;
 
     // Report memory stats.
     logkf_from_isr(
@@ -230,8 +206,8 @@ void bootp_early_init() {
         early_pool->base + early_pool->length - 1
     );
     init_pool(
-        (void *)(early_pool->base + mmu_hhdm_vaddr),
-        (void *)(early_pool->base + early_pool->length + mmu_hhdm_vaddr),
+        (void *)(early_pool->base + vmm_hhdm_offset),
+        (void *)(early_pool->base + early_pool->length + vmm_hhdm_offset),
         0
     );
     ktests_runlevel(KTEST_WHEN_PMM);
@@ -328,8 +304,8 @@ void bootp_reclaim_mem() {
     // Reclaim all reclaimable memory.
     for (size_t i = 0; i < reclaimable_len; i++) {
         init_pool(
-            (void *)(reclaimable[i].base + mmu_hhdm_vaddr),
-            (void *)(reclaimable[i].base + reclaimable[i].length + mmu_hhdm_vaddr),
+            (void *)(reclaimable[i].base + vmm_hhdm_vaddr),
+            (void *)(reclaimable[i].base + reclaimable[i].length + vmm_hhdm_vaddr),
             0
         );
     }

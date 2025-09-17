@@ -61,8 +61,8 @@ fn get_vpn_index(vpn: VPN, level: u8) -> usize {
 }
 
 /// Try to allocate a new page table page.
-fn alloc_pgtable_page() -> EResult<PPN> {
-    let ppn = unsafe { page_alloc(0) }?;
+pub(super) fn alloc_pgtable_page() -> EResult<PPN> {
+    let ppn = unsafe { page_alloc(1) }?;
     for i in 0..1usize << BITS_PER_LEVEL {
         unsafe { write_pte(ppn, i, PackedPTE::INVALID) };
     }
@@ -268,4 +268,49 @@ pub fn canon_half_size() -> usize {
 /// Get the start of the higher half.
 pub fn higher_half_vaddr() -> usize {
     canon_half_size().wrapping_neg()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn mmu_is_canon_addr(addr: usize) -> bool {
+    is_canon_addr(addr)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn mmu_is_canon_kernel_addr(addr: usize) -> bool {
+    is_canon_kernel_addr(addr)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn mmu_is_canon_user_addr(addr: usize) -> bool {
+    is_canon_user_addr(addr)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn mmu_is_canon_range(start: usize, len: usize) -> bool {
+    is_canon_range(start..start + len)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn mmu_is_canon_kernel_range(start: usize, len: usize) -> bool {
+    is_canon_kernel_range(start..start + len)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn mmu_is_canon_user_range(start: usize, len: usize) -> bool {
+    is_canon_user_range(start..start + len)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn mmu_canon_half_size() -> usize {
+    canon_half_size()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn mmu_higher_half_vaddr() -> usize {
+    higher_half_vaddr()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn mmu_paging_levels() -> i32 {
+    unsafe { PAGING_LEVELS as i32 }
 }

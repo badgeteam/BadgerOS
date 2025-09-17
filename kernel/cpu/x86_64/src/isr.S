@@ -171,7 +171,7 @@ isr_context_switch:
     mov  [%rsp+amd64_irqframe_t_rflags], %rax
     
     # Swap in memprotect context.
-    call memprotect_swap_from_isr
+    call vmm_ctxswitch_from_isr
     
     restore_gprs
     swapgs
@@ -282,7 +282,7 @@ __amd64_irq:
     mov  [%rsp+16+amd64_irqframe_t_rflags], %rax
     
     # Swap in memprotect context.
-    call memprotect_swap_from_isr
+    call vmm_ctxswitch_from_isr
     
     # Restore general-purpose registers.
     restore_gprs

@@ -9,7 +9,7 @@
 #include "interrupt.h"
 #include "log.h"
 #include "malloc.h"
-#include "memprotect.h"
+#include "mem/vmm.h"
 #include "process/internal.h"
 #include "process/types.h"
 #include "scheduler/cpu.h"
@@ -34,17 +34,17 @@ char const *signames[SIG_COUNT] = {
 static inline void memmap_info(process_t *const proc, size_t vaddr) {
     logkf_from_isr(LOG_INFO, "While accessing 0x%{size;x}", vaddr);
 #if !CONFIG_NOMMU
-    uint32_t flags = memprotect_virt2phys(&proc->memmap.mpu_ctx, vaddr).flags;
+    uint32_t flags = vmm_virt2phys(proc->memmap.mem_ctx.pt_root_ppn, vaddr).flags;
 #else
     uint32_t flags = proc_map_contains_raw(proc, vaddr, 1);
 #endif
-    if (flags & MEMPROTECT_FLAG_RWX) {
+    if (flags & VMM_FLAG_RWX) {
         char tmp[6] = {0};
-        tmp[0]      = flags & MEMPROTECT_FLAG_R ? 'r' : '-';
-        tmp[1]      = flags & MEMPROTECT_FLAG_W ? 'w' : '-';
-        tmp[2]      = flags & MEMPROTECT_FLAG_X ? 'x' : '-';
-        tmp[3]      = flags & MEMPROTECT_FLAG_KERNEL ? 'k' : 'u';
-        tmp[4]      = flags & MEMPROTECT_FLAG_GLOBAL ? 'g' : '-';
+        tmp[0]      = flags & VMM_FLAG_R ? 'r' : '-';
+        tmp[1]      = flags & VMM_FLAG_W ? 'w' : '-';
+        tmp[2]      = flags & VMM_FLAG_X ? 'x' : '-';
+        tmp[3]      = flags & VMM_FLAG_U ? 'u' : 'k';
+        tmp[4]      = flags & VMM_FLAG_G ? 'g' : '-';
         logkf_from_isr(LOG_INFO, "Memory at this address: %{cs}", tmp);
     } else {
         logk_from_isr(LOG_INFO, "No memory at this address.");

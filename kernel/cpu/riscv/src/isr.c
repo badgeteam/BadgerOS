@@ -19,8 +19,7 @@
 #include "scheduler/cpu.h"
 #include "scheduler/types.h"
 #if !CONFIG_NOMMU
-#include "cpu/mmu.h"
-#include "memprotect.h"
+#include "mem/vmm.h"
 #endif
 
 
@@ -88,7 +87,7 @@ void riscv_trap_handler() {
     asm volatile("csrr %0, " CSR_STATUS_STR : "=r"(status));
 
     isr_ctx_t recurse_ctx;
-    recurse_ctx.mpu_ctx  = NULL;
+    recurse_ctx.mem_ctx  = NULL;
     recurse_ctx.flags    = ISR_CTX_FLAG_IN_ISR | ISR_CTX_FLAG_KERNEL;
     isr_ctx_t *kctx      = isr_ctx_swap(&recurse_ctx);
     recurse_ctx.thread   = kctx->thread;
@@ -187,14 +186,14 @@ void riscv_trap_handler() {
 #if !CONFIG_NOMMU
     // Print what page table thinks.
     if ((1 << trapno) & MEM_ADDR_TRAPS) {
-        virt2phys_t info = memprotect_virt2phys(kctx->mpu_ctx, tval);
-        if (info.flags & MEMPROTECT_FLAG_RWX) {
+        virt2phys_t info = vmm_virt2phys(kctx->mem_ctx->pt_root_ppn, tval);
+        if (info.valid) {
             rawprint("Memory at this address: ");
-            rawputc(info.flags & MEMPROTECT_FLAG_R ? 'r' : '-');
-            rawputc(info.flags & MEMPROTECT_FLAG_W ? 'w' : '-');
-            rawputc(info.flags & MEMPROTECT_FLAG_X ? 'x' : '-');
-            rawputc(info.flags & MEMPROTECT_FLAG_KERNEL ? 'k' : 'u');
-            rawputc(info.flags & MEMPROTECT_FLAG_GLOBAL ? 'g' : '-');
+            rawputc(info.flags & VMM_FLAG_R ? 'r' : '-');
+            rawputc(info.flags & VMM_FLAG_W ? 'w' : '-');
+            rawputc(info.flags & VMM_FLAG_X ? 'x' : '-');
+            rawputc(info.flags & VMM_FLAG_U ? 'u' : 'k');
+            rawputc(info.flags & VMM_FLAG_G ? 'g' : '-');
             rawprint("\nPhysical address: 0x");
             rawprinthex(info.paddr, 2 * sizeof(size_t));
             rawputc('\n');

@@ -11,7 +11,7 @@
 #include "kbelf.h"
 #include "log.h"
 #include "malloc.h"
-#include "memprotect.h"
+#include "mem/vmm.h"
 #include "mutex.h"
 #include "panic.h"
 #include "process/internal.h"
@@ -194,6 +194,13 @@ errno_procptr_t proc_create_raw(pid_t parentpid, char const *binary, int argc, c
         return (errno_procptr_t){-ENOMEM, NULL};
     }
 
+    // Initialise the empty memory map.
+    errno_t pt_res = vmm_create_user_ctx(&handle->memmap.mem_ctx);
+    if (pt_res < 0) {
+        mutex_release(&proc_mtx);
+        return (errno_procptr_t){pt_res, NULL};
+    }
+
     // Insert the entry into the list.
     array_binsearch_t res = array_binsearch(procs, sizeof(process_t *), procs_len, &handle, proc_sort_pid_cmp);
     if (!array_lencap_insert(&procs, sizeof(process_t *), &procs_len, &procs_cap, NULL, res.index)) {
@@ -211,9 +218,6 @@ errno_procptr_t proc_create_raw(pid_t parentpid, char const *binary, int argc, c
         dlist_append(&parent->children, &handle->node);
         mutex_release(&parent->mtx);
     }
-
-    // Initialise the empty memory map.
-    memprotect_create(&handle->memmap.mpu_ctx);
 
     mutex_release(&proc_mtx);
     return (errno_procptr_t){0, handle};
@@ -362,8 +366,8 @@ static long proc_create_thread_raw_unlocked(process_t *process, size_t entry_poi
     }
     sched_thread_t *thread = sched_get_thread(k_tid);
 
-    thread->user_isr_ctx.mpu_ctx   = &process->memmap.mpu_ctx;
-    thread->kernel_isr_ctx.mpu_ctx = &process->memmap.mpu_ctx;
+    thread->user_isr_ctx.mem_ctx   = &process->memmap.mem_ctx;
+    thread->kernel_isr_ctx.mem_ctx = &process->memmap.mem_ctx;
 
     long   u_tid = 0;
     size_t i;
@@ -646,7 +650,7 @@ static bool proc_delete_impl(pid_t pid, bool only_prestart) {
     }
 
     // Release kernel memory allocated to process.
-    memprotect_destroy(&handle->memmap.mpu_ctx);
+    vmm_destroy_user_ctx(handle->memmap.mem_ctx);
     free(handle->argv);
     free(handle);
     array_lencap_remove(&procs, sizeof(process_t *), &procs_len, &procs_cap, NULL, res.index);

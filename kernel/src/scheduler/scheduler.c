@@ -572,7 +572,7 @@ tid_t thread_new_user(char const *name, process_t *process, size_t user_entrypoi
     thread->kernel_isr_ctx.flags  = ISR_CTX_FLAG_KERNEL;
     thread->kernel_isr_ctx.thread = thread;
     thread->user_isr_ctx.thread   = thread;
-    thread->user_isr_ctx.mpu_ctx  = &process->memmap.mpu_ctx;
+    thread->user_isr_ctx.mem_ctx  = &process->memmap.mem_ctx;
     sched_prepare_user_entry(thread, user_entrypoint, user_arg);
 
     irq_disable();
