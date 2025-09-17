@@ -1,7 +1,55 @@
+use core::{ops::Deref, ptr::slice_from_raw_parts};
+
 use alloc::string::String;
 use uuid::Uuid;
 
-use crate::bindings::error::EResult;
+use crate::bindings::{
+    error::EResult,
+    raw::{memprotect_zeroes, memprotect_zeroes_len},
+};
+
+/// Get a naturally slice that is a page or more of zeroes.
+pub fn zeroes() -> &'static [u8] {
+    unsafe { &*slice_from_raw_parts(memprotect_zeroes, memprotect_zeroes_len) }
+}
+
+/// Enum that represents either a const or a mut reference.
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+pub enum MaybeMut<'a, T> {
+    Const(&'a T),
+    Mut(&'a mut T),
+}
+
+impl<'a, T> MaybeMut<'a, T> {
+    pub const fn try_mut(&mut self) -> Option<&mut T> {
+        match self {
+            MaybeMut::Const(_) => None,
+            MaybeMut::Mut(x) => Some(*x),
+        }
+    }
+    pub fn with_mut(&'a mut self, f: impl FnOnce(&'a mut T)) {
+        if let Self::Mut(x) = self {
+            f(x);
+        }
+    }
+    pub const fn is_mut(&self) -> bool {
+        match self {
+            MaybeMut::Const(_) => false,
+            MaybeMut::Mut(_) => true,
+        }
+    }
+}
+
+impl<'a, T> Deref for MaybeMut<'a, T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            MaybeMut::Const(x) => x,
+            MaybeMut::Mut(x) => x,
+        }
+    }
+}
 
 /// Try to parse a null-terminated UTF-16-LE string.
 pub fn parse_utf16_le(raw: &[u8]) -> EResult<String> {

@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: MIT
 
 use core::{
+    any::Any,
     cell::UnsafeCell,
     hint::unlikely,
     ops::Range,
@@ -23,7 +24,7 @@ use crate::{
     bindings::{
         device::BaseDevice,
         error::{EResult, Errno},
-        mutex::Mutex,
+        mutex::{Mutex, SharedMutexGuard},
     },
     filesystem::fifo::FifoShared,
 };
@@ -149,10 +150,12 @@ impl File for VfsFile {
     fn write(&self, wdata: &[u8]) -> EResult<usize> {
         if !self.allow_write {
             Err(Errno::EBADF)
+        } else if self.vnode.vfs.is_read_only() {
+            Err(Errno::EROFS)
         } else if self.is_append {
-            self.append_write(wdata)
+            self.vnode.vfs.check_eio(self.append_write(wdata))
         } else {
-            self.regular_write(wdata)
+            self.vnode.vfs.check_eio(self.regular_write(wdata))
         }
     }
 
@@ -186,15 +189,24 @@ impl File for VfsFile {
     }
 
     fn resize(&self, size: u64) -> EResult<()> {
+        if !self.allow_write {
+            return Err(Errno::EBADF);
+        } else if self.vnode.vfs.is_read_only() {
+            return Err(Errno::EROFS);
+        }
         let mut guard = self.vnode.mtx.lock();
-        guard.ops.resize(&self.vnode, size)?;
+        self.vnode
+            .vfs
+            .check_eio(guard.ops.resize(&self.vnode, size))?;
         self.offset
             .update(Ordering::Relaxed, Ordering::Relaxed, |f| f.min(size));
         Ok(())
     }
 
     fn sync(&self) -> EResult<()> {
-        self.vnode.mtx.lock_shared().ops.sync(&self.vnode)
+        self.vnode
+            .vfs
+            .check_eio(self.vnode.mtx.lock_shared().ops.sync(&self.vnode))
     }
 
     fn get_vnode(&self) -> Option<Arc<VNode>> {
@@ -236,6 +248,16 @@ pub struct VNode {
 }
 
 impl VNode {
+    /// Lock the ops mutex shared and convert to type `U`.
+    /// # Panics
+    /// - If the ops are not of type `U`
+    #[inline(always)]
+    pub(super) fn get_ops_as<'a, U: VNodeOps>(self: &'a VNode) -> SharedMutexGuard<'a, U> {
+        self.mtx
+            .lock_shared()
+            .convert(|x| (x.ops.as_ref() as &dyn Any).downcast_ref().unwrap())
+    }
+
     /// Get the filesystem mounted here, if any.
     pub fn get_mounted(&self) -> Option<Arc<Vfs>> {
         self.mtx
@@ -248,6 +270,7 @@ impl VNode {
             .mounted
             .clone()
     }
+
     /// Follow mounts here.
     pub fn follow_mounts(self: &Arc<Self>) -> Arc<Self> {
         let dentcache = self.mtx.lock_shared().dentcache.clone();
@@ -261,6 +284,7 @@ impl VNode {
             .open_vnode()
             .unwrap_or(self.clone())
     }
+
     /// Get the VFS that this is the root directory of, if any.
     pub fn is_vfs_root(&self) -> Option<Arc<Vfs>> {
         self.mtx
@@ -275,13 +299,13 @@ impl VNode {
 
 impl Drop for VNode {
     fn drop(&mut self) {
-        unsafe { self.mtx.lock().ops.close(self) };
+        self.mtx.lock().ops.close(self);
         self.vfs.vnodes.lock().remove(&self.ino);
     }
 }
 
 /// Abstract vnode operations.
-pub trait VNodeOps {
+pub trait VNodeOps: Any {
     /// Get the associated character device, if any.
     fn get_device(&self, _arc_self: &Arc<VNode>) -> Option<BaseDevice> {
         None
@@ -345,7 +369,7 @@ pub trait VNodeOps {
     fn sync(&self, arc_self: &Arc<VNode>) -> EResult<()>;
 
     /// Called in the [`Drop`] implementation of [`VNode`].
-    unsafe fn close(&mut self, _vnode_self: &VNode) {}
+    fn close(&mut self, _vnode_self: &VNode) {}
 }
 
 #[rustfmt::skip]
@@ -380,6 +404,20 @@ pub struct Vfs {
 unsafe impl Sync for Vfs {}
 
 impl Vfs {
+    pub fn is_read_only(&self) -> bool {
+        self.flags.load(Ordering::Relaxed) & mflags::READ_ONLY != 0
+    }
+
+    /// Lock the ops mutex shared and convert to type `U`.
+    /// # Panics
+    /// - If the ops are not of type `U`
+    #[inline(always)]
+    pub(super) fn get_ops_as<'a, U: VfsOps>(self: &'a Vfs) -> SharedMutexGuard<'a, U> {
+        self.ops
+            .lock_shared()
+            .convert(|x| (x.as_ref() as &dyn Any).downcast_ref().unwrap())
+    }
+
     /// Helper function to get [`Vfs::root`], which must already be initialized.
     pub(super) fn root(&self) -> Arc<VNode> {
         unsafe {
@@ -469,13 +507,24 @@ impl Vfs {
     }
 }
 
+impl Drop for Vfs {
+    fn drop(&mut self) {
+        self.ops.lock().umount(self);
+    }
+}
+
 /// Filesystem-wide operations for a [`Vfs`]; instance of a [`VfsDriver`].
-pub trait VfsOps: Sync {
+pub trait VfsOps: Sync + Any {
     /// Get the media that this VFS uses.
     fn media(&self) -> Option<&Media>;
     /// Whether this type of filesystem has inode numers.
     /// If disabled, inode numbers will be spoofed when a [`VNode`] is opened.
     fn uses_inodes(&self) -> bool;
+    /// Whether this filesystem must be mounted as read-only.
+    fn read_only(&self) -> bool {
+        false
+    }
+
     /// Open the root directory.
     fn open_root(&self, self_arc: &Arc<Vfs>) -> EResult<Box<dyn VNodeOps>>;
     /// Open a file or directory.
@@ -493,6 +542,17 @@ pub trait VfsOps: Sync {
         dest_name: &[u8],
         dest_mutexinner: &mut VNodeMtxInner,
     ) -> EResult<Dirent>;
+
+    /// Sync the cached changes that are not file- or inode-specific to disk.
+    fn sync(&self) -> EResult<()> {
+        Ok(())
+    }
+    /// Called in the [`Drop`] implementation of [`Vfs`].
+    fn umount(&mut self, _vfs_self: &Vfs) {
+        if let Err(x) = self.sync() {
+            logkf!(LogLevel::Error, "Failed to sync: {}", x);
+        }
+    }
 }
 
 /// A filesystem driver.

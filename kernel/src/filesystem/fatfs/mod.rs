@@ -18,6 +18,7 @@ use crate::{
         mutex::Mutex,
     },
     filesystem::{VNodeMtxInner, fatfs::spec::attr2, vfs::vnflags},
+    util::zeroes,
 };
 
 use super::NAME_MAX;
@@ -63,16 +64,11 @@ struct FatVNode {
     is_dir: bool,
 }
 
-/// Helper function that gets a reference to the FAT filesystem from a VNode.
-fn get_fatfs(vfs: &Vfs) -> &FatFS {
-    unsafe { &*(vfs.ops.data().as_ref() as *const dyn VfsOps as *const FatFS) }
-}
-
 impl FatVNode {
     /// Get the on-disk offset of some byte of the file.
     /// Primarily used for dirents.
     fn disk_offset_of(&self, arc_self: &Arc<VNode>, offset: u32) -> u64 {
-        let fatfs = get_fatfs(&arc_self.vfs);
+        let fatfs = arc_self.vfs.get_ops_as::<FatFs>();
         match &self.storage {
             FatFileStorage::Root16(x) => x + offset as u64,
             FatFileStorage::Clusters(chain) => {
@@ -91,7 +87,7 @@ impl FatVNode {
         mut offset: u32,
         lfn_out: &mut impl StringLike,
     ) -> EResult<bool> {
-        let fatfs = get_fatfs(&arc_self.vfs);
+        let fatfs = arc_self.vfs.get_ops_as::<FatFs>();
         if !fatfs.allow_lfn {
             return Ok(false);
         }
@@ -147,7 +143,7 @@ impl FatVNode {
         read_lfn: bool,
         dirent_func: &mut dyn FnMut(u32, &Dirent, &str, Option<&str>) -> EResult<bool>,
     ) -> EResult<()> {
-        let fatfs = get_fatfs(&arc_self.vfs);
+        let fatfs = arc_self.vfs.get_ops_as::<FatFs>();
         let mut lfn_buf = StaticString::<NAME_MAX>::new();
 
         // Iterate over raw directory entries, only calling `dirent_func` once for each valid dirent.
@@ -273,7 +269,7 @@ impl FatVNode {
     /// Find a range of free dirents or try to grow to fit.
     /// Returns the offset of the first dirent in the range.
     fn alloc_dirents(&mut self, arc_self: &Arc<VNode>, count: u32) -> EResult<u32> {
-        let fatfs = get_fatfs(&arc_self.vfs);
+        let fatfs = arc_self.vfs.get_ops_as::<FatFs>();
 
         // Look for an existing gap large enough.
         let cur_cap = self.len / 32;
@@ -342,15 +338,15 @@ impl FatVNode {
         first_cluster: Option<u32>,
         size: u32,
     ) -> EResult<u32> {
-        let fatfs = get_fatfs(&arc_self.vfs);
-        debug_assert!(name == FatFS::trim_name(name).unwrap());
+        let fatfs = arc_self.vfs.get_ops_as::<FatFs>();
+        debug_assert!(name == FatFs::trim_name(name).unwrap());
 
         // Convert UTF-8 to 16-bit unicode string.
         let mut lfn = [0u16; 255];
         let lfn = {
             let mut lfn_len = 0usize;
             for char in name.chars() {
-                if !FatFS::is_valid_long_char(char) {
+                if !FatFs::is_valid_long_char(char) {
                     return Err(Errno::EINVAL);
                 } else if lfn_len >= lfn.len() {
                     return Err(Errno::ENAMETOOLONG);
@@ -368,7 +364,7 @@ impl FatVNode {
         // Increment the number suffix on the short name while it already exists.
         while self.sfn_is_duplicate(arc_self, &sfn)? {
             use_lfn = true;
-            FatFS::increment_sfn_number(&mut sfn)?;
+            FatFs::increment_sfn_number(&mut sfn)?;
         }
 
         // Try to allocate dirents to store these.
@@ -455,7 +451,7 @@ impl FatVNode {
         name: &str,
         first_cluster: Option<u32>,
     ) -> EResult<(super::Dirent, Box<dyn VNodeOps>)> {
-        let fatfs = get_fatfs(&arc_self.vfs);
+        let fatfs = arc_self.vfs.get_ops_as::<FatFs>();
 
         // Format the current date.
         let now = Timespec::now();
@@ -549,7 +545,7 @@ impl FatVNode {
 
 impl VNodeOps for FatVNode {
     fn write(&self, arc_self: &Arc<VNode>, offset: u64, wdata: &[u8]) -> EResult<()> {
-        let fatfs = get_fatfs(&arc_self.vfs);
+        let fatfs = arc_self.vfs.get_ops_as::<FatFs>();
         if offset.checked_add(wdata.len() as u64).ok_or(Errno::EIO)? > self.len as u64 {
             return Err(Errno::EIO);
         }
@@ -560,7 +556,7 @@ impl VNodeOps for FatVNode {
     }
 
     fn read(&self, arc_self: &Arc<VNode>, offset: u64, rdata: &mut [u8]) -> EResult<()> {
-        let fatfs = get_fatfs(&arc_self.vfs);
+        let fatfs = arc_self.vfs.get_ops_as::<FatFs>();
         if offset.checked_add(rdata.len() as u64).ok_or(Errno::EIO)? > self.len as u64 {
             return Err(Errno::EIO);
         }
@@ -571,8 +567,9 @@ impl VNodeOps for FatVNode {
     }
 
     fn resize(&mut self, arc_self: &Arc<VNode>, new_size: u64) -> EResult<()> {
+        let old_size = self.len;
         let new_size = TryInto::<u32>::try_into(new_size).map_err(|_| Errno::ENOSPC)?;
-        let fatfs = get_fatfs(&arc_self.vfs);
+        let fatfs = arc_self.vfs.get_ops_as::<FatFs>();
         let mut new_clusters =
             ((new_size + (1 << fatfs.cluster_size_exp) - 1) >> fatfs.cluster_size_exp) as u32;
         let dirent_disk_offset = self.dirent_disk_off.lock_shared();
@@ -637,6 +634,7 @@ impl VNodeOps for FatVNode {
                 }
             }
         }
+
         self.len = new_size;
         if let Some(dirent_disk_offset) = *dirent_disk_offset
             && arc_self.type_ == NodeType::Regular
@@ -646,21 +644,32 @@ impl VNodeOps for FatVNode {
             fatfs.media.write(dirent_disk_offset + 0x1c, &len)?;
         }
 
+        // Erase new bytes.
+        if new_size > old_size {
+            let zeroes = zeroes();
+            let mut offset = old_size;
+            while offset < new_size {
+                let len = zeroes.len().min((new_size - offset) as usize);
+                self.write(arc_self, offset as u64, &zeroes[..len])?;
+                offset += len as u32;
+            }
+        }
+
         Ok(())
     }
 
     fn find_dirent(&self, arc_self: &Arc<VNode>, name: &[u8]) -> EResult<super::Dirent> {
-        let name = FatFS::trim_name_bytes(name);
+        let name = FatFs::trim_name_bytes(name);
         let mut res = Err(Errno::ENOENT);
         let res_ptr = &mut res;
         self.iter_dirents(arc_self, true, &mut |off, dent, sfn, lfn| {
             let disk_off = self.disk_offset_of(arc_self, off);
             if let Some(lfn) = lfn
-                && FatFS::name_equals(lfn.as_bytes(), name)
+                && FatFs::name_equals(lfn.as_bytes(), name)
             {
                 *res_ptr = Ok(Self::convert_dirent(disk_off, off, dent, lfn.as_bytes())?);
                 Ok(false)
-            } else if FatFS::name_equals(sfn.as_bytes(), name) {
+            } else if FatFs::name_equals(sfn.as_bytes(), name) {
                 *res_ptr = Ok(Self::convert_dirent(disk_off, off, dent, sfn.as_bytes())?);
                 Ok(false)
             } else {
@@ -693,7 +702,7 @@ impl VNodeOps for FatVNode {
         is_rmdir: bool,
         unlinked_vnode: Option<Arc<VNode>>,
     ) -> EResult<()> {
-        let fatfs = get_fatfs(&arc_self.vfs);
+        let fatfs = arc_self.vfs.get_ops_as::<FatFs>();
         let ent = self.find_dirent(arc_self, name)?;
 
         // Get the FAT dirent.
@@ -721,7 +730,7 @@ impl VNodeOps for FatVNode {
             let chain = chain.as_mut().unwrap();
             for i in 0..chain.len() * cluster_size / 32 {
                 let mut name = [0u8; 11];
-                chain.read(fatfs, i as u64 * 32, &mut name)?;
+                chain.read(&fatfs, i as u64 * 32, &mut name)?;
                 if name[0] == 0 {
                     break;
                 } else if name[0] != 0xe5 && name != *b".          " && name != *b"..         " {
@@ -774,9 +783,9 @@ impl VNodeOps for FatVNode {
         name: &[u8],
         spec: MakeFileSpec,
     ) -> EResult<(super::Dirent, Box<dyn VNodeOps>)> {
-        let name = FatFS::trim_name(str::from_utf8(name).map_err(|_| Errno::EINVAL)?)
+        let name = FatFs::trim_name(str::from_utf8(name).map_err(|_| Errno::EINVAL)?)
             .ok_or(Errno::ENOENT)?;
-        let fatfs = get_fatfs(&arc_self.vfs);
+        let fatfs = arc_self.vfs.get_ops_as::<FatFs>();
 
         let first_cluster = match spec {
             MakeFileSpec::Directory => Some({
@@ -810,13 +819,13 @@ impl VNodeOps for FatVNode {
         old_name: &[u8],
         new_name: &[u8],
     ) -> EResult<super::Dirent> {
-        let new_name = FatFS::trim_name(str::from_utf8(new_name).map_err(|_| Errno::EINVAL)?)
+        let new_name = FatFs::trim_name(str::from_utf8(new_name).map_err(|_| Errno::EINVAL)?)
             .ok_or(Errno::ENOENT)?;
 
         // Find the old dirent.
         let mut old_dent = None;
         self.iter_dirents(arc_self, true, &mut |off, dent, sfn, lfn| {
-            if FatFS::name_equals(old_name, lfn.unwrap_or(sfn).as_bytes()) {
+            if FatFs::name_equals(old_name, lfn.unwrap_or(sfn).as_bytes()) {
                 old_dent = Some((off, *dent));
                 Ok(false)
             } else {
@@ -858,7 +867,7 @@ impl VNodeOps for FatVNode {
     }
 
     fn stat(&self, arc_self: &Arc<VNode>) -> EResult<Stat> {
-        let fatfs = get_fatfs(&arc_self.vfs);
+        let fatfs = arc_self.vfs.get_ops_as::<FatFs>();
         let guard = self.dirent_disk_off.lock_shared();
         let epoch = Utc.timestamp_nanos(0);
 
@@ -962,20 +971,20 @@ impl VNodeOps for FatVNode {
     }
 
     fn sync(&self, arc_self: &Arc<VNode>) -> EResult<()> {
-        let fatfs = get_fatfs(&arc_self.vfs);
+        let fatfs = arc_self.vfs.get_ops_as::<FatFs>();
         match &self.storage {
             FatFileStorage::Root16(x) => fatfs.media.sync(*x, self.len as u64),
-            FatFileStorage::Clusters(chain) => chain.sync(fatfs),
+            FatFileStorage::Clusters(chain) => chain.sync(&fatfs),
         }
     }
 
-    unsafe fn close(&mut self, vnode_self: &VNode) {
+    fn close(&mut self, vnode_self: &VNode) {
         if let FatFileStorage::Clusters(chain) = &self.storage
             && self.dirent_disk_off.lock_shared().is_none()
             && vnode_self.is_vfs_root().is_none()
         {
             // If this VNode was unlinked, mark the clusters as free now.
-            let fatfs = get_fatfs(&vnode_self.vfs);
+            let fatfs = vnode_self.vfs.get_ops_as::<FatFs>();
             fatfs.cluster_alloc.free_chain(chain);
         }
     }
@@ -995,7 +1004,7 @@ enum FatValue {
 }
 
 /// A mounted FAT filesystem.
-struct FatFS {
+struct FatFs {
     /// The media this filesystem is mounted on.
     media: Media,
     /// The type of FAT filesystem (FAT12, FAT16, or FAT32).
@@ -1032,7 +1041,7 @@ struct FatFS {
     fat12_mutex: Mutex<()>,
 }
 
-impl Debug for FatFS {
+impl Debug for FatFs {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("FatFS")
             .field("media", &self.media)
@@ -1056,7 +1065,7 @@ impl Debug for FatFS {
     }
 }
 
-impl FatFS {
+impl FatFs {
     /// Whether a character is valid in a short name entry.
     /// Rejects lower-case characters; they are stored upper-case on disk.
     /// TODO: Subject to get support for non-ASCII encodings, which would allow more values.
@@ -1315,7 +1324,7 @@ impl FatFS {
     }
 
     /// Write the FAT next pointer for a cluster.
-    fn fat_set_impl(self: &FatFS, fat_offset: u64, cluster: u32, value: u32) -> EResult<()> {
+    fn fat_set_impl(self: &FatFs, fat_offset: u64, cluster: u32, value: u32) -> EResult<()> {
         match self.fat_type {
             FatType::Fat12 => {
                 let mut bytes = [0u8; 2];
@@ -1486,7 +1495,7 @@ impl FatFS {
     }
 }
 
-impl VfsOps for FatFS {
+impl VfsOps for FatFs {
     fn media(&self) -> Option<&Media> {
         Some(&self.media)
     }
@@ -1558,7 +1567,7 @@ impl VfsOps for FatFS {
         new_name: &[u8],
         new_mutexinner: &mut VNodeMtxInner,
     ) -> EResult<super::Dirent> {
-        let new_name = FatFS::trim_name(str::from_utf8(new_name).map_err(|_| Errno::EINVAL)?)
+        let new_name = FatFs::trim_name(str::from_utf8(new_name).map_err(|_| Errno::EINVAL)?)
             .ok_or(Errno::ENOENT)?;
 
         let old_ops =
@@ -1569,7 +1578,7 @@ impl VfsOps for FatFS {
         // Find the old dirent.
         let mut old_dent = None;
         old_ops.iter_dirents(old_dir, true, &mut |off, dent, sfn, lfn| {
-            if FatFS::name_equals(old_name, lfn.unwrap_or(sfn).as_bytes()) {
+            if FatFs::name_equals(old_name, lfn.unwrap_or(sfn).as_bytes()) {
                 old_dent = Some((off, *dent));
                 Ok(false)
             } else {
@@ -1608,12 +1617,12 @@ impl VfsOps for FatFS {
 }
 
 /// The FAT filesystem driver.
-struct FatFSDriver {
+struct FatFsDriver {
     /// Whether the long filename extension is enabled.
     allow_lfn: bool,
 }
 
-impl VfsDriver for FatFSDriver {
+impl VfsDriver for FatFsDriver {
     fn detect(&self, media: &Media) -> EResult<bool> {
         // Read the BPB.
         let mut bpb = [0u8; size_of::<Bpb>()];
@@ -1709,7 +1718,7 @@ impl VfsDriver for FatFSDriver {
         let root_dir_cluster = header32.first_root_cluster.wrapping_sub(2);
 
         // Prepare filesystem.
-        let fs = FatFS {
+        let fs = FatFs {
             media,
             fat_type,
             allow_lfn: self.allow_lfn,
@@ -1743,10 +1752,10 @@ impl VfsDriver for FatFSDriver {
 fn register_fatfs() {
     FSDRIVERS
         .lock()
-        .insert("vfat".into(), Box::new(FatFSDriver { allow_lfn: true }));
+        .insert("vfat".into(), Box::new(FatFsDriver { allow_lfn: true }));
     FSDRIVERS
         .lock()
-        .insert("msdos".into(), Box::new(FatFSDriver { allow_lfn: false }));
+        .insert("msdos".into(), Box::new(FatFsDriver { allow_lfn: false }));
 }
 
 register_kmodule!(fatfs, [1, 0, 0], register_fatfs);

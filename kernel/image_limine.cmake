@@ -10,7 +10,7 @@ if("${CONFIG_CPU}" STREQUAL "x86_64")
     list(APPEND limine_boot ${CMAKE_CURRENT_LIST_DIR}/lib/limine/limine-bios.sys)
 endif()
 
-# Custom target that collects the files for the boot partition.
+# Custom target that collects the files for the boot filesystem.
 set(boot_dir ${CMAKE_BINARY_DIR}/boot.dir)
 set(boot_fatfs ${CMAKE_BINARY_DIR}/boot.fatfs)
 add_custom_command(
@@ -22,7 +22,6 @@ add_custom_command(
     COMMAND mkdir -p ${boot_dir}/boot
     COMMAND cp ${limine_efi} ${boot_dir}/EFI/BOOT/
     COMMAND cp ${limine_boot} ${boot_dir}/boot/
-    COMMAND rsync -r ${CMAKE_CURRENT_LIST_DIR}/testdata/ ${boot_dir}
     COMMAND cp ${CMAKE_BINARY_DIR}/badger-os.stripped.elf ${boot_dir}/boot/badger-os.elf
     
     # Making a FAT filesystem image from it.
@@ -32,6 +31,17 @@ add_custom_command(
     COMMAND mcopy -s -i ${boot_fatfs} `find ${boot_dir}/ -mindepth 1 -maxdepth 1` ::/
     
     DEPENDS badger-os.stripped.elf ${limine_efi} ${limine_boot}
+)
+
+# Custom target that collects the files for the root filesystem.
+set(root_dir ${CMAKE_CURRENT_LIST_DIR}/../files/root)
+set(root_e2fs ${CMAKE_BINARY_DIR}/root.e2fs)
+add_custom_command(
+    OUTPUT ${root_e2fs}
+    
+    COMMAND rm -f ${root_e2fs}
+    COMMAND dd if=/dev/zero bs=1M count=58 of=${root_e2fs}
+    COMMAND fakeroot mkfs.ext2 -i 16384 -d ${root_dir} ${root_e2fs}
 )
 
 # Custom target for building the image.
@@ -56,10 +66,11 @@ if(CONFIG_EMBED_UBOOT)
                 --new=3:4096:12287 --change-name=3:boot  --typecode=3:0x0700
                 --new=4:12288:-0   --change-name=4:root  --typecode=4:0x8300
                 ${image_iso}
-        COMMAND dd if=${CMAKE_CURRENT_LIST_DIR}/lib/u-boot/spl/u-boot-spl.bin bs=512 seek=34   of=${image_iso} conv=notrunc
-        COMMAND dd if=${CMAKE_CURRENT_LIST_DIR}/lib/u-boot/u-boot.itb         bs=512 seek=2082 of=${image_iso} conv=notrunc
-        COMMAND dd if=${boot_fatfs}                                           bs=512 seek=4096 of=${image_iso} conv=notrunc
-        DEPENDS ${boot_fatfs} uboot.target
+        COMMAND dd if=${CMAKE_CURRENT_LIST_DIR}/lib/u-boot/spl/u-boot-spl.bin bs=512 seek=34    of=${image_iso} conv=notrunc
+        COMMAND dd if=${CMAKE_CURRENT_LIST_DIR}/lib/u-boot/u-boot.itb         bs=512 seek=2082  of=${image_iso} conv=notrunc
+        COMMAND dd if=${boot_fatfs}                                           bs=512 seek=4096  of=${image_iso} conv=notrunc
+        COMMAND dd if=${root_e2fs}                                            bs=512 seek=12288 of=${image_iso} conv=notrunc
+        DEPENDS ${boot_fatfs} ${root_e2fs} uboot.target
     )
 elseif("${CONFIG_CPU}" STREQUAL "x86_64")
     # Variant with Limine-BIOS embedded.
@@ -72,10 +83,11 @@ elseif("${CONFIG_CPU}" STREQUAL "x86_64")
                 --new=3:34:8225 --change-name=3:boot --typecode=3:0x0700
                 --new=4:8226:-0 --change-name=4:root --typecode=4:0x8300
                 ${image_iso}
-        COMMAND dd if=${boot_fatfs} bs=512 seek=34 of=${image_iso} conv=notrunc
+        COMMAND dd if=${boot_fatfs} bs=512 seek=34   of=${image_iso} conv=notrunc
+        COMMAND dd if=${root_e2fs}  bs=512 seek=8226 of=${image_iso} conv=notrunc
         COMMAND make -C ${CMAKE_CURRENT_LIST_DIR}/lib/limine
         COMMAND ${CMAKE_CURRENT_LIST_DIR}/lib/limine/limine bios-install ${image_iso}
-        DEPENDS ${boot_fatfs}
+        DEPENDS ${boot_fatfs} ${root_e2fs}
     )
 else()
     # Variant without U-boot nor Limine-BIOS embedded.
@@ -89,7 +101,8 @@ else()
                 --new=4:8226:-0 --change-name=4:root --typecode=4:0x8300
                 ${image_iso}
         COMMAND dd if=${boot_fatfs} bs=512 seek=34 of=${image_iso} conv=notrunc
-        DEPENDS ${boot_fatfs}
+        COMMAND dd if=${root_e2fs}  bs=512 seek=8226 of=${image_iso} conv=notrunc
+        DEPENDS ${boot_fatfs} ${root_e2fs}
     )
 endif()
 add_custom_target(image.iso.target ALL DEPENDS ${image_iso})

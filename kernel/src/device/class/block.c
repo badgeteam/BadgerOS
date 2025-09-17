@@ -99,7 +99,7 @@ errno_t device_block_erase_blocks(device_block_t *device, uint64_t start, uint64
         return -EINVAL;
     }
 
-    logk(LOG_DEBUG, "TODO: device_block_erase_blocks");
+    logk(LOG_WARN, "TODO: device_block_erase_blocks");
 
     return 0;
 }
@@ -187,9 +187,10 @@ static errno_t iterate_block_ranges(
                 });
 
                 // Successfully read everything, now update the entry in the cache to this newly read one.
+                rtree_set(&device->cache, block, mark_dirty ? BLK_TAG_DIRTY(value) : value);
+                assert_dev_drop(rtree_get(&device->cache, block) == (mark_dirty ? BLK_TAG_DIRTY(value) : value));
                 irq_disable();
                 rcu_crit_enter();
-                rtree_set(&device->cache, block, mark_dirty ? BLK_TAG_DIRTY(value) : value);
                 break;
             }
         }

@@ -34,7 +34,7 @@ use super::{
 };
 
 /// A filesystem that is entirely resident in RAM.
-pub struct RamFS {
+pub struct RamFs {
     /// Inodes table.
     inodes: Mutex<BTreeMap<u64, Arc<UnsafeCell<RamINode>>>>,
     /// Inode number counter.
@@ -42,18 +42,18 @@ pub struct RamFS {
     /// Allows for device files.
     allow_devfiles: bool,
 }
-unsafe impl Sync for RamFS {}
+unsafe impl Sync for RamFs {}
 
-impl RamFS {
-    pub fn new(allow_devfiles: bool) -> EResult<Arc<Self>> {
-        let fs = Box::try_new(RamFS {
+impl RamFs {
+    pub fn new(allow_devfiles: bool) -> EResult<Self> {
+        let fs = RamFs {
             allow_devfiles,
             inodes: Mutex::new(BTreeMap::new()),
             ino_ctr: AtomicU64::new(2),
-        })?;
+        };
         let now = Timespec::now();
         let root = Arc::try_new(UnsafeCell::new(RamINode {
-            data: RamFSData::Directory(BTreeMap::new()),
+            data: RamFsData::Directory(BTreeMap::new()),
             size: AtomicUsize::new(0),
             links: Spinlock::new(0),
             ino: 1,
@@ -62,24 +62,21 @@ impl RamFS {
             ctim: AtomicTimespec::new(now),
         }))?;
         fs.inodes.lock().insert(1, root);
-        Ok(fs.into())
+        Ok(fs)
     }
 
-    fn open_impl(self: &Arc<Self>, ino: u64) -> EResult<Box<dyn VNodeOps>> {
+    fn open_impl(&self, ino: u64) -> EResult<Box<dyn VNodeOps>> {
         let inode = self
             .inodes
             .lock_shared()
             .get(&ino)
             .ok_or(Errno::EIO)?
             .clone();
-        Ok(Box::<dyn VNodeOps>::from(Box::try_new(RamVNode {
-            vfs: self.clone(),
-            inode,
-        })?))
+        Ok(Box::<dyn VNodeOps>::from(Box::try_new(RamVNode { inode })?))
     }
 }
 
-impl VfsOps for Arc<RamFS> {
+impl VfsOps for RamFs {
     fn media(&self) -> Option<&Media> {
         None
     }
@@ -143,7 +140,7 @@ impl VfsOps for Arc<RamFS> {
 }
 
 /// Data stored in a [`RamINode`].
-enum RamFSData {
+enum RamFsData {
     /// Named pipe.
     Fifo,
     /// Character device.
@@ -160,7 +157,7 @@ enum RamFSData {
     UnixSocket,
 }
 
-impl RamFSData {
+impl RamFsData {
     /// Get as directory.
     fn as_directory(&self) -> Option<&BTreeMap<Box<[u8]>, Dirent>> {
         match self {
@@ -200,13 +197,13 @@ impl RamFSData {
     /// Get the matching [`NodeType`].
     fn node_type(&self) -> NodeType {
         match self {
-            RamFSData::Fifo => NodeType::Fifo,
-            RamFSData::CharDev(_) => NodeType::CharDev,
-            RamFSData::Directory(_) => NodeType::Directory,
-            RamFSData::BlockDev(_) => NodeType::BlockDev,
-            RamFSData::Regular(_) => NodeType::Regular,
-            RamFSData::Symlink(_) => NodeType::Symlink,
-            RamFSData::UnixSocket => NodeType::UnixSocket,
+            RamFsData::Fifo => NodeType::Fifo,
+            RamFsData::CharDev(_) => NodeType::CharDev,
+            RamFsData::Directory(_) => NodeType::Directory,
+            RamFsData::BlockDev(_) => NodeType::BlockDev,
+            RamFsData::Regular(_) => NodeType::Regular,
+            RamFsData::Symlink(_) => NodeType::Symlink,
+            RamFsData::UnixSocket => NodeType::UnixSocket,
         }
     }
 }
@@ -214,7 +211,7 @@ impl RamFSData {
 /// A [`RamFS`] inode.
 struct RamINode {
     /// The data stored in this inode.
-    data: RamFSData,
+    data: RamFsData,
     /// Number of bytes in use excluding data structure overhead.
     size: AtomicUsize,
     /// Number of hard links to this inode.
@@ -231,7 +228,6 @@ struct RamINode {
 
 /// VNode wrapper for a [`RamINode`].
 struct RamVNode {
-    vfs: Arc<RamFS>,
     inode: Arc<UnsafeCell<RamINode>>,
 }
 
@@ -239,15 +235,15 @@ impl VNodeOps for RamVNode {
     fn get_device(&self, _arc_self: &Arc<VNode>) -> Option<BaseDevice> {
         let inode = unsafe { self.inode.as_ref_unchecked() };
         match &inode.data {
-            RamFSData::CharDev(dev) => Some(dev.as_base().clone()),
-            RamFSData::BlockDev(dev) => Some(dev.0.as_base().clone()),
+            RamFsData::CharDev(dev) => Some(dev.as_base().clone()),
+            RamFsData::BlockDev(dev) => Some(dev.0.as_base().clone()),
             _ => None,
         }
     }
 
     fn get_part_offset(&self, _arc_self: &Arc<VNode>) -> Option<Range<u64>> {
         let inode = unsafe { self.inode.as_ref_unchecked() };
-        if let RamFSData::BlockDev(dev) = &inode.data {
+        if let RamFsData::BlockDev(dev) = &inode.data {
             dev.1.clone()
         } else {
             None
@@ -307,25 +303,20 @@ impl VNodeOps for RamVNode {
 
     fn unlink(
         &mut self,
-        _arc_self: &Arc<VNode>,
+        arc_self: &Arc<VNode>,
         name: &[u8],
         is_rmdir: bool,
         _unlinked_vnode: Option<Arc<VNode>>,
     ) -> EResult<()> {
+        let ramfs = arc_self.vfs.get_ops_as::<RamFs>();
         let inode = unsafe { self.inode.as_mut_unchecked() };
         let directory = inode.data.as_directory_mut().ok_or(Errno::EINVAL)?;
 
         let dirent = directory.remove(name).ok_or(Errno::ENOENT)?;
-        let ino = self
-            .vfs
-            .inodes
-            .lock_shared()
-            .get(&dirent.ino)
-            .unwrap()
-            .clone();
+        let ino = ramfs.inodes.lock_shared().get(&dirent.ino).unwrap().clone();
         let ino = unsafe { ino.as_ref_unchecked() };
 
-        if let RamFSData::Directory(data) = &ino.data {
+        if let RamFsData::Directory(data) = &ino.data {
             if !is_rmdir {
                 return Err(Errno::EISDIR);
             } else if data.len() != 0 {
@@ -345,13 +336,14 @@ impl VNodeOps for RamVNode {
 
         if prev_links == 1 {
             // Last link removed.
-            self.vfs.inodes.lock().remove(&dirent.ino).unwrap();
+            ramfs.inodes.lock().remove(&dirent.ino).unwrap();
         }
 
         Ok(())
     }
 
-    fn link(&mut self, _arc_self: &Arc<VNode>, name: &[u8], inode: &VNode) -> EResult<()> {
+    fn link(&mut self, arc_self: &Arc<VNode>, name: &[u8], inode: &VNode) -> EResult<()> {
+        let ramfs = arc_self.vfs.get_ops_as::<RamFs>();
         let dir_inode = unsafe { self.inode.as_mut_unchecked() };
         let directory = dir_inode.data.as_directory_mut().ok_or(Errno::EINVAL)?;
 
@@ -359,8 +351,7 @@ impl VNodeOps for RamVNode {
             return Err(Errno::EEXIST);
         }
 
-        let ram_inode = self
-            .vfs
+        let ram_inode = ramfs
             .inodes
             .lock_shared()
             .get(&inode.ino)
@@ -398,10 +389,12 @@ impl VNodeOps for RamVNode {
 
     fn make_file(
         &mut self,
-        _arc_self: &Arc<VNode>,
+        arc_self: &Arc<VNode>,
         name: &[u8],
         spec: MakeFileSpec,
     ) -> EResult<(Dirent, Box<dyn VNodeOps>)> {
+        let ramfs = arc_self.vfs.get_ops_as::<RamFs>();
+
         let inode = unsafe { self.inode.as_mut_unchecked() };
         let directory = inode.data.as_directory_mut().ok_or(Errno::EINVAL)?;
 
@@ -409,7 +402,7 @@ impl VNodeOps for RamVNode {
             return Err(Errno::EEXIST);
         }
 
-        if !self.vfs.allow_devfiles {
+        if !ramfs.allow_devfiles {
             match &spec {
                 MakeFileSpec::CharDev(_) => return Err(Errno::EINVAL),
                 MakeFileSpec::BlockDev(_) => return Err(Errno::EINVAL),
@@ -418,16 +411,16 @@ impl VNodeOps for RamVNode {
         }
 
         let data = match spec {
-            MakeFileSpec::Fifo => RamFSData::Fifo,
-            MakeFileSpec::CharDev(dev) => RamFSData::CharDev(dev),
-            MakeFileSpec::Directory => RamFSData::Directory(BTreeMap::new()),
-            MakeFileSpec::BlockDev(dev) => RamFSData::BlockDev(dev),
-            MakeFileSpec::Regular => RamFSData::Regular(Vec::new()),
-            MakeFileSpec::Symlink(items) => RamFSData::Symlink(items.into()),
-            MakeFileSpec::UnixSocket => RamFSData::UnixSocket,
+            MakeFileSpec::Fifo => RamFsData::Fifo,
+            MakeFileSpec::CharDev(dev) => RamFsData::CharDev(dev),
+            MakeFileSpec::Directory => RamFsData::Directory(BTreeMap::new()),
+            MakeFileSpec::BlockDev(dev) => RamFsData::BlockDev(dev),
+            MakeFileSpec::Regular => RamFsData::Regular(Vec::new()),
+            MakeFileSpec::Symlink(items) => RamFsData::Symlink(items.into()),
+            MakeFileSpec::UnixSocket => RamFsData::UnixSocket,
         };
         let now = Timespec::now();
-        let ino = self.vfs.ino_ctr.fetch_add(1, Ordering::Relaxed);
+        let ino = ramfs.ino_ctr.fetch_add(1, Ordering::Relaxed);
         let new_inode = Arc::try_new(UnsafeCell::new(RamINode {
             data,
             ino,
@@ -439,11 +432,10 @@ impl VNodeOps for RamVNode {
         }))?;
 
         let ops = Box::try_new(RamVNode {
-            vfs: self.vfs.clone(),
             inode: new_inode.clone(),
         })?;
 
-        self.vfs.inodes.lock().insert(ino, new_inode.clone());
+        ramfs.inodes.lock().insert(ino, new_inode.clone());
 
         let dirent = Dirent {
             ino,
@@ -541,11 +533,11 @@ impl VNodeOps for RamVNode {
 }
 
 /// The driver struct for [`RamFS`].
-struct RamFSDriver {
+struct RamFsDriver {
     allows_devfiles: bool,
 }
 
-impl VfsDriver for RamFSDriver {
+impl VfsDriver for RamFsDriver {
     fn detect(&self, _media: &Media) -> EResult<bool> {
         Ok(false)
     }
@@ -562,7 +554,7 @@ impl VfsDriver for RamFSDriver {
             logkf!(LogLevel::Error, "RamFS does not use media");
             return Err(Errno::EINVAL);
         }
-        Ok(Box::<dyn VfsOps>::from(Box::try_new(RamFS::new(
+        Ok(Box::<dyn VfsOps>::from(Box::try_new(RamFs::new(
             self.allows_devfiles,
         )?)?))
     }
@@ -571,13 +563,13 @@ impl VfsDriver for RamFSDriver {
 fn register_ramfs() {
     FSDRIVERS.lock().insert(
         "ramfs".into(),
-        Box::new(RamFSDriver {
+        Box::new(RamFsDriver {
             allows_devfiles: false,
         }),
     );
     FSDRIVERS.lock().insert(
         "devtmpfs".into(),
-        Box::new(RamFSDriver {
+        Box::new(RamFsDriver {
             allows_devfiles: true,
         }),
     );

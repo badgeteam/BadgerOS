@@ -12,6 +12,7 @@ use crate::{
             limine_uuid, mem_equals, strlen,
         },
     },
+    filesystem::{MakeFileSpec, link, make_file, oflags, open, rename, unlink},
     kparam, util,
 };
 

@@ -5,6 +5,7 @@
 
 #include "radixtree.h"
 
+#include "assertions.h"
 #include "cpu/interrupt.h"
 #include "errno.h"
 #include "malloc.h"
@@ -30,7 +31,7 @@ void *rtree_get(rtree_t *tree, uint64_t key) {
     bool ie = irq_disable();
     rcu_crit_enter();
     rtree_node_t *cur = atomic_load_explicit(&tree->root, memory_order_acquire);
-    if (!cur || (cur->height < 64 && (key >> cur->height) >= RTREE_BITS_PER_NODE)) {
+    if (!cur || (cur->height < 64 && (key >> cur->height) >= RTREE_ENTS_PER_NODE)) {
         // No content or the key is not covered by the root node.
         rcu_crit_exit();
         irq_enable_if(ie);
@@ -55,6 +56,7 @@ void *rtree_get(rtree_t *tree, uint64_t key) {
 
 // Garbage-collect nodes along the path to `key`.
 static void rtree_gc_key(rtree_t *tree, uint64_t key) {
+    return;
     size_t        to_free_len = 0;
     rtree_node_t *to_free[63 / RTREE_BITS_PER_NODE + 1];
     bool          ie = irq_disable();
@@ -115,17 +117,17 @@ static void rtree_gc_key(rtree_t *tree, uint64_t key) {
 // Create a new span of the radix tree from `max_height` downto 0, along the path for `key`.
 // If successful, `value` will be stored at `key` in this subtree.
 static rtree_node_t *rtree_create_subtree(uint64_t key, void *value, uint8_t max_height) {
+    assert_dev_drop(max_height % RTREE_BITS_PER_NODE == 0);
     rtree_node_t *node = calloc(1, sizeof(rtree_node_t));
     if (!node) {
-        // Allocation failed, return NULL.
         return NULL;
     }
     node->height = max_height;
     if (max_height == 0) {
         // Leaf node: store value.
-        size_t index = (key >> 0) % RTREE_ENTS_PER_NODE;
+        size_t index = key % RTREE_ENTS_PER_NODE;
         atomic_store_explicit(&node->data[index], value, memory_order_release);
-        node->occupancy = (value != NULL) ? 1 : 0;
+        node->occupancy = value != NULL;
     } else {
         // Internal node: create child subtree.
         size_t        index   = (key >> max_height) % RTREE_ENTS_PER_NODE;
@@ -225,6 +227,12 @@ static errno_ptr_t rtree_xchg(rtree_t *tree, uint64_t key, void *old_value, void
                     cur_lock = next_lock;
 
                 } else {
+                    if (old_value != NULL && is_cmpxchg) {
+                        res.errno = 0;
+                        res.ptr   = NULL;
+                        break;
+                    }
+
                     // Create new leaf node.
                     next                 = rtree_create_subtree(key, new_value, cur->height - RTREE_BITS_PER_NODE);
                     next->parent         = cur;
@@ -386,8 +394,11 @@ rtree_iter_t rtree_first(rtree_t *tree, uint64_t min_key) {
 // Get the next entry in the radix tree.
 rtree_iter_t rtree_next(rtree_t *tree, rtree_iter_t cur) {
     rcu_crit_assert();
-    if (cur.key % RTREE_ENTS_PER_NODE == RTREE_ENTS_PER_NODE - 1) {
+    while ((cur.key >> cur.node->height) % RTREE_ENTS_PER_NODE == RTREE_ENTS_PER_NODE - 1) {
         cur.node = cur.node->parent;
+        if (!cur.node) {
+            return (rtree_iter_t){NULL, 0, NULL};
+        }
     }
     cur.key++;
     return rtree_iter_impl(tree, cur);

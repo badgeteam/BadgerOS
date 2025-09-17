@@ -29,7 +29,15 @@ typedef struct mpu_ctx mpu_ctx_t;
 
 
 
+// At least one naturally-aligned page of zeroes.
+extern uint8_t const *memprotect_zeroes;
+// At least one naturally-aligned page of zeroes.
+extern size_t         memprotect_zeroes_len;
+
 #if !CONFIG_NOMMU
+
+// At least one naturally-aligned page of zeroes.
+extern size_t memprotect_zeroes_paddr;
 
 // HHDM length in pages.
 extern size_t memprotect_hhdm_pages;
@@ -71,6 +79,7 @@ virt2phys_t memprotect_virt2phys(mpu_ctx_t *ctx, size_t vaddr);
 size_t      memprotect_alloc_vaddr(size_t len);
 // Free a virtual address range allocated with `memprotect_alloc_vaddr`.
 void        memprotect_free_vaddr(size_t vaddr);
+
 #endif
 
 // Initialise memory protection driver.

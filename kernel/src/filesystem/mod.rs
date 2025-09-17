@@ -40,6 +40,7 @@ use crate::{
 
 pub mod c_api;
 pub mod device;
+pub mod ext2;
 pub mod fatfs;
 pub mod fifo;
 pub mod media;
@@ -731,6 +732,8 @@ pub fn open(at: Option<&dyn File>, path: &[u8], mut oflags: OFlags) -> EResult<A
         DentCacheType::Negative => {
             if oflags & oflags::CREATE == 0 {
                 return Err(Errno::ENOENT);
+            } else if cache.vfs.is_read_only() {
+                return Err(Errno::EROFS);
             }
             o_creat_helper(cache.clone(), oflags & oflags::EXCLUSIVE != 0)?
         }
@@ -777,9 +780,17 @@ pub fn open(at: Option<&dyn File>, path: &[u8], mut oflags: OFlags) -> EResult<A
             ))?)
             .into())
         }
-        NodeType::UnixSocket => todo!("UNIX domain socket file ops"),
+        NodeType::UnixSocket => {
+            logkf!(LogLevel::Warning, "TODO: UNIX domain socket file ops");
+            return Err(Errno::ENOSYS);
+        }
         _ => {
             // Regular file ops.
+            if vnode.vfs.flags.load(Ordering::Relaxed) & mflags::READ_ONLY != 0
+                && oflags & oflags::WRITE_ONLY != 0
+            {
+                return Err(Errno::EROFS);
+            }
             Ok(Box::<dyn File>::from(Box::try_new(VfsFile {
                 vnode,
                 offset: AtomicU64::new(0),
@@ -831,6 +842,11 @@ pub fn link(
     // Get parent dirent caches.
     let old_dir_cache = old.parent.clone().ok_or(Errno::EISDIR)?;
     let new_dir_cache = old.parent.clone().ok_or(Errno::EISDIR)?;
+    if !Arc::ptr_eq(&old_dir_cache.vfs, &new_dir_cache.vfs) {
+        return Err(Errno::EXDEV);
+    } else if new_dir_cache.vfs.is_read_only() {
+        return Err(Errno::EROFS);
+    }
 
     let old_guard = old_dir_cache.type_.as_dir().unwrap().lock();
     let new_guard = (!Arc::ptr_eq(&old_dir_cache, &new_dir_cache))
@@ -879,6 +895,9 @@ pub fn unlink(at: Option<&dyn File>, path: &[u8], is_rmdir: bool) -> EResult<()>
             Errno::EISDIR
         },
     )?;
+    if dir_cache.vfs.is_read_only() {
+        return Err(Errno::EROFS);
+    }
     let mut guard = dir_cache.type_.as_dir().unwrap().lock();
 
     // Get the VNode entry being unlinked.
@@ -935,6 +954,10 @@ pub fn make_file(at: Option<&dyn File>, path: &[u8], spec: MakeFileSpec) -> ERes
     let mut dir_guard = dir_vnode.mtx.lock();
     if dir_guard.flags & vnflags::REMOVED != 0 {
         return Err(Errno::ENOENT);
+    }
+
+    if dir_vnode.vfs.is_read_only() {
+        return Err(Errno::EROFS);
     }
 
     // A new file is to be created.
@@ -1059,6 +1082,9 @@ fn rename_impl(
         if old_dir_guard.flags & vnflags::REMOVED != 0 {
             return Err(Errno::ENOENT);
         }
+        if old_dir_cache.vfs.is_read_only() {
+            return Err(Errno::EROFS);
+        }
         let dirent =
             old_dir_guard
                 .ops
@@ -1067,9 +1093,6 @@ fn rename_impl(
     } else {
         // Rename across directories.
         let guard = new_dir_cache.type_.as_dir().unwrap().try_lock(10000)?;
-        if !Arc::ptr_eq(&old_dir_cache.vfs, &new_dir_cache.vfs) {
-            return Err(Errno::EXDEV);
-        }
         let new_dir_vnode = new_dir_cache.open_vnode()?;
         let mut old_dir_guard = old_dir_vnode.mtx.lock();
         let mut new_dir_guard = new_dir_vnode.mtx.try_lock(10000)?;
@@ -1078,6 +1101,12 @@ fn rename_impl(
         }
         if new_dir_guard.flags & vnflags::REMOVED != 0 {
             return Err(Errno::ENOENT);
+        }
+        if !Arc::ptr_eq(&old_dir_cache.vfs, &new_dir_cache.vfs) {
+            return Err(Errno::EXDEV);
+        }
+        if old_dir_cache.vfs.is_read_only() {
+            return Err(Errno::EROFS);
         }
         let dirent = old_dir_cache.vfs.ops.lock_shared().rename(
             &old_dir_cache.vfs,
@@ -1185,11 +1214,11 @@ fn create_vfs(
     let vfs_ops = driver.mount(media, mflags)?;
 
     let vfs = Arc::try_new(Vfs {
+        flags: AtomicU32::new(vfs_ops.read_only() as u32 * mflags::READ_ONLY),
         ops: Mutex::new(vfs_ops),
         vnodes: Mutex::new(BTreeMap::new()),
         root: UnsafeCell::new(None),
         mountpoint,
-        flags: AtomicU32::new(0),
         next_fake_ino: AtomicU64::new(1),
     })
     .unwrap();
@@ -1393,6 +1422,8 @@ pub fn umount(at: Option<&dyn File>, path: &[u8], flags: MFlags) -> EResult<()> 
         b"/"
     };
     mount_table.fs_by_mount.remove(mountpoint).unwrap();
+    // Remove root VNode from it to break circular reference.
+    *unsafe { vfs.root.as_mut_unchecked() } = None;
 
     Ok(())
 }

@@ -1,10 +1,14 @@
 use core::{cell::UnsafeCell, fmt::Debug};
 
 use alloc::boxed::Box;
+use num::traits::{FromBytes, ToBytes};
 
-use crate::bindings::{
-    device::{HasBaseDevice, class::block::BlockDevice},
-    error::{EResult, Errno},
+use crate::{
+    bindings::{
+        device::{HasBaseDevice, class::block::BlockDevice},
+        error::{EResult, Errno},
+    },
+    util::zeroes,
 };
 
 /// Specifies some type of media a filesystem can be mounted on.
@@ -38,6 +42,32 @@ pub struct Media {
 unsafe impl Sync for Media {}
 
 impl Media {
+    /// Write zeroes to the media.
+    pub fn write_zeroes(&self, offset: u64, len: u64) -> EResult<()> {
+        let offset = offset.checked_add(self.offset).ok_or(Errno::EIO)?;
+        let end = offset.checked_add(len as u64).ok_or(Errno::EIO)?;
+        if end > self.size {
+            return Err(Errno::EIO);
+        }
+        match &self.storage {
+            MediaType::Block(block_device) => {
+                let zeroes = zeroes();
+                let end = offset + len;
+                let mut offset = offset;
+                while offset < end {
+                    let max = (end - offset).min(zeroes.len() as u64) as usize;
+                    block_device.write_bytes(offset, &zeroes[..max])?;
+                    offset += max as u64;
+                }
+            }
+            MediaType::Ram(ram) => {
+                let buffer = unsafe { ram.as_mut_unchecked() };
+                buffer[offset as usize..offset as usize + len as usize].fill(0);
+            }
+        }
+        Ok(())
+    }
+
     /// Write data to the media.
     pub fn write(&self, offset: u64, data: &[u8]) -> EResult<()> {
         let offset = offset.checked_add(self.offset).ok_or(Errno::EIO)?;
@@ -74,6 +104,36 @@ impl Media {
             }
         }
         Ok(())
+    }
+
+    /// Write little-endian bytes.
+    pub fn write_le<T: ToBytes>(&self, offset: u64, data: T) -> EResult<()> {
+        self.write(offset, data.to_le_bytes().as_ref())
+    }
+
+    /// Read little-endian bytes.
+    pub fn read_le<T: FromBytes>(&self, offset: u64) -> EResult<T>
+    where
+        T: FromBytes<Bytes = [u8; size_of::<T>()]>,
+    {
+        let mut tmp = [0u8; _];
+        self.read(offset, &mut tmp)?;
+        Ok(T::from_le_bytes(&tmp))
+    }
+
+    /// Write big-endian bytes.
+    pub fn write_be<T: ToBytes>(&self, offset: u64, data: T) -> EResult<()> {
+        self.write(offset, data.to_be_bytes().as_ref())
+    }
+
+    /// Read big-endian bytes.
+    pub fn read_be<T: FromBytes>(&self, offset: u64) -> EResult<T>
+    where
+        T: FromBytes<Bytes = [u8; size_of::<T>()]>,
+    {
+        let mut tmp = [0u8; _];
+        self.read(offset, &mut tmp)?;
+        Ok(T::from_be_bytes(&tmp))
     }
 
     /// Sync a region of the media.

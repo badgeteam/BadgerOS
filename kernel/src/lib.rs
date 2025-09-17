@@ -19,6 +19,7 @@
 #![feature(likely_unlikely)]
 #![feature(map_try_insert)]
 #![feature(iterator_try_collect)]
+#![feature(generic_const_exprs)]
 
 #[macro_use]
 extern crate alloc;
