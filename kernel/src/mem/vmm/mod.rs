@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: MIT
 
 use core::{
+    fmt::Debug,
     ops::Div,
     ptr::{slice_from_raw_parts, slice_from_raw_parts_mut},
     sync::atomic::AtomicUsize,
@@ -69,7 +70,8 @@ pub type AtomicVPN = AtomicUsize;
 pub type VPN = usize;
 
 /// Kernel page table root PPN.
-pub static KERNEL_PAGE_TABLE: Mutex<PPN> = unsafe { Mutex::new_static(0) };
+pub static KERNEL_VMM_CTX: Mutex<vmm_ctx_t> =
+    unsafe { Mutex::new_static(vmm_ctx_t { pt_root_ppn: 0 }) };
 
 unsafe extern "C" {
     static __start_text: [u8; 0];
@@ -184,7 +186,7 @@ pub unsafe fn map_k_at(virt_base: VPN, virt_len: VPN, phys_base: PPN, flags: u32
     let flags = flags | flags::G;
     unsafe {
         map_impl(
-            *KERNEL_PAGE_TABLE.lock(),
+            KERNEL_VMM_CTX.lock().pt_root_ppn,
             virt_base,
             virt_len,
             phys_base,
@@ -228,9 +230,9 @@ pub unsafe fn map_k(virt_len: VPN, phys_base: PPN, flags: u32) -> EResult<VPN> {
         return Err(Errno::EINVAL);
     }
     let flags = flags | flags::G;
-    let guard = KERNEL_PAGE_TABLE.lock();
-    let virt_base = unsafe { find_free_pages(*guard, virt_len) }?;
-    unsafe { map_impl(*guard, virt_base, virt_len, phys_base, flags) }?;
+    let guard = KERNEL_VMM_CTX.lock();
+    let virt_base = unsafe { find_free_pages(guard.pt_root_ppn, virt_len) }?;
+    unsafe { map_impl(guard.pt_root_ppn, virt_base, virt_len, phys_base, flags) }?;
     Ok(virt_base)
 }
 
@@ -254,6 +256,7 @@ pub unsafe fn map_u_at(
 }
 
 /// Describes the result of a virtual to physical address translation.
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Virt2Phys {
     /// Virtual address of page start.
     pub page_vaddr: VPN,
@@ -269,9 +272,72 @@ pub struct Virt2Phys {
     pub valid: bool,
 }
 
+impl Debug for Virt2Phys {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        use flags::*;
+        f.debug_struct("Virt2Phys")
+            .field("page_vaddr", &format_args!("0x{:x}", self.page_vaddr))
+            .field("page_paddr", &format_args!("0x{:x}", self.page_paddr))
+            .field("size", &format_args!("0x{:x}", self.size))
+            .field("paddr", &format_args!("0x{:x}", self.paddr))
+            .field(
+                "flags",
+                &format_args!(
+                    "0x{:x} /* {}{}{}{}{}{}{} {} {} */",
+                    self.flags,
+                    if self.flags & R != 0 { 'R' } else { '-' },
+                    if self.flags & W != 0 { 'W' } else { '-' },
+                    if self.flags & X != 0 { 'X' } else { '-' },
+                    if self.flags & U != 0 { 'U' } else { '-' },
+                    if self.flags & G != 0 { 'G' } else { '-' },
+                    if self.flags & A != 0 { 'A' } else { '-' },
+                    if self.flags & D != 0 { 'D' } else { '-' },
+                    if self.flags & COW != 0 { "COW" } else { "---" },
+                    if self.flags & IO != 0 {
+                        "IO"
+                    } else if self.flags & NC != 0 {
+                        "NC"
+                    } else {
+                        "--"
+                    }
+                ),
+            )
+            .field("valid", &self.valid)
+            .finish()
+    }
+}
+
 /// Translate a virtual to a physical address.
 pub unsafe fn virt2phys(pt_root_ppn: PPN, vaddr: usize) -> Virt2Phys {
-    todo!()
+    if !mmu::is_canon_addr(vaddr) {
+        logkf!(
+            LogLevel::Warning,
+            "Tried to look up non-canonical virtual address"
+        );
+        return Virt2Phys {
+            page_vaddr: vaddr & !(PAGE_SIZE as usize - 1),
+            page_paddr: 0,
+            size: PAGE_SIZE as usize,
+            paddr: 0,
+            flags: 0,
+            valid: false,
+        };
+    }
+
+    let pte = unsafe { mmu::walk(pt_root_ppn, vaddr / PAGE_SIZE as usize) };
+
+    let size = (PAGE_SIZE as usize) << (BITS_PER_LEVEL * pte.level as u32);
+    let page_vaddr = vaddr & !(size - 1);
+    let page_paddr = pte.ppn * PAGE_SIZE as usize;
+    let offset = vaddr - page_vaddr;
+    Virt2Phys {
+        page_vaddr,
+        page_paddr,
+        size,
+        paddr: page_paddr + offset,
+        flags: pte.flags,
+        valid: pte.valid,
+    }
 }
 
 /// Initialize the virtual memory subsystem.
@@ -285,7 +351,7 @@ pub unsafe fn init() {
         let res: EResult<()> = try {
             // Allocate and zero out page table.
             let pt_root_ppn = mmu::alloc_pgtable_page()?;
-            *KERNEL_PAGE_TABLE.data() = pt_root_ppn;
+            *KERNEL_VMM_CTX.data() = vmm_ctx_t { pt_root_ppn };
 
             // Kernel RX.
             let text_vaddr = &raw const __start_text as usize;
@@ -333,7 +399,7 @@ pub unsafe fn init() {
 
         // Finalize MMU initialization and switch to new page table.
         logkf!(LogLevel::Info, "Switching to new page table");
-        cpu::mmu::init(*KERNEL_PAGE_TABLE.data());
+        cpu::mmu::init(KERNEL_VMM_CTX.data().pt_root_ppn);
         logkf!(LogLevel::Info, "Virtual memory management initialized");
     }
 }
@@ -350,7 +416,7 @@ unsafe extern "C" fn vmm_ctxswitch_from_isr() {
     unsafe {
         let proc = bindings::raw::proc_current();
         if proc.is_null() {
-            cpu::mmu::set_page_table(*KERNEL_PAGE_TABLE.data(), 0);
+            cpu::mmu::set_page_table(KERNEL_VMM_CTX.data().pt_root_ppn, 0);
         } else {
             cpu::mmu::set_page_table((*proc).memmap.mem_ctx.pt_root_ppn, 0);
         }
@@ -433,7 +499,7 @@ unsafe extern "C" fn vmm_ctxswitch(ctx: *mut vmm_ctx_t) {
 #[unsafe(no_mangle)]
 unsafe extern "C" fn vmm_ctxswitch_k() {
     unsafe {
-        cpu::mmu::set_page_table(*KERNEL_PAGE_TABLE.data(), 0);
+        cpu::mmu::set_page_table(KERNEL_VMM_CTX.data().pt_root_ppn, 0);
         cpu::mmu::vmem_fence(None, None);
     }
 }
