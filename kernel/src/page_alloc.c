@@ -5,8 +5,9 @@
 
 #include "badge_strings.h"
 #include "static-buddy.h"
+
 #if !CONFIG_NOMMU
-#include "cpu/mmu.h"
+#include "mem/vmm.h"
 #endif
 
 
@@ -20,7 +21,7 @@ size_t phys_page_alloc(size_t page_count, bool for_user) {
     }
     mem_set(mem, 0, page_count * CONFIG_PAGE_SIZE);
 #if !CONFIG_NOMMU
-    return ((size_t)mem - mmu_hhdm_vaddr) / CONFIG_PAGE_SIZE;
+    return ((size_t)mem - vmm_hhdm_offset) / CONFIG_PAGE_SIZE;
 #else
     return (size_t)mem / CONFIG_PAGE_SIZE;
 #endif
@@ -30,7 +31,7 @@ size_t phys_page_alloc(size_t page_count, bool for_user) {
 // Uses physical page numbers (paddr / CONFIG_PAGE_SIZE).
 size_t phys_page_size(size_t ppn) {
 #if !CONFIG_NOMMU
-    return buddy_get_size((void *)(ppn * CONFIG_PAGE_SIZE + mmu_hhdm_vaddr)) / CONFIG_PAGE_SIZE;
+    return buddy_get_size((void *)(ppn * CONFIG_PAGE_SIZE + vmm_hhdm_offset)) / CONFIG_PAGE_SIZE;
 #else
     return buddy_get_size((void *)(ppn * CONFIG_PAGE_SIZE)) / CONFIG_PAGE_SIZE;
 #endif
@@ -40,7 +41,7 @@ size_t phys_page_size(size_t ppn) {
 // Uses physical page numbers (paddr / CONFIG_PAGE_SIZE).
 void phys_page_free(size_t ppn) {
 #if !CONFIG_NOMMU
-    buddy_deallocate((void *)(ppn * CONFIG_PAGE_SIZE + mmu_hhdm_vaddr));
+    buddy_deallocate((void *)(ppn * CONFIG_PAGE_SIZE + vmm_hhdm_offset));
 #else
     buddy_deallocate((void *)(ppn * CONFIG_PAGE_SIZE));
 #endif
@@ -50,7 +51,7 @@ void phys_page_free(size_t ppn) {
 // Uses physical page numbers (paddr / CONFIG_PAGE_SIZE).
 void phys_page_split(size_t ppn) {
 #if !CONFIG_NOMMU
-    buddy_split_allocated((void *)(ppn * CONFIG_PAGE_SIZE + mmu_hhdm_vaddr));
+    buddy_split_allocated((void *)(ppn * CONFIG_PAGE_SIZE + vmm_hhdm_offset));
 #else
     buddy_split_allocated((void *)(ppn * CONFIG_PAGE_SIZE));
 #endif

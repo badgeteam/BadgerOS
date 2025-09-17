@@ -5,7 +5,8 @@
 #include "assertions.h"
 #include "badge_strings.h"
 #include "log.h"
-#include "memprotect.h"
+#include "mem/mmu.h"
+#include "mem/vmm.h"
 #include "page_alloc.h"
 #include "panic.h"
 #include "process/internal.h"
@@ -79,8 +80,8 @@ errno_size_t proc_map_raw(process_t *proc, size_t vaddr_req, size_t min_size, si
     if (min_size & (min_align - 1)) {
         min_size += min_align - (min_size & (min_align - 1));
     }
-    if (vaddr_req + min_size > mmu_half_size) {
-        vaddr_req = mmu_half_size - min_size;
+    if (!mmu_is_canon_user_range(vaddr_req, min_size)) {
+        vaddr_req = mmu_canon_half_size() - min_size;
         if (vaddr_req & (min_align - 1)) {
             vaddr_req -= vaddr_req & (min_align - 1);
         }
@@ -130,21 +131,14 @@ errno_size_t proc_map_raw(process_t *proc, size_t vaddr_req, size_t min_size, si
             phys_page_free(ppn);
             goto nomem;
         }
-        if (!memprotect_u(
-                &proc->memmap.mpu_ctx,
-                (vpn + i) * CONFIG_PAGE_SIZE,
-                ppn * CONFIG_PAGE_SIZE,
-                alloc * CONFIG_PAGE_SIZE,
-                flags
-            )) {
+        if (vmm_map_u_at(proc->memmap.mem_ctx.pt_root_ppn, (vpn + i), ppn, alloc, flags)) {
             goto nomem;
         }
         logkf(LOG_INFO, "Mapped %{size;d} bytes at %{size;x} to process %{d}", new_ent.size, new_ent.vaddr, proc->pid);
         i += alloc;
     }
 
-    memprotect_commit(&proc->memmap.mpu_ctx);
-    return vaddr_req;
+    return (errno_size_t)vaddr_req;
 nomem:
     logk(LOG_WARN, "TODO: Cleanup when proc_map_raw partially fails");
     return -ENOMEM;
@@ -239,7 +233,7 @@ errno_t proc_unmap_raw(process_t *proc, size_t vaddr, size_t len) {
             logk(LOG_FATAL, "Out of memory");
             panic_abort();
         }
-        memprotect_u(&map->mpu_ctx, vaddr, 0, (size_t)CONFIG_PAGE_SIZE << order, 0);
+        // memprotect_u(&map->mpu_ctx, vaddr, 0, (size_t)CONFIG_PAGE_SIZE << order, 0);
         logkf(
             LOG_INFO,
             "Unmapped %{size;d} bytes at %{size;x} from process %{d}",
@@ -254,9 +248,6 @@ errno_t proc_unmap_raw(process_t *proc, size_t vaddr, size_t len) {
         index  = split_index;
     }
 
-    // Commit the new page tables.
-    memprotect_commit(&map->mpu_ctx);
-
     // Release those same pages.
     for (size_t i = 0; i < to_free_len; i++) {
         phys_page_free(to_free[i]);
@@ -269,23 +260,23 @@ errno_t proc_unmap_raw(process_t *proc, size_t vaddr, size_t len) {
 // Whether the process owns this range of virtual memory.
 // Returns the lowest common denominator of the access bits.
 int proc_map_contains_raw(process_t *proc, size_t vaddr, size_t size) {
-    if (vaddr >= mmu_high_vaddr || vaddr + size > mmu_high_vaddr) {
+    if (!mmu_is_canon_user_range(vaddr, size)) {
         return 0;
     }
-    int flags = MEMPROTECT_FLAG_RWX;
+    int flags = VMM_FLAG_RWX;
     while (true) {
-        virt2phys_t info = memprotect_virt2phys(&proc->memmap.mpu_ctx, vaddr);
-        if (info.flags & MEMPROTECT_FLAG_RWX) {
+        virt2phys_t info = vmm_virt2phys(proc->memmap.mem_ctx.pt_root_ppn, vaddr);
+        if (info.flags & VMM_FLAG_RWX) {
             flags &= (int)info.flags;
         } else {
             return 0;
         }
         if (!flags) {
-            return 8;
+            return 0;
         }
-        size_t inc = info.page_size - (vaddr & (info.page_size - 1));
+        size_t inc = info.size - (vaddr & (info.size - 1));
         if (inc >= size) {
-            return 8 | flags;
+            return flags;
         }
         size  -= inc;
         vaddr += inc;

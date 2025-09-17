@@ -4,7 +4,7 @@
 #include "cpu/isr.h"
 #include "cpu/regs.h"
     .global __global_pointer$
-    .global memprotect_swap_from_isr
+    .global vmm_ctxswitch_from_isr
     .cfi_sections .debug_frame
 
 
@@ -247,7 +247,7 @@ isr_context_switch:
     csrw    CSR_SCRATCH, t0
     
     # Swap memory protection.
-    jal     memprotect_swap_from_isr
+    jal     vmm_ctxswitch_from_isr
     csrr    t0, CSR_SCRATCH
     LD_REG  t1, isr_ctx_t_flags(t0)
     andi    t1, t1, ISR_CTX_FLAG_KERNEL
@@ -315,7 +315,7 @@ __trap_asm:
     LD_REG  t0, isr_ctx_t_ctxswitch(t0)
     csrw    CSR_SCRATCH, t0
     # Swap memory protection.
-    jal     memprotect_swap_from_isr
+    jal     vmm_ctxswitch_from_isr
     csrr    t0, CSR_SCRATCH
     # Set privilege level.
     LD_REG  t2, isr_ctx_t_flags(t0)

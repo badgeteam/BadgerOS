@@ -5,10 +5,12 @@
 
 #include "arrays.h"
 #include "assertions.h"
+#include "cpu/isr_ctx.h"
 #include "cpu/mmu.h"
 #include "cpulocal.h"
 #include "interrupt.h"
 #include "isr_ctx.h"
+#include "mem/mmu.h"
 #include "mutex.h"
 
 #include <limine.h>
@@ -102,6 +104,19 @@ static REQ struct limine_smp_request smp_req = {
 
 
 #ifdef __riscv
+// Whether a certain DTB MMU type is supported.
+static bool mmu_dtb_supported(char const *type) {
+    if (cstr_equals(type, "riscv,sv39")) {
+        return mmu_paging_levels() <= 3;
+    } else if (cstr_equals(type, "riscv,sv48")) {
+        return mmu_paging_levels() <= 4;
+    } else if (cstr_equals(type, "riscv,sv57")) {
+        return mmu_paging_levels() <= 5;
+    } else {
+        return false;
+    }
+}
+
 // Initialise the SMP subsystem.
 void smp_init_dtb(dtb_handle_t *dtb) {
     sbi_ret_t res    = sbi_probe_extension(SBI_HART_MGMT_EID);
@@ -248,7 +263,7 @@ __attribute__((unused)) void cpu1_init1_limine(struct limine_smp_info *info) {
     tmp_ctx.cpulocal->cpuid = info->smp_resp_procid;
     tmp_ctx.cpulocal->cpu   = cur_cpu;
     irq_init(&tmp_ctx);
-    memprotect_swap(NULL);
+    vmm_ctxswitch_k();
     cpu_status[cur_cpu].entrypoint();
     __builtin_trap();
 }
@@ -269,7 +284,7 @@ bool smp_poweron(int cpu, void *entrypoint, void *stack) {
         for (uint64_t i = 0; i < smp_req.response->cpu_count; i++) {
             if (smp_req.response->cpus[i]->smp_resp_procid == cpuid) {
                 smp_req.response->cpus[i]->extra_argument = cpu;
-                atomic_store(&smp_req.response->cpus[i]->goto_address, &cpu1_init0_limine);
+                atomic_store((void *_Atomic *)&smp_req.response->cpus[i]->goto_address, (void *)&cpu1_init0_limine);
                 cpu_status[cpu].did_jump = true;
                 return true;
             }

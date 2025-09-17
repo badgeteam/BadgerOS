@@ -6,7 +6,7 @@
 #include "interrupt.h"
 #include "log.h"
 #include "malloc.h"
-#include "memprotect.h"
+#include "mem/vmm.h"
 #include "scheduler/scheduler.h"
 #include "semaphore.h"
 #include "spinlock.h"
@@ -129,9 +129,11 @@ void *uacpi_kernel_map(uacpi_phys_addr paddr, uacpi_size len) {
     if (len % CONFIG_PAGE_SIZE) {
         len += CONFIG_PAGE_SIZE - len % CONFIG_PAGE_SIZE;
     }
-    size_t vaddr = memprotect_alloc_vaddr(len);
-    assert_always(memprotect_k(vaddr, paddr, len, MEMPROTECT_FLAG_RW));
-    return (void *)(vaddr + off);
+    vpn_t vpn;
+    if (vmm_map_k(&vpn, len / CONFIG_PAGE_SIZE, paddr / CONFIG_PAGE_SIZE, VMM_FLAG_RW | VMM_FLAG_IO) < 0) {
+        return NULL;
+    }
+    return (void *)(vpn * CONFIG_PAGE_SIZE + off);
 }
 void uacpi_kernel_unmap(void *addr, uacpi_size len) {
     size_t vaddr  = (size_t)addr;
@@ -140,7 +142,7 @@ void uacpi_kernel_unmap(void *addr, uacpi_size len) {
     if (len % CONFIG_PAGE_SIZE) {
         len += CONFIG_PAGE_SIZE - len % CONFIG_PAGE_SIZE;
     }
-    assert_always(memprotect_k(vaddr, 0, len, 0));
+    // TODO: Unmap this.
 }
 
 /*
@@ -179,7 +181,7 @@ void uacpi_kernel_free(void *mem) {
 void uacpi_kernel_log(uacpi_log_level uacpi_level, uacpi_char const *msg) {
     log_level_t level;
     switch (uacpi_level) {
-        case UACPI_LOG_DEBUG: level = LOG_DEBUG; break;
+        case UACPI_LOG_DEBUG:
         case UACPI_LOG_TRACE: level = LOG_DEBUG; break;
         case UACPI_LOG_INFO: level = LOG_INFO; break;
         case UACPI_LOG_WARN: level = LOG_WARN; break;
@@ -209,7 +211,7 @@ void uacpi_kernel_stall(uacpi_u8 usec) {
  * Sleep for N milliseconds.
  */
 void uacpi_kernel_sleep(uacpi_u64 msec) {
-    thread_sleep(msec * 1000);
+    thread_sleep((int64_t)msec * 1000);
 }
 
 /*
@@ -269,7 +271,7 @@ uacpi_thread_id uacpi_kernel_get_thread_id(void) {
  * 3. Any other value - signifies a host internal error and is treated as such
  */
 uacpi_status uacpi_kernel_acquire_mutex(uacpi_handle handle, uacpi_u16 timeout0) {
-    timestamp_us_t timeout = timeout0 == 0xffff ? TIMESTAMP_US_MAX : timeout0 * 1000;
+    timestamp_us_t timeout = timeout0 == 0xffff ? TIMESTAMP_US_MAX : (timestamp_us_t)timeout0 * 1000;
     return mutex_acquire(handle, timeout) ? UACPI_STATUS_OK : UACPI_STATUS_TIMEOUT;
 }
 
@@ -286,7 +288,7 @@ void uacpi_kernel_release_mutex(uacpi_handle handle) {
  * A successful wait is indicated by returning UACPI_TRUE.
  */
 uacpi_bool uacpi_kernel_wait_for_event(uacpi_handle handle, uacpi_u16 timeout0) {
-    timestamp_us_t timeout = timeout0 == 0xffff ? TIMESTAMP_US_MAX : timeout0 * 1000;
+    timestamp_us_t timeout = timeout0 == 0xffff ? TIMESTAMP_US_MAX : (timestamp_us_t)timeout0 * 1000;
     return sem_await(handle, timeout);
 }
 
@@ -325,8 +327,8 @@ uacpi_status uacpi_kernel_handle_firmware_request(uacpi_firmware_request *req) {
     }
 }
 
-static void uacpi_isr_wrapper(int irq, void *_cookie) {
-    void **cookie = _cookie;
+static void uacpi_isr_wrapper(int irq, void *cookie0) {
+    void **cookie = cookie0;
     ((uacpi_interrupt_handler)cookie[0])(cookie[1]);
 }
 
@@ -343,7 +345,7 @@ uacpi_status uacpi_kernel_install_interrupt_handler(
     void **cookie   = malloc(3 * sizeof(void *));
     cookie[0]       = isr;
     cookie[1]       = ctx;
-    cookie[2]       = isr_install(irq, uacpi_isr_wrapper, cookie);
+    cookie[2]       = isr_install((int)irq, uacpi_isr_wrapper, cookie);
     *out_irq_handle = cookie;
     return UACPI_STATUS_OK;
 }

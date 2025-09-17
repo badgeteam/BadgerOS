@@ -12,7 +12,7 @@
 #include "kmodule.h"
 #include "log.h"
 #include "malloc.h"
-#include "mem/mm.h"
+#include "mem/vmm.h"
 #include "panic.h"
 #include "process/process.h"
 #include "scheduler/scheduler.h"
@@ -70,7 +70,7 @@ void basic_runtime_init() {
     kernel_heap_init();
 
     // Page alloc ready, so VMM can be initialized.
-    mem_vmm_init();
+    vmm_init();
     // Post-heap protocol-dependent initialization.
     bootp_postheap_init();
 
@@ -140,8 +140,6 @@ void syscall_sys_shutdown(bool is_reboot) {
 // This finishes the initialization of all kernel systems, resources and services.
 // When finished, the non-booting CPUs will be started (method and entrypoints to be determined).
 static void kernel_init() {
-    // Memory protection initialization.
-    memprotect_init();
     // Full hardware initialization.
     bootp_full_init();
 

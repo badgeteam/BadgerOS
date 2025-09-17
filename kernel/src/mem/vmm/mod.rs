@@ -12,7 +12,9 @@ use crate::{
     bindings::{
         self,
         error::{EResult, Errno},
+        log::{self, LogLevel},
         mutex::{Mutex, SharedMutexGuard},
+        raw::{errno_t, virt2phys_t, vmm_ctx_t},
     },
     config::PAGE_SIZE,
     cpu::{
@@ -79,23 +81,23 @@ unsafe extern "C" {
 
     /// Higher-half direct map virtual address.
     /// Provided by boot protocol.
-    #[link_name = "rust_hhdm_vaddr"]
+    #[link_name = "vmm_hhdm_vaddr"]
     static mut HHDM_VADDR: usize;
     /// Higher-half direct map address offset (paddr -> vaddr).
     /// Provided by boot protocol.
-    #[link_name = "rust_hhdm_offset"]
+    #[link_name = "vmm_hhdm_offset"]
     static mut HHDM_OFFSET: usize;
     /// Higher-half direct map size.
     /// Provided by boot protocol.
-    #[link_name = "rust_hhdm_size"]
+    #[link_name = "vmm_hhdm_size"]
     static mut HHDM_SIZE: usize;
     /// Kernel base virtual address.
     /// Provided by boot protocol.
-    #[link_name = "rust_kernel_vaddr"]
+    #[link_name = "vmm_kernel_vaddr"]
     static mut KERNEL_VADDR: usize;
     /// Kernel base physical address.
     /// Provided by boot protocol.
-    #[link_name = "rust_kernel_paddr"]
+    #[link_name = "vmm_kernel_paddr"]
     static mut KERNEL_PADDR: usize;
 }
 
@@ -277,17 +279,12 @@ pub unsafe fn init() {
     unsafe {
         // Detect MMU mode to be used.
         cpu::mmu::early_init();
+        logkf!(LogLevel::Info, "MMU paging levels: {}", { PAGING_LEVELS });
 
         // Prepare new page tables containing kernel and HHDM.
         let res: EResult<()> = try {
             // Allocate and zero out page table.
-            let pt_root_ppn = pmm::page_alloc(0)?;
-            let tmp = PAGE_SIZE as usize;
-            (&mut *slice_from_raw_parts_mut(
-                (pt_root_ppn * tmp + HHDM_OFFSET) as *mut PackedPTE,
-                tmp / size_of::<PackedPTE>(),
-            ))
-                .fill(PackedPTE::INVALID);
+            let pt_root_ppn = mmu::alloc_pgtable_page()?;
             *KERNEL_PAGE_TABLE.data() = pt_root_ppn;
 
             // Kernel RX.
@@ -335,22 +332,108 @@ pub unsafe fn init() {
         res.expect("Failed to create inital page table");
 
         // Finalize MMU initialization and switch to new page table.
+        logkf!(LogLevel::Info, "Switching to new page table");
         cpu::mmu::init(*KERNEL_PAGE_TABLE.data());
+        logkf!(LogLevel::Info, "Virtual memory management initialized");
     }
 }
 
 #[unsafe(no_mangle)]
-unsafe extern "C" fn mem_vmm_init() {
+unsafe extern "C" fn vmm_init() {
     unsafe {
         init();
     }
 }
 
 #[unsafe(no_mangle)]
-unsafe extern "C" fn mem_ctxswitch_from_isr() {
+unsafe extern "C" fn vmm_ctxswitch_from_isr() {
     unsafe {
         let proc = bindings::raw::proc_current();
-        cpu::mmu::set_page_table((*proc).memmap.mem_ctx.pt_root_ppn, 0);
+        if proc.is_null() {
+            cpu::mmu::set_page_table(*KERNEL_PAGE_TABLE.data(), 0);
+        } else {
+            cpu::mmu::set_page_table((*proc).memmap.mem_ctx.pt_root_ppn, 0);
+        }
+        cpu::mmu::vmem_fence(None, None);
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn vmm_create_user_ctx(ctx: *mut vmm_ctx_t) -> errno_t {
+    todo!()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn vmm_destroy_user_ctx(ctx: vmm_ctx_t) {
+    todo!()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn vmm_map_k(
+    virt_base_out: *mut VPN,
+    virt_len: VPN,
+    phys_base: PPN,
+    flags: u32,
+) -> errno_t {
+    unsafe {
+        match map_k(virt_len, phys_base, flags) {
+            Ok(vpn) => {
+                if !virt_base_out.is_null() {
+                    *virt_base_out = vpn;
+                }
+                0
+            }
+            Err(e) => -(e as errno_t),
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn vmm_map_k_at(
+    virt_base: VPN,
+    virt_len: VPN,
+    phys_base: PPN,
+    flags: u32,
+) -> errno_t {
+    Errno::extract(unsafe { map_k_at(virt_base, virt_len, phys_base, flags) })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn vmm_map_u_at(
+    pt_root_ppn: PPN,
+    virt_base: VPN,
+    virt_len: VPN,
+    phys_base: PPN,
+    flags: u32,
+) -> errno_t {
+    Errno::extract(unsafe { map_u_at(pt_root_ppn, virt_base, virt_len, phys_base, flags) })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn vmm_virt2phys(pt_root_ppn: PPN, vaddr: usize) -> virt2phys_t {
+    let tmp = unsafe { virt2phys(pt_root_ppn, vaddr) };
+    virt2phys_t {
+        page_vaddr: tmp.page_vaddr,
+        page_paddr: tmp.page_paddr,
+        size: tmp.size,
+        paddr: tmp.paddr,
+        flags: tmp.flags,
+        valid: tmp.valid,
+    }
+}
+
+#[unsafe(no_mangle)]
+unsafe extern "C" fn vmm_ctxswitch(ctx: *mut vmm_ctx_t) {
+    unsafe {
+        cpu::mmu::set_page_table((*ctx).pt_root_ppn, 0);
+        cpu::mmu::vmem_fence(None, None);
+    }
+}
+
+#[unsafe(no_mangle)]
+unsafe extern "C" fn vmm_ctxswitch_k() {
+    unsafe {
+        cpu::mmu::set_page_table(*KERNEL_PAGE_TABLE.data(), 0);
         cpu::mmu::vmem_fence(None, None);
     }
 }

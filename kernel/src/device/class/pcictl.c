@@ -11,7 +11,9 @@
 #include "device/pci/bar.h"
 #include "device/pci/confspace.h"
 #include "log.h"
-#include "memprotect.h"
+#include "mem/vmm.h"
+
+#include <stddef.h>
 
 
 
@@ -226,7 +228,8 @@ static pci_bar_info_t bar_info_impl(device_pcictl_t *device, uint32_t bar_offset
 
 // Get a PCI function's BAR information.
 void device_pcictl_bar_info(device_pcictl_t *device, dev_pci_addr_t addr, pci_bar_info_t bar_info[6]) {
-    uint32_t bar_offset = (addr.bus * 256 + addr.dev * 8 + addr.func) * 4096 + offsetof(pcie_hdr_dev_t, bar);
+    uint32_t bar_offset =
+        (uint32_t)((addr.bus * 256 + addr.dev * 8 + addr.func) * 4096) + offsetof(pcie_hdr_dev_t, bar);
     for (int i = 0; i < 6; i++) {
         bar_info[i].valid = false;
     }
@@ -261,24 +264,18 @@ void *device_pcictl_bar_map(device_pcictl_t *device, pci_bar_info_t bar_info) {
     size_t cpu_paddr = device->ranges[i].cpu_paddr + bar_info.addr - pci_paddr;
 
     // Determine appropriate flags.
-    int flags = MEMPROTECT_FLAG_RW | MEMPROTECT_FLAG_NC;
+    int flags = VMM_FLAG_RW | VMM_FLAG_NC;
     if (!ppa.attr.prefetch) {
-        flags |= MEMPROTECT_FLAG_IO;
+        flags |= VMM_FLAG_IO;
     }
 
     // Create MMU mapping.
-    size_t vaddr = memprotect_alloc_vaddr(bar_info.len);
-    if (!vaddr) {
-        logk(LOG_ERROR, "memprotect_alloc_vaddr failed");
-        return NULL;
-    }
-    if (!memprotect_k(vaddr, cpu_paddr, bar_info.len, flags)) {
-        logk(LOG_ERROR, "memprotect_k failed");
-        memprotect_free_vaddr(vaddr);
+    vpn_t base_vpn;
+    if (vmm_map_k(&base_vpn, (bar_info.len - 1) / CONFIG_PAGE_SIZE + 1, cpu_paddr / CONFIG_PAGE_SIZE, flags) < 0) {
         return NULL;
     }
 
-    return (void *)vaddr;
+    return (void *)(base_vpn * CONFIG_PAGE_SIZE);
 }
 
 // Read data from the configuration space for a specific device.

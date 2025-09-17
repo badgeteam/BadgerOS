@@ -8,7 +8,7 @@
 
 #ifndef __ASSEMBLER__
 
-#include "mem/mm.h"
+#include "mem/vmm.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -54,7 +54,7 @@ typedef bool (*isr_noexc_cb_t)(isr_ctx_t *ctx, void *cookie);
 // Context for interrupts, exceptions and traps in relation to threads.
 STRUCT_BEGIN(isr_ctx)
 // Pointer to currently active memory protection information.
-STRUCT_FIELD_PTR(isr_ctx, mem_ctx_t, mpu_ctx, 0)
+STRUCT_FIELD_PTR(isr_ctx, vmm_ctx_t, mem_ctx, 0)
 // Frame pointer to use for backtraces.
 STRUCT_FIELD_PTR(isr_ctx, void, frameptr, 1)
 // Registers storage.

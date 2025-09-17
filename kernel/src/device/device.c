@@ -19,7 +19,7 @@
 #include "list.h"
 #include "log.h"
 #include "map.h"
-#include "memprotect.h"
+#include "mem/vmm.h"
 #include "mutex.h"
 #include "nanoprintf.h"
 #include "set.h"
@@ -88,33 +88,29 @@ static bool device_init(device_union_t *device) {
 
     for (size_t i = 0; i < device->base.info.addrs_len; i++) {
         if (device->base.info.addrs[i].type == DEV_ATYPE_MMIO) {
-            dev_mmio_addr_t *addr  = &device->base.info.addrs[i].mmio;
-            size_t           vaddr = memprotect_alloc_vaddr(addr->size);
-            if (!vaddr) {
+            dev_mmio_addr_t *addr          = &device->base.info.addrs[i].mmio;
+            dev_mmio_addr_t  aligned_addr  = *addr;
+            aligned_addr.size             += aligned_addr.vaddr % CONFIG_PAGE_SIZE;
+            aligned_addr.paddr            -= aligned_addr.vaddr % CONFIG_PAGE_SIZE;
+            aligned_addr.vaddr            -= aligned_addr.vaddr % CONFIG_PAGE_SIZE;
+            size_t vpn;
+            if (vmm_map_k(
+                    &vpn,
+                    (addr->size - 1) / CONFIG_PAGE_SIZE + 1,
+                    addr->paddr / CONFIG_PAGE_SIZE,
+                    VMM_FLAG_RW | VMM_FLAG_IO
+                ) < 0) {
                 for (i--; i != SIZE_MAX; i--) {
                     if (device->base.info.addrs[i].type == DEV_ATYPE_MMIO) {
-                        memprotect_free_vaddr(addr->vaddr);
+                        // TODO: Unmap this.
                         addr->vaddr = 0;
                     }
                 }
                 return false;
             }
-            addr->vaddr = vaddr + addr->paddr % CONFIG_PAGE_SIZE;
+            addr->vaddr = vpn * CONFIG_PAGE_SIZE + addr->paddr % CONFIG_PAGE_SIZE;
         }
     }
-    for (size_t i = 0; i < device->base.info.addrs_len; i++) {
-        if (device->base.info.addrs[i].type == DEV_ATYPE_MMIO) {
-            dev_mmio_addr_t addr  = device->base.info.addrs[i].mmio;
-            addr.size            += addr.vaddr % CONFIG_PAGE_SIZE;
-            addr.paddr           -= addr.vaddr % CONFIG_PAGE_SIZE;
-            addr.vaddr           -= addr.vaddr % CONFIG_PAGE_SIZE;
-            if (addr.size % CONFIG_PAGE_SIZE) {
-                addr.size += CONFIG_PAGE_SIZE - addr.size % CONFIG_PAGE_SIZE;
-            }
-            assert_dev_keep(memprotect_k(addr.vaddr, addr.paddr, addr.size, MEMPROTECT_FLAG_IO | MEMPROTECT_FLAG_RW));
-        }
-    }
-    memprotect_commit(&mpu_global_ctx);
 
     return true;
 }
@@ -132,13 +128,7 @@ static void device_deinit(device_union_t *device) {
             if (addr.size % CONFIG_PAGE_SIZE) {
                 addr.size += CONFIG_PAGE_SIZE - addr.size % CONFIG_PAGE_SIZE;
             }
-            assert_dev_keep(memprotect_k(addr.vaddr, addr.paddr, addr.size, 0));
-        }
-    }
-    memprotect_commit(&mpu_global_ctx);
-    for (size_t i = 0; i < device->base.info.addrs_len; i++) {
-        if (device->base.info.addrs[i].type == DEV_ATYPE_MMIO) {
-            memprotect_free_vaddr(device->base.info.addrs[i].mmio.vaddr);
+            // TODO: Unmap this.
         }
     }
 

@@ -30,7 +30,7 @@ impl<T: Sized> PhysBox<T> {
                 mem::pmm::page_free(ppn, page_count);
                 return Err(*e);
             }
-            let vaddr = res.unwrap() as *mut T;
+            let vaddr = (res.unwrap() * PAGE_SIZE as usize) as *mut T;
             core::ptr::write_bytes(vaddr, 0, aligned_size);
 
             Ok(Self { paddr, vaddr })
@@ -42,7 +42,9 @@ impl<T: Sized> PhysBox<T> {
     }
     /// Leak the underlying physical memory and virtual memory mapping.
     pub fn leak(self) -> (usize, *mut T) {
-        (self.paddr, self.vaddr)
+        let tmp = (self.paddr, self.vaddr);
+        core::mem::forget(self);
+        tmp
     }
 }
 

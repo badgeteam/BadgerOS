@@ -4,16 +4,12 @@
 #include "assertions.h"
 #include "badge_strings.h"
 #include "filesystem.h"
-#include "interrupt.h"
 #include "malloc.h"
-#include "memprotect.h"
+#include "mem/vmm.h"
 #include "process/internal.h"
 #include "process/process.h"
 #include "process/types.h"
 #include "usercopy.h"
-#if !CONFIG_NOMMU
-#include "cpu/mmu.h"
-#endif
 
 #include <kbelf.h>
 
@@ -98,11 +94,12 @@ bool kbelfx_seg_alloc(kbelf_inst inst, size_t segs_len, kbelf_segment *segs) {
     }
     // logkf(LOG_DEBUG, "Require %{size;d} bytes", max_addr - min_addr);
 
-    errno_size_t vaddr_real = proc_map_raw(proc, min_addr, max_addr - min_addr, min_align, MEMPROTECT_FLAG_RWX);
-    if (vaddr_real < 0)
+    errno_size_t vaddr_real = proc_map_raw(proc, min_addr, max_addr - min_addr, min_align, VMM_FLAG_RWX);
+    if (vaddr_real < 0) {
         return false;
+    }
 
-    if (!kbelf_inst_is_pie(inst) && vaddr_real != min_addr) {
+    if (!kbelf_inst_is_pie(inst) && (size_t)vaddr_real != min_addr) {
         logkf(LOG_ERROR, "Unable to satify virtual address request for non-PIE executable");
         proc_unmap_raw(proc, vaddr_real, max_addr - min_addr);
         return false;

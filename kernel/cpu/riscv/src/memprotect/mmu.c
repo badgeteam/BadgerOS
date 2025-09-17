@@ -103,7 +103,7 @@ void mmu_write_pte(size_t pte_paddr, mmu_pte_t pte) {
 
 // Swap in memory protections for the given context.
 void memprotect_swap_from_isr() {
-    memprotect_swap(isr_ctx_get()->mpu_ctx);
+    memprotect_swap(isr_ctx_get()->mem_ctx);
 }
 
 // Swap in memory protections for a given context.
@@ -116,6 +116,6 @@ void memprotect_swap(mpu_ctx_t *mpu) {
         .mode = RISCV_SATP_SV39 + mmu_levels - 3,
     };
     asm volatile("csrw satp, %0; sfence.vma" ::"r"(satp) : "memory");
-    isr_ctx_get()->mpu_ctx = mpu;
+    isr_ctx_get()->mem_ctx = mpu;
     irq_enable_if(ie);
 }
