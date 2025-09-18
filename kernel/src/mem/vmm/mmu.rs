@@ -5,6 +5,7 @@
 use core::ops::Range;
 
 use crate::{
+    badgelib::{irq::IrqGuard, rcu::RcuGuard},
     bindings::{error::EResult, log::print},
     config,
     cpu::mmu::{BITS_PER_LEVEL, PackedPTE},
@@ -160,6 +161,8 @@ pub unsafe fn map(mut pgtable_ppn: PPN, vpn: VPN, new_pte: PTE) -> EResult<bool>
 /// Walk down the page table and read the target vaddr's PTE.
 pub unsafe fn walk(mut pgtable_ppn: PPN, vpn: VPN) -> PTE {
     let mut pte;
+    let noirq = unsafe { IrqGuard::new() };
+    let _rcu = unsafe { RcuGuard::new(&noirq) };
 
     // Descend the page until a leaf is found.
     for level in (0..unsafe { PAGING_LEVELS }).rev() {

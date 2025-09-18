@@ -5,7 +5,7 @@
 use core::{
     fmt::Debug,
     ops::Div,
-    ptr::{slice_from_raw_parts, slice_from_raw_parts_mut},
+    ptr::slice_from_raw_parts,
     sync::atomic::AtomicUsize,
 };
 
@@ -13,14 +13,14 @@ use crate::{
     bindings::{
         self,
         error::{EResult, Errno},
-        log::{self, LogLevel},
+        log::LogLevel,
         mutex::{Mutex, SharedMutexGuard},
         raw::{errno_t, virt2phys_t, vmm_ctx_t},
     },
     config::PAGE_SIZE,
     cpu::{
         self,
-        mmu::{BITS_PER_LEVEL, PackedPTE},
+        mmu::BITS_PER_LEVEL,
     },
     mem::{pmm::PPN, vmm::mmu::PAGING_LEVELS},
 };
@@ -70,8 +70,9 @@ pub type AtomicVPN = AtomicUsize;
 pub type VPN = usize;
 
 /// Kernel page table root PPN.
-pub static KERNEL_VMM_CTX: Mutex<vmm_ctx_t> =
-    unsafe { Mutex::new_static(vmm_ctx_t { pt_root_ppn: 0 }) };
+pub static mut KERNEL_VMM_CTX: vmm_ctx_t = vmm_ctx_t { pt_root_ppn: 0 };
+/// Mutex guarding modifications to the kernel page table.
+pub static KERNEL_VMM_MTX: Mutex<()> = unsafe { Mutex::new_static(()) };
 
 unsafe extern "C" {
     static __start_text: [u8; 0];
@@ -184,9 +185,10 @@ pub unsafe fn map_k_at(virt_base: VPN, virt_len: VPN, phys_base: PPN, flags: u32
         return Err(Errno::EINVAL);
     }
     let flags = flags | flags::G;
+    let _guard = KERNEL_VMM_MTX.lock();
     unsafe {
         map_impl(
-            KERNEL_VMM_CTX.lock().pt_root_ppn,
+            KERNEL_VMM_CTX.pt_root_ppn,
             virt_base,
             virt_len,
             phys_base,
@@ -230,9 +232,17 @@ pub unsafe fn map_k(virt_len: VPN, phys_base: PPN, flags: u32) -> EResult<VPN> {
         return Err(Errno::EINVAL);
     }
     let flags = flags | flags::G;
-    let guard = KERNEL_VMM_CTX.lock();
-    let virt_base = unsafe { find_free_pages(guard.pt_root_ppn, virt_len) }?;
-    unsafe { map_impl(guard.pt_root_ppn, virt_base, virt_len, phys_base, flags) }?;
+    let _guard = KERNEL_VMM_MTX.lock();
+    let virt_base = unsafe { find_free_pages(KERNEL_VMM_CTX.pt_root_ppn, virt_len) }?;
+    unsafe {
+        map_impl(
+            KERNEL_VMM_CTX.pt_root_ppn,
+            virt_base,
+            virt_len,
+            phys_base,
+            flags,
+        )
+    }?;
     Ok(virt_base)
 }
 
@@ -351,7 +361,7 @@ pub unsafe fn init() {
         let res: EResult<()> = try {
             // Allocate and zero out page table.
             let pt_root_ppn = mmu::alloc_pgtable_page()?;
-            *KERNEL_VMM_CTX.data() = vmm_ctx_t { pt_root_ppn };
+            KERNEL_VMM_CTX = vmm_ctx_t { pt_root_ppn };
 
             // Kernel RX.
             let text_vaddr = &raw const __start_text as usize;
@@ -399,7 +409,7 @@ pub unsafe fn init() {
 
         // Finalize MMU initialization and switch to new page table.
         logkf!(LogLevel::Info, "Switching to new page table");
-        cpu::mmu::init(KERNEL_VMM_CTX.data().pt_root_ppn);
+        cpu::mmu::init(KERNEL_VMM_CTX.pt_root_ppn);
         logkf!(LogLevel::Info, "Virtual memory management initialized");
     }
 }
@@ -416,7 +426,7 @@ unsafe extern "C" fn vmm_ctxswitch_from_isr() {
     unsafe {
         let proc = bindings::raw::proc_current();
         if proc.is_null() {
-            cpu::mmu::set_page_table(KERNEL_VMM_CTX.data().pt_root_ppn, 0);
+            cpu::mmu::set_page_table(KERNEL_VMM_CTX.pt_root_ppn, 0);
         } else {
             cpu::mmu::set_page_table((*proc).memmap.mem_ctx.pt_root_ppn, 0);
         }
@@ -499,7 +509,7 @@ unsafe extern "C" fn vmm_ctxswitch(ctx: *mut vmm_ctx_t) {
 #[unsafe(no_mangle)]
 unsafe extern "C" fn vmm_ctxswitch_k() {
     unsafe {
-        cpu::mmu::set_page_table(KERNEL_VMM_CTX.data().pt_root_ppn, 0);
+        cpu::mmu::set_page_table(KERNEL_VMM_CTX.pt_root_ppn, 0);
         cpu::mmu::vmem_fence(None, None);
     }
 }
