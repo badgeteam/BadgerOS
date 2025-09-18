@@ -4,12 +4,14 @@
 #pragma once
 
 #include "badge_strings.h"
+#include "cpulocal.h"
 #include "device/class/union.h"
 #include "device/device.h"
 #include "device/dtb/dtb.h"
 #include "errno.h"
 #include "filesystem.h"
 #include "interrupt.h"
+#include "isr_ctx.h"
 #include "klifetime.h"
 #include "kmodule.h"
 #include "limine.h"

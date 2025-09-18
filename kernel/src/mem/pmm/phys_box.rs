@@ -34,7 +34,7 @@ impl<T: Sized> PhysBox<T> {
             logkf!(
                 LogLevel::Debug,
                 "{:#?}",
-                mem::vmm::virt2phys(KERNEL_VMM_CTX.lock_shared().pt_root_ppn, vaddr as usize)
+                mem::vmm::virt2phys(KERNEL_VMM_CTX.pt_root_ppn, vaddr as usize)
             );
             core::ptr::write_bytes(vaddr as *mut u8, 0, aligned_size);
 
