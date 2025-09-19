@@ -89,7 +89,7 @@ bool copy_to_user_raw(process_t *process, size_t user_vaddr, void const *kernel_
     mem_copy((void *)user_vaddr, kernel_vaddr, len);
 #else
     while (len) {
-        virt2phys_t info = vmm_virt2phys(process->memmap.mem_ctx.pt_root_ppn, user_vaddr);
+        virt2phys_t info = vmm_virt2phys(&process->memmap.mem_ctx, user_vaddr);
         assert_dev_drop(info.flags & VMM_FLAG_U);
         assert_dev_drop(~info.flags & VMM_FLAG_G);
         size_t max_len = info.size - (user_vaddr & (info.size - 1));

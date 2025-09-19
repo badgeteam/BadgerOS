@@ -21,6 +21,7 @@
 #![feature(iterator_try_collect)]
 #![feature(generic_const_exprs)]
 #![feature(int_lowest_highest_one)]
+#![feature(generic_atomic)]
 
 #[macro_use]
 extern crate alloc;

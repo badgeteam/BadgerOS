@@ -186,7 +186,7 @@ void riscv_trap_handler() {
 #if !CONFIG_NOMMU
     // Print what page table thinks.
     if ((1 << trapno) & MEM_ADDR_TRAPS) {
-        virt2phys_t info = vmm_virt2phys(kctx->mem_ctx->pt_root_ppn, tval);
+        virt2phys_t info = vmm_virt2phys(kctx->mem_ctx, tval);
         if (info.valid) {
             rawprint("Memory at this address: ");
             rawputc(info.flags & VMM_FLAG_R ? 'r' : '-');

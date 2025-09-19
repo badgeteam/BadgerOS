@@ -3,7 +3,7 @@ use core::ops::{Deref, DerefMut};
 use crate::{
     bindings::{error::EResult, log::LogLevel},
     config::{self, PAGE_SIZE},
-    mem::{self, vmm::KERNEL_VMM_CTX},
+    mem,
 };
 
 /// A box for physical RAM allocations.
@@ -31,11 +31,6 @@ impl<T: Sized> PhysBox<T> {
                 return Err(*e);
             }
             let vaddr = (res.unwrap() * PAGE_SIZE as usize) as *mut T;
-            logkf!(
-                LogLevel::Debug,
-                "{:#?}",
-                mem::vmm::virt2phys(KERNEL_VMM_CTX.pt_root_ppn, vaddr as usize)
-            );
             core::ptr::write_bytes(vaddr as *mut u8, 0, aligned_size);
 
             Ok(Self { paddr, vaddr })
@@ -71,7 +66,7 @@ impl<T: Sized> Drop for PhysBox<T> {
     fn drop(&mut self) {
         unsafe {
             let page_count = size_of::<T>().div_ceil(config::PAGE_SIZE as usize);
-            logkf!(LogLevel::Warning, "TODO: Unmap PhysBox memory");
+            mem::vmm::unmap_k(self.vaddr as usize, page_count * PAGE_SIZE as usize).unwrap();
             mem::pmm::page_free(self.paddr / PAGE_SIZE as usize, page_count);
         }
     }

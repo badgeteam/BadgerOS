@@ -5,9 +5,11 @@
 use core::{
     fmt::Debug,
     ops::Div,
-    ptr::slice_from_raw_parts,
-    sync::atomic::AtomicUsize,
+    ptr::{slice_from_raw_parts, slice_from_raw_parts_mut},
+    sync::atomic::{Atomic, AtomicUsize, Ordering},
 };
+
+use mmu::PTE_PER_PAGE;
 
 use crate::{
     bindings::{
@@ -15,62 +17,69 @@ use crate::{
         error::{EResult, Errno},
         log::LogLevel,
         mutex::{Mutex, SharedMutexGuard},
-        raw::{errno_t, virt2phys_t, vmm_ctx_t},
+        raw::{errno_t, virt2phys_t},
     },
     config::PAGE_SIZE,
     cpu::{
         self,
-        mmu::BITS_PER_LEVEL,
+        mmu::{BITS_PER_LEVEL, PackedPTE},
     },
-    mem::{pmm::PPN, vmm::mmu::PAGING_LEVELS},
+    mem::{
+        pmm::{PPN, page_alloc},
+        vmm::mmu::PAGING_LEVELS,
+    },
 };
 
 use super::pmm;
 
 pub mod mmu;
 
-#[rustfmt::skip]
 pub mod flags {
     // Note: These flags are the same bit positions as in the RISC-V PTE format, do not change them!
-    
+
     /// Map memory as executable.
-    pub const R:   u32 = 0b0000_0000_0010;
+    pub const R: u32 = 0b0000_0000_0010;
     /// Map memory as writeable (reads must also be allowed).
-    pub const W:   u32 = 0b0000_0000_0100;
+    pub const W: u32 = 0b0000_0000_0100;
     /// Map memory as executable.
-    pub const X:   u32 = 0b0000_0000_1000;
+    pub const X: u32 = 0b0000_0000_1000;
     /// Map memory as user-accessible.
-    pub const U:   u32 = 0b0000_0001_0000;
+    pub const U: u32 = 0b0000_0001_0000;
     /// Map memory as global (exists in all page ASIDs).
-    pub const G:   u32 = 0b0000_0010_0000;
+    pub const G: u32 = 0b0000_0010_0000;
     /// Page was accessed since this flag was last cleared.
-    pub const A:   u32 = 0b0000_0100_0000;
+    pub const A: u32 = 0b0000_0100_0000;
     /// Page was written since this flag was last cleared.
-    pub const D:   u32 = 0b0000_1000_0000;
-    
+    pub const D: u32 = 0b0000_1000_0000;
+
     /// Mark page as copy-on-write (W must be disabled).
     pub const COW: u32 = 0b0001_0000_0000;
-    
+
     /// Map memory as I/O (uncached, no write coalescing).
-    pub const IO:  u32 = 0b0100_0000_0000;
+    pub const IO: u32 = 0b0100_0000_0000;
     /// Map memory as uncached write coalescing.
-    pub const NC:  u32 = 0b1000_0000_0000;
-    
+    pub const NC: u32 = 0b1000_0000_0000;
+
     /// Map memory as read-write.
-    pub const RW:  u32 = R | W;
+    pub const RW: u32 = R | W;
     /// Map memory as read-execute.
-    pub const RX:  u32 = R | X;
+    pub const RX: u32 = R | X;
     /// Map memory as read-write-execute.
     pub const RWX: u32 = R | W | X;
 }
 
 /// Unsigned integer that can store a virtual page number.
 pub type AtomicVPN = AtomicUsize;
+
 /// Unsigned integer that can store a virtual page number.
 pub type VPN = usize;
 
+/// Naturally aligned slice that is a page or more of zeroes.
+static mut ZEROES: *const [u8] = unsafe { core::mem::zeroed() };
+
 /// Kernel page table root PPN.
-pub static mut KERNEL_VMM_CTX: vmm_ctx_t = vmm_ctx_t { pt_root_ppn: 0 };
+pub static mut KERNEL_VMM_CTX: Context = Context { pt_root_ppn: 0 };
+
 /// Mutex guarding modifications to the kernel page table.
 pub static KERNEL_VMM_MTX: Mutex<()> = unsafe { Mutex::new_static(()) };
 
@@ -104,6 +113,11 @@ unsafe extern "C" {
     static mut KERNEL_PADDR: usize;
 }
 
+// Memory management context.
+pub struct Context {
+    pt_root_ppn: PPN,
+}
+
 /// Calculates the maximum page table level wherein the next part of the mapping can be made.
 fn calc_superpage(virt_base: VPN, virt_len: VPN, phys_base: PPN) -> u8 {
     let align = virt_base | phys_base;
@@ -111,9 +125,9 @@ fn calc_superpage(virt_base: VPN, virt_len: VPN, phys_base: PPN) -> u8 {
         .min(unsafe { PAGING_LEVELS as u8 })
 }
 
-/// Common implementation of [`map_k`], [`map_k_at`] and [`map_u_at`].
+/// Common implementation of the various (un)map functions.
 unsafe fn map_impl(
-    pt_root_ppn: PPN,
+    ctx: &Context,
     virt_base: VPN,
     virt_len: VPN,
     phys_base: PPN,
@@ -126,7 +140,7 @@ unsafe fn map_impl(
         let level = calc_superpage(virt_base + offset, virt_len - offset, phys_base + offset);
         root_touched |= unsafe {
             mmu::map(
-                pt_root_ppn,
+                ctx.pt_root_ppn,
                 virt_base + offset,
                 mmu::PTE {
                     ppn: phys_base + offset,
@@ -155,7 +169,9 @@ unsafe fn map_impl(
             for index in
                 virt_base.div(root_pte_size)..(virt_base + virt_len).div_ceil(root_pte_size)
             {
-                unsafe { mmu::write_pte(proc_pt_root, index, mmu::read_pte(pt_root_ppn, index)) };
+                unsafe {
+                    mmu::xchg_pte(proc_pt_root, index, mmu::read_pte(ctx.pt_root_ppn, index))
+                };
             }
         }
     }
@@ -176,6 +192,9 @@ unsafe fn map_impl(
 }
 
 /// Map a range of memory for the kernel at a specific virtual address.
+/// # Safety
+/// - The caller is responsible for ensuring the safety of `virt_base`;
+/// - The caller is responsible for managing the memory at `phys_base`.
 pub unsafe fn map_k_at(virt_base: VPN, virt_len: VPN, phys_base: PPN, flags: u32) -> EResult<()> {
     if flags & flags::U != 0
         || !mmu::is_canon_kernel_range(
@@ -188,7 +207,7 @@ pub unsafe fn map_k_at(virt_base: VPN, virt_len: VPN, phys_base: PPN, flags: u32
     let _guard = KERNEL_VMM_MTX.lock();
     unsafe {
         map_impl(
-            KERNEL_VMM_CTX.pt_root_ppn,
+            &*&raw const KERNEL_VMM_CTX,
             virt_base,
             virt_len,
             phys_base,
@@ -199,7 +218,9 @@ pub unsafe fn map_k_at(virt_base: VPN, virt_len: VPN, phys_base: PPN, flags: u32
 
 /// Finds a certain length of free pages within the higher half.
 /// Makes sure there is at least one unmapped page before and after the found region.
-pub unsafe fn find_free_pages(pt_root_ppn: PPN, virt_len: VPN) -> EResult<VPN> {
+/// # Safety
+/// - The caller is responsible for preventing a concurrent map/unmap in the same page table.
+unsafe fn find_free_pages(pt_root_ppn: PPN, virt_len: VPN) -> EResult<VPN> {
     let mut vpn = (mmu::higher_half_vaddr() / PAGE_SIZE as usize) as VPN;
     let limit = vpn + (mmu::canon_half_size() / PAGE_SIZE as usize) as VPN;
     let mut start_vpn = 0 as VPN;
@@ -227,6 +248,8 @@ pub unsafe fn find_free_pages(pt_root_ppn: PPN, virt_len: VPN) -> EResult<VPN> {
 
 /// Map a range of memory for the kernel at any virtual address.
 /// Returns the virtual page number where it was mapped.
+/// # Safety
+/// - The caller is responsible for managing the memory at `phys_base`.
 pub unsafe fn map_k(virt_len: VPN, phys_base: PPN, flags: u32) -> EResult<VPN> {
     if flags & flags::U != 0 {
         return Err(Errno::EINVAL);
@@ -236,7 +259,7 @@ pub unsafe fn map_k(virt_len: VPN, phys_base: PPN, flags: u32) -> EResult<VPN> {
     let virt_base = unsafe { find_free_pages(KERNEL_VMM_CTX.pt_root_ppn, virt_len) }?;
     unsafe {
         map_impl(
-            KERNEL_VMM_CTX.pt_root_ppn,
+            &*&raw const KERNEL_VMM_CTX,
             virt_base,
             virt_len,
             phys_base,
@@ -246,9 +269,24 @@ pub unsafe fn map_k(virt_len: VPN, phys_base: PPN, flags: u32) -> EResult<VPN> {
     Ok(virt_base)
 }
 
+/// Unmap a range of kernel memory.
+/// # Safety
+/// - The caller is responsible for ensuring the unmapped memory is no longer in use.
+pub unsafe fn unmap_k(virt_base: VPN, virt_len: VPN) -> EResult<()> {
+    if !mmu::is_canon_kernel_range(
+        virt_base * PAGE_SIZE as usize..(virt_base + virt_len) * PAGE_SIZE as usize,
+    ) {
+        return Err(Errno::EINVAL);
+    }
+    unsafe { map_impl(&*&raw const KERNEL_VMM_CTX, virt_base, virt_len, 0, 0) }
+}
+
 /// Map a range of memory for a user page table at a specific virtual address.
+/// # Safety
+/// - The caller is responsible for managing the memory at `phys_base`;
+/// - The caller is responsible for preventing a concurrent map/unmap in the same page table.
 pub unsafe fn map_u_at(
-    pt_root_ppn: PPN,
+    ctx: &Context,
     virt_base: VPN,
     virt_len: VPN,
     phys_base: PPN,
@@ -262,7 +300,49 @@ pub unsafe fn map_u_at(
         return Err(Errno::EINVAL);
     }
     let flags = flags | flags::U;
-    unsafe { map_impl(pt_root_ppn, virt_base, virt_len, phys_base, flags) }
+    unsafe { map_impl(ctx, virt_base, virt_len, phys_base, flags) }
+}
+
+/// Unmap a range of user memory.
+/// # Safety
+/// - The caller is responsible for preventing a concurrent map/unmap in the same page table.
+pub unsafe fn unmap_u(ctx: &Context, virt_base: VPN, virt_len: VPN) -> EResult<()> {
+    if !mmu::is_canon_user_range(
+        virt_base * PAGE_SIZE as usize..(virt_base + virt_len) * PAGE_SIZE as usize,
+    ) {
+        return Err(Errno::EINVAL);
+    }
+    unsafe { map_impl(ctx, virt_base, virt_len, 0, 0) }
+}
+
+/// Create a user virtual memory context.
+pub fn create_user_ctx() -> EResult<Context> {
+    unsafe {
+        let pt_root_ppn = page_alloc(1)?;
+
+        // Copy the current kernel mappings into this new user page table.
+        let new_pt_hhdm = &*slice_from_raw_parts(
+            (pt_root_ppn * PAGE_SIZE as usize + HHDM_OFFSET) as *const Atomic<PackedPTE>,
+            PTE_PER_PAGE,
+        );
+        let kernel_pt_hhdm = &*slice_from_raw_parts(
+            (KERNEL_VMM_CTX.pt_root_ppn * PAGE_SIZE as usize + HHDM_OFFSET)
+                as *const Atomic<PackedPTE>,
+            PTE_PER_PAGE,
+        );
+        for i in 0..PTE_PER_PAGE {
+            new_pt_hhdm[i].store(kernel_pt_hhdm[i].load(Ordering::Acquire), Ordering::Release);
+        }
+
+        Ok(Context { pt_root_ppn })
+    }
+}
+
+/// Destroy a user virtual memory context.
+/// # Safety
+/// - The caller is responsible for ensuring the context is no longer in use.
+pub unsafe fn destroy_user_ctx(ctx: Context) {
+    todo!()
 }
 
 /// Describes the result of a virtual to physical address translation.
@@ -318,7 +398,7 @@ impl Debug for Virt2Phys {
 }
 
 /// Translate a virtual to a physical address.
-pub unsafe fn virt2phys(pt_root_ppn: PPN, vaddr: usize) -> Virt2Phys {
+pub unsafe fn virt2phys(ctx: &Context, vaddr: usize) -> Virt2Phys {
     if !mmu::is_canon_addr(vaddr) {
         logkf!(
             LogLevel::Warning,
@@ -334,7 +414,7 @@ pub unsafe fn virt2phys(pt_root_ppn: PPN, vaddr: usize) -> Virt2Phys {
         };
     }
 
-    let pte = unsafe { mmu::walk(pt_root_ppn, vaddr / PAGE_SIZE as usize) };
+    let pte = unsafe { mmu::walk(ctx.pt_root_ppn, vaddr / PAGE_SIZE as usize) };
 
     let size = (PAGE_SIZE as usize) << (BITS_PER_LEVEL * pte.level as u32);
     let page_vaddr = vaddr & !(size - 1);
@@ -361,7 +441,7 @@ pub unsafe fn init() {
         let res: EResult<()> = try {
             // Allocate and zero out page table.
             let pt_root_ppn = mmu::alloc_pgtable_page()?;
-            KERNEL_VMM_CTX = vmm_ctx_t { pt_root_ppn };
+            KERNEL_VMM_CTX = Context { pt_root_ppn };
 
             // Kernel RX.
             let text_vaddr = &raw const __start_text as usize;
@@ -371,7 +451,7 @@ pub unsafe fn init() {
                 text_vaddr / PAGE_SIZE as usize,
                 text_len / PAGE_SIZE as usize,
                 (text_vaddr - KERNEL_VADDR + KERNEL_PADDR) / PAGE_SIZE as usize,
-                flags::RX | flags::G,
+                flags::RX | flags::G | flags::A | flags::D,
             )?;
 
             // Kernel R.
@@ -382,7 +462,7 @@ pub unsafe fn init() {
                 rodata_vaddr / PAGE_SIZE as usize,
                 rodata_len / PAGE_SIZE as usize,
                 (rodata_vaddr - KERNEL_VADDR + KERNEL_PADDR) / PAGE_SIZE as usize,
-                flags::R | flags::G,
+                flags::R | flags::G | flags::A | flags::D,
             )?;
 
             // Kernel RW.
@@ -393,7 +473,7 @@ pub unsafe fn init() {
                 data_vaddr / PAGE_SIZE as usize,
                 data_len / PAGE_SIZE as usize,
                 (data_vaddr - KERNEL_VADDR + KERNEL_PADDR) / PAGE_SIZE as usize,
-                flags::RW | flags::G,
+                flags::RW | flags::G | flags::A | flags::D,
             )?;
 
             // HHDM RW.
@@ -402,7 +482,7 @@ pub unsafe fn init() {
                 HHDM_VADDR / PAGE_SIZE as usize,
                 HHDM_SIZE / PAGE_SIZE as usize,
                 (HHDM_VADDR - HHDM_OFFSET) / PAGE_SIZE as usize,
-                flags::RW | flags::G,
+                flags::RW | flags::G | flags::A | flags::D,
             )?;
         };
         res.expect("Failed to create inital page table");
@@ -435,12 +515,20 @@ unsafe extern "C" fn vmm_ctxswitch_from_isr() {
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn vmm_create_user_ctx(ctx: *mut vmm_ctx_t) -> errno_t {
-    todo!()
+pub unsafe extern "C" fn vmm_create_user_ctx(ctx: *mut Context) -> errno_t {
+    match create_user_ctx() {
+        Ok(x) => {
+            unsafe {
+                *ctx = x;
+            }
+            0
+        }
+        Err(x) => -(x as errno_t),
+    }
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn vmm_destroy_user_ctx(ctx: vmm_ctx_t) {
+pub unsafe extern "C" fn vmm_destroy_user_ctx(ctx: Context) {
     todo!()
 }
 
@@ -476,18 +564,21 @@ pub unsafe extern "C" fn vmm_map_k_at(
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn vmm_map_u_at(
-    pt_root_ppn: PPN,
+    vmm_ctx: *mut Context,
     virt_base: VPN,
     virt_len: VPN,
     phys_base: PPN,
     flags: u32,
 ) -> errno_t {
-    Errno::extract(unsafe { map_u_at(pt_root_ppn, virt_base, virt_len, phys_base, flags) })
+    Errno::extract(unsafe { map_u_at(&*vmm_ctx, virt_base, virt_len, phys_base, flags) })
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn vmm_virt2phys(pt_root_ppn: PPN, vaddr: usize) -> virt2phys_t {
-    let tmp = unsafe { virt2phys(pt_root_ppn, vaddr) };
+pub unsafe extern "C" fn vmm_virt2phys(mut vmm_ctx: *mut Context, vaddr: usize) -> virt2phys_t {
+    if vmm_ctx.is_null() {
+        vmm_ctx = &raw mut KERNEL_VMM_CTX;
+    }
+    let tmp = unsafe { virt2phys(&*vmm_ctx, vaddr) };
     virt2phys_t {
         page_vaddr: tmp.page_vaddr,
         page_paddr: tmp.page_paddr,
@@ -499,7 +590,7 @@ pub unsafe extern "C" fn vmm_virt2phys(pt_root_ppn: PPN, vaddr: usize) -> virt2p
 }
 
 #[unsafe(no_mangle)]
-unsafe extern "C" fn vmm_ctxswitch(ctx: *mut vmm_ctx_t) {
+unsafe extern "C" fn vmm_ctxswitch(ctx: *mut Context) {
     unsafe {
         cpu::mmu::set_page_table((*ctx).pt_root_ppn, 0);
         cpu::mmu::vmem_fence(None, None);
