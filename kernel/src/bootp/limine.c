@@ -167,8 +167,8 @@ void bootp_early_init() {
         }
 #endif
         if (entry->type != LIMINE_MEMMAP_BAD_MEMORY && entry->type != LIMINE_MEMMAP_RESERVED &&
-            hhdm_start > entry->base + entry->length) {
-            hhdm_start = entry->base + entry->length;
+            hhdm_start > entry->base) {
+            hhdm_start = entry->base;
         }
         if (entry->type != LIMINE_MEMMAP_BAD_MEMORY && entry->type != LIMINE_MEMMAP_RESERVED &&
             hhdm_end < entry->base + entry->length) {
@@ -301,8 +301,8 @@ void bootp_reclaim_mem() {
     // Reclaim all reclaimable memory.
     for (size_t i = 0; i < reclaimable_len; i++) {
         init_pool(
-            (void *)(reclaimable[i].base + vmm_hhdm_vaddr),
-            (void *)(reclaimable[i].base + reclaimable[i].length + vmm_hhdm_vaddr),
+            (void *)(reclaimable[i].base + vmm_hhdm_offset),
+            (void *)(reclaimable[i].base + reclaimable[i].length + vmm_hhdm_offset),
             0
         );
     }

@@ -246,7 +246,8 @@ uint32_t proc_getflags_raw(process_t *process) {
 
 // Get a handle to the current process, if any.
 process_t *proc_current() {
-    return sched_current_thread()->process;
+    sched_thread_t *thread = sched_current_thread();
+    return thread ? thread->process : NULL;
 }
 
 // Get the PID of the current process, if any.

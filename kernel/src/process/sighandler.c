@@ -34,7 +34,7 @@ char const *signames[SIG_COUNT] = {
 static inline void memmap_info(process_t *const proc, size_t vaddr) {
     logkf_from_isr(LOG_INFO, "While accessing 0x%{size;x}", vaddr);
 #if !CONFIG_NOMMU
-    uint32_t flags = vmm_virt2phys(proc->memmap.mem_ctx.pt_root_ppn, vaddr).flags;
+    uint32_t flags = vmm_virt2phys(&proc->memmap.mem_ctx, vaddr).flags;
 #else
     uint32_t flags = proc_map_contains_raw(proc, vaddr, 1);
 #endif

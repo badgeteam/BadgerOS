@@ -2,13 +2,16 @@
 // SPDX-FileType: SOURCE
 // SPDX-License-Identifier: MIT
 
-use core::ops::Range;
+use core::{
+    ops::Range,
+    sync::atomic::{Atomic, Ordering},
+};
 
 use crate::{
     badgelib::{irq::IrqGuard, rcu::RcuGuard},
     bindings::{error::EResult, log::print},
     config,
-    cpu::mmu::{BITS_PER_LEVEL, PackedPTE},
+    cpu::mmu::{BITS_PER_LEVEL, INVALID_PTE, PackedPTE},
     mem::pmm::{PPN, page_alloc},
 };
 
@@ -30,6 +33,16 @@ pub struct PTE {
 }
 
 impl PTE {
+    /// The PTE that represents unmapped memory.
+    pub const NULL: PTE = PTE {
+        ppn: 0,
+        flags: 0,
+        level: 0,
+        valid: false,
+        leaf: false,
+    };
+
+    /// Whether this PTE represents unmapped memory (as some invalid PTEs may encode demand-mapped things).
     pub fn is_null(&self) -> bool {
         self.ppn == 0 && self.flags == 0 && !self.valid
     }
@@ -39,21 +52,23 @@ impl PTE {
 pub static mut ASID_BITS: u32 = 0;
 /// Number of paging levels.
 pub static mut PAGING_LEVELS: u32 = 0;
+/// Number of PTEs per page.
+pub const PTE_PER_PAGE: usize = PAGE_SIZE as usize / size_of::<PackedPTE>();
 
 /// Read a PTE without any fencing or flushing.
 pub(super) unsafe fn read_pte(pgtable_ppn: PPN, index: usize) -> PackedPTE {
     let pte_vaddr = unsafe { HHDM_OFFSET }
         + pgtable_ppn * config::PAGE_SIZE as usize
         + index * size_of::<PackedPTE>();
-    unsafe { *(pte_vaddr as *const PackedPTE) }
+    unsafe { (*(pte_vaddr as *mut Atomic<PackedPTE>)).load(Ordering::Acquire) }
 }
 
 /// Write a PTE without any fencing or flushing.
-pub(super) unsafe fn write_pte(pgtable_ppn: PPN, index: usize, pte: PackedPTE) {
+pub(super) unsafe fn xchg_pte(pgtable_ppn: PPN, index: usize, pte: PackedPTE) -> PackedPTE {
     let pte_vaddr = unsafe { HHDM_OFFSET }
         + pgtable_ppn * config::PAGE_SIZE as usize
         + index * size_of::<PackedPTE>();
-    unsafe { *(pte_vaddr as *mut PackedPTE) = pte }
+    unsafe { (*(pte_vaddr as *mut Atomic<PackedPTE>)).swap(pte, Ordering::AcqRel) }
 }
 
 /// Get the index in the given page table level for the given virtual address.
@@ -65,7 +80,7 @@ fn get_vpn_index(vpn: VPN, level: u8) -> usize {
 pub(super) fn alloc_pgtable_page() -> EResult<PPN> {
     let ppn = unsafe { page_alloc(1) }?;
     for i in 0..1usize << BITS_PER_LEVEL {
-        unsafe { write_pte(ppn, i, PackedPTE::INVALID) };
+        unsafe { xchg_pte(ppn, i, INVALID_PTE) };
     }
     Ok(ppn)
 }
@@ -76,7 +91,7 @@ fn split_pgtable_leaf(orig: PTE, new_level: u8) -> EResult<PPN> {
     let ppn = unsafe { page_alloc(0) }?;
     for i in 0..1usize << BITS_PER_LEVEL {
         unsafe {
-            write_pte(
+            xchg_pte(
                 ppn,
                 i,
                 PTE {
@@ -96,11 +111,12 @@ fn split_pgtable_leaf(orig: PTE, new_level: u8) -> EResult<PPN> {
 pub unsafe fn map(mut pgtable_ppn: PPN, vpn: VPN, new_pte: PTE) -> EResult<bool> {
     debug_assert!(new_pte.leaf);
     let mut root_touched = false;
+    // RCU guard not needed because only one thread may concurrently modify the page table.
 
     // Descend the page table to the target level.
     for level in (new_pte.level + 1..unsafe { PAGING_LEVELS as u8 }).rev() {
         let index = get_vpn_index(vpn, level as u8);
-        let pte = unsafe { read_pte(pgtable_ppn, index) }.unpack(level);
+        let pte = PTE::unpack(unsafe { read_pte(pgtable_ppn, index) }, level);
 
         pgtable_ppn = if !pte.valid {
             // Create a new level of page table.
@@ -110,7 +126,7 @@ pub unsafe fn map(mut pgtable_ppn: PPN, vpn: VPN, new_pte: PTE) -> EResult<bool>
             }
             let ppn = alloc_pgtable_page()?;
             unsafe {
-                write_pte(
+                xchg_pte(
                     pgtable_ppn,
                     index,
                     PTE {
@@ -129,7 +145,7 @@ pub unsafe fn map(mut pgtable_ppn: PPN, vpn: VPN, new_pte: PTE) -> EResult<bool>
             // Split up the leaf node.
             let ppn = split_pgtable_leaf(pte, level - 1)?;
             unsafe {
-                write_pte(
+                xchg_pte(
                     pgtable_ppn,
                     index,
                     PTE {
@@ -152,7 +168,7 @@ pub unsafe fn map(mut pgtable_ppn: PPN, vpn: VPN, new_pte: PTE) -> EResult<bool>
     // Write new PTE.
     let index = get_vpn_index(vpn, new_pte.level);
     unsafe {
-        write_pte(pgtable_ppn, index, new_pte.pack());
+        xchg_pte(pgtable_ppn, index, new_pte.pack());
     }
 
     Ok(root_touched)
@@ -167,7 +183,7 @@ pub unsafe fn walk(mut pgtable_ppn: PPN, vpn: VPN) -> PTE {
     // Descend the page until a leaf is found.
     for level in (0..unsafe { PAGING_LEVELS }).rev() {
         let index = get_vpn_index(vpn, level as u8);
-        pte = unsafe { read_pte(pgtable_ppn, index) }.unpack(level as u8);
+        pte = PTE::unpack(unsafe { read_pte(pgtable_ppn, index) }, level as u8);
 
         if !pte.valid && level > 0 {
             return pte;
@@ -183,7 +199,7 @@ pub unsafe fn walk(mut pgtable_ppn: PPN, vpn: VPN) -> PTE {
 
 unsafe fn dump_impl(pgtable_ppn: PPN, level: u8, min_level: u8, indent: u8, vpn: VPN) {
     for index in 0..(1usize << BITS_PER_LEVEL) {
-        let pte = unsafe { read_pte(pgtable_ppn, index) }.unpack(level);
+        let pte = PTE::unpack(unsafe { read_pte(pgtable_ppn, index) }, level);
         if pte.is_null() {
             continue;
         }

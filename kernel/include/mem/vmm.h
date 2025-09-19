@@ -48,6 +48,8 @@
 #define VMM_FLAG_RWX (VMM_FLAG_R | VMM_FLAG_W | VMM_FLAG_X)
 
 
+// Note: These types are copied from the Rust code, do not change them!
+
 typedef size_t vpn_t;
 typedef size_t ppn_t;
 
@@ -56,19 +58,19 @@ typedef struct {
     ppn_t pt_root_ppn;
 } vmm_ctx_t;
 
-/// Describes the result of a virtual to physical address translation.
+// Describes the result of a virtual to physical address translation.
 typedef struct {
-    /// Virtual address of page start.
+    // Virtual address of page start.
     vpn_t    page_vaddr;
-    /// Physical address of page start.
+    // Physical address of page start.
     ppn_t    page_paddr;
-    /// Size of the mapping in pages.
+    // Size of the mapping in pages.
     size_t   size;
-    /// Physical address.
+    // Physical address.
     size_t   paddr;
-    /// Flags of the mapping.
+    // Flags of the mapping.
     uint32_t flags;
-    /// Whether the mapping exists; if false, only `vpn` and `size` are valid.
+    // Whether the mapping exists; if false, only `vpn` and `size` are valid.
     bool     valid;
 } virt2phys_t;
 
@@ -101,9 +103,9 @@ errno_t     vmm_map_k(vpn_t *virt_base_out, vpn_t virt_len, ppn_t phys_base, uin
 // Map a range of memory for a user page table at a specific virtual address.
 errno_t     vmm_map_k_at(vpn_t virt_base, vpn_t virt_len, ppn_t phys_base, uint32_t flags);
 // Map a range of memory for a user page table at a specific virtual address.
-errno_t     vmm_map_u_at(ppn_t pt_root_ppn, vpn_t virt_base, vpn_t virt_len, ppn_t phys_base, uint32_t flags);
+errno_t     vmm_map_u_at(vmm_ctx_t *ctx, vpn_t virt_base, vpn_t virt_len, ppn_t phys_base, uint32_t flags);
 // Translate a virtual to a physical address.
-virt2phys_t vmm_virt2phys(ppn_t pt_root_ppn, size_t vaddr);
+virt2phys_t vmm_virt2phys(vmm_ctx_t *ctx, size_t vaddr);
 // Switch to a different user virtual memory context.
 void        vmm_ctxswitch(vmm_ctx_t *ctx);
 // Switch to the kernel virtual memory context.

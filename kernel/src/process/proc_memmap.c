@@ -62,7 +62,8 @@ static int proc_memmap_search(void const *a, void const *_b) {
 // Allocate more memory to a process.
 // Returns actual virtual address on success, 0 on failure.
 errno_size_t proc_map_raw(process_t *proc, size_t vaddr_req, size_t min_size, size_t min_align, uint32_t flags) {
-    proc_memmap_t *map = &proc->memmap;
+    proc_memmap_t *map  = &proc->memmap;
+    flags              |= VMM_FLAG_A | VMM_FLAG_D;
 
     // Correct virtual address.
     if (min_align & (min_align - 1)) {
@@ -131,7 +132,7 @@ errno_size_t proc_map_raw(process_t *proc, size_t vaddr_req, size_t min_size, si
             phys_page_free(ppn);
             goto nomem;
         }
-        if (vmm_map_u_at(proc->memmap.mem_ctx.pt_root_ppn, (vpn + i), ppn, alloc, flags)) {
+        if (vmm_map_u_at(&proc->memmap.mem_ctx, vpn + i, alloc, ppn, flags)) {
             goto nomem;
         }
         logkf(LOG_INFO, "Mapped %{size;d} bytes at %{size;x} to process %{d}", new_ent.size, new_ent.vaddr, proc->pid);
@@ -265,7 +266,7 @@ int proc_map_contains_raw(process_t *proc, size_t vaddr, size_t size) {
     }
     int flags = VMM_FLAG_RWX;
     while (true) {
-        virt2phys_t info = vmm_virt2phys(proc->memmap.mem_ctx.pt_root_ppn, vaddr);
+        virt2phys_t info = vmm_virt2phys(&proc->memmap.mem_ctx, vaddr);
         if (info.flags & VMM_FLAG_RWX) {
             flags &= (int)info.flags;
         } else {

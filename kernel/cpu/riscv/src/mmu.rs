@@ -9,48 +9,40 @@ use crate::mem::{
     vmm::mmu::{ASID_BITS, PAGING_LEVELS, PTE},
 };
 
-#[derive(Debug, Clone, Copy)]
 /// Data type that can store a packed page table entry.
-pub struct PackedPTE(usize);
+pub type PackedPTE = usize;
+/// An invalid PTE with no special data in it.
+pub const INVALID_PTE: PackedPTE = 0;
 
-impl PackedPTE {
-    /// An invalid PTE with no special data in it.
-    pub const INVALID: PackedPTE = PackedPTE(0);
-
+impl PTE {
     #[cfg(target_arch = "riscv32")]
     /// Unpack this PTE.
-    pub fn unpack(self, level: u8) -> PTE {
+    pub fn unpack(raw: PackedPTE, level: u8) -> PTE {
         PTE {
-            ppn: (self.0 >> 10) % (1usize << 57),
-            flags: (self.0 & 0b11_1111_1110) as u32,
-            valid: self.0 & 1 != 0,
-            leaf: self.0 & 0b1110 != 0,
+            ppn: (raw >> 10) % (1usize << 57),
+            flags: (raw & 0b11_1111_1110) as u32,
+            valid: raw & 1 != 0,
+            leaf: raw & 0b1110 != 0,
             level,
         }
     }
 
     #[cfg(target_arch = "riscv64")]
     /// Unpack this PTE.
-    pub fn unpack(self, level: u8) -> PTE {
+    pub fn unpack(raw: PackedPTE, level: u8) -> PTE {
         PTE {
-            ppn: (self.0 >> 10) % (1usize << 57),
-            flags: ((self.0 & 0b11_1111_1110) + (((self.0 >> 61) & 0b11) << 10)) as u32,
-            valid: self.0 & 1 != 0,
-            leaf: self.0 & 0b1110 != 0,
+            ppn: (raw >> 10) % (1usize << 57),
+            flags: ((raw & 0b11_1111_1110) + (((raw >> 61) & 0b11) << 10)) as u32,
+            valid: raw & 1 != 0,
+            leaf: raw & 0b1110 != 0,
             level,
         }
     }
-}
 
-impl PTE {
     #[cfg(target_arch = "riscv32")]
     /// Pack this PTE.
     pub fn pack(self) -> PackedPTE {
-        PackedPTE(
-            (self.ppn << 10) as usize
-                + (self.flags & 0b11_1111_1110) as usize
-                + self.valid as usize,
-        )
+        (self.ppn << 10) as usize + (self.flags & 0b11_1111_1110) as usize + self.valid as usize
     }
 
     #[cfg(target_arch = "riscv64")]
@@ -61,11 +53,9 @@ impl PTE {
         } else {
             0
         };
-        PackedPTE(
-            pbmt + (self.ppn << 10) as usize
-                + (self.flags & 0b11_1111_1110) as usize
-                + self.valid as usize,
-        )
+        pbmt + (self.ppn << 10) as usize
+            + (self.flags & 0b11_1111_1110) as usize
+            + self.valid as usize
     }
 }
 

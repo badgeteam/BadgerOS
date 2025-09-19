@@ -250,7 +250,7 @@ impl SataDriver {
             while offset < data.len() {
                 let v2p = unsafe {
                     vmm::virt2phys(
-                        vmm::KERNEL_VMM_CTX.pt_root_ppn,
+                        &*&raw const vmm::KERNEL_VMM_CTX,
                         data.as_ptr() as usize + offset,
                     )
                 };
