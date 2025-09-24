@@ -94,7 +94,7 @@ bool copy_to_user_raw(process_t *process, size_t user_vaddr, void const *kernel_
         assert_dev_drop(~info.flags & VMM_FLAG_G);
         size_t max_len = info.size - (user_vaddr & (info.size - 1));
         max_len        = len < max_len ? len : max_len;
-        mem_copy((uint8_t *)vmm_hhdm_vaddr + info.paddr, kernel_vaddr, max_len);
+        mem_copy((uint8_t *)vmm_hhdm_offset + info.paddr, kernel_vaddr, max_len);
         len          -= max_len;
         user_vaddr   += max_len;
         kernel_vaddr += max_len;

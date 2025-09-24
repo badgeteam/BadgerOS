@@ -492,7 +492,7 @@ pub unsafe fn init() {
 
             // Page of zeroes.
             let zeroes_ppn = pmm::page_alloc(1)?;
-            let zeroes_vpn = map_k(1, zeroes_ppn, flags::R | flags::G)?;
+            let zeroes_vpn = map_k(1, zeroes_ppn, flags::R | flags::G | flags::A | flags::D)?;
             ZEROES = slice_from_raw_parts(
                 (zeroes_vpn * PAGE_SIZE as usize) as *const u8,
                 PAGE_SIZE as usize,

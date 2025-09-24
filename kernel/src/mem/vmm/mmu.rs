@@ -32,6 +32,16 @@ pub struct PTE {
     pub leaf: bool,
 }
 
+impl PartialEq for PTE {
+    fn eq(&self, other: &Self) -> bool {
+        self.ppn == other.ppn
+            && (self.flags | flags::IO | flags::NC) == (other.flags | flags::IO | flags::NC)
+            && self.level == other.level
+            && self.valid == other.valid
+            && self.leaf == other.leaf
+    }
+}
+
 impl PTE {
     /// The PTE that represents unmapped memory.
     pub const NULL: PTE = PTE {
@@ -109,6 +119,8 @@ fn split_pgtable_leaf(orig: PTE, new_level: u8) -> EResult<PPN> {
 /// Create a new mapping in the page table.
 /// Returns whether the page table root was touched.
 pub unsafe fn map(mut pgtable_ppn: PPN, vpn: VPN, new_pte: PTE) -> EResult<bool> {
+    #[cfg(debug_assertions)]
+    let orig_ppn = pgtable_ppn;
     debug_assert!(new_pte.leaf);
     let mut root_touched = false;
     // RCU guard not needed because only one thread may concurrently modify the page table.
@@ -171,6 +183,11 @@ pub unsafe fn map(mut pgtable_ppn: PPN, vpn: VPN, new_pte: PTE) -> EResult<bool>
         xchg_pte(pgtable_ppn, index, new_pte.pack());
     }
 
+    #[cfg(debug_assertions)]
+    {
+        let tmp = unsafe { walk(orig_ppn, vpn) };
+        debug_assert!(tmp == new_pte);
+    };
     Ok(root_touched)
 }
 
