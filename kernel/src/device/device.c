@@ -102,7 +102,16 @@ static bool device_init(device_union_t *device) {
                 ) < 0) {
                 for (i--; i != SIZE_MAX; i--) {
                     if (device->base.info.addrs[i].type == DEV_ATYPE_MMIO) {
-                        // TODO: Unmap this.
+                        dev_mmio_addr_t *addr  = &device->base.info.addrs[i].mmio;
+                        size_t           vaddr = addr->vaddr;
+                        size_t           size  = addr->size;
+
+                        size  += vaddr % CONFIG_PAGE_SIZE;
+                        vaddr += vaddr % CONFIG_PAGE_SIZE;
+                        if (size % CONFIG_PAGE_SIZE) {
+                            size += CONFIG_PAGE_SIZE - size % CONFIG_PAGE_SIZE;
+                        }
+                        assert_dev_keep(vmm_unmap_k(vaddr / CONFIG_PAGE_SIZE, size / CONFIG_PAGE_SIZE) >= 0);
                         addr->vaddr = 0;
                     }
                 }
@@ -128,7 +137,7 @@ static void device_deinit(device_union_t *device) {
             if (addr.size % CONFIG_PAGE_SIZE) {
                 addr.size += CONFIG_PAGE_SIZE - addr.size % CONFIG_PAGE_SIZE;
             }
-            // TODO: Unmap this.
+            assert_dev_keep(vmm_unmap_k(addr.vaddr / CONFIG_PAGE_SIZE, addr.size / CONFIG_PAGE_SIZE) >= 0);
         }
     }
 

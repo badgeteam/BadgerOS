@@ -142,7 +142,7 @@ void uacpi_kernel_unmap(void *addr, uacpi_size len) {
     if (len % CONFIG_PAGE_SIZE) {
         len += CONFIG_PAGE_SIZE - len % CONFIG_PAGE_SIZE;
     }
-    // TODO: Unmap this.
+    assert_dev_keep(vmm_unmap_k(vaddr / CONFIG_PAGE_SIZE, len / CONFIG_PAGE_SIZE) >= 0);
 }
 
 /*
