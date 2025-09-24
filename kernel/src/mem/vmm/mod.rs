@@ -484,6 +484,15 @@ pub unsafe fn init() {
                 (HHDM_VADDR - HHDM_OFFSET) / PAGE_SIZE as usize,
                 flags::RW | flags::G | flags::A | flags::D,
             )?;
+
+            // Page of zeroes.
+            let zeroes_ppn = pmm::page_alloc(1)?;
+            let zeroes_vpn = map_k(1, zeroes_ppn, flags::R | flags::G | flags::A | flags::D)?;
+            ZEROES = slice_from_raw_parts(
+                (zeroes_vpn * PAGE_SIZE as usize) as *const u8,
+                PAGE_SIZE as usize,
+            );
+            (*(ZEROES as *mut [u8])).fill(0);
         };
         res.expect("Failed to create inital page table");
 

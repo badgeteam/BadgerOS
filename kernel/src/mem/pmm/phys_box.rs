@@ -1,7 +1,7 @@
 use core::ops::{Deref, DerefMut};
 
 use crate::{
-    bindings::{error::EResult, log::LogLevel},
+    bindings::error::EResult,
     config::{self, PAGE_SIZE},
     mem,
 };
@@ -23,6 +23,8 @@ impl<T: Sized> PhysBox<T> {
             let ppn = mem::pmm::page_alloc(page_count)?;
             let paddr = ppn * config::PAGE_SIZE as usize;
             let flags = mem::vmm::flags::RW
+                + mem::vmm::flags::A
+                + mem::vmm::flags::D
                 + io as u32 * mem::vmm::flags::IO
                 + nc as u32 * mem::vmm::flags::NC;
             let res = mem::vmm::map_k(aligned_size, ppn, flags);
