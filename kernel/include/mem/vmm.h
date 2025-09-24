@@ -102,8 +102,12 @@ void    vmm_destroy_user_ctx(vmm_ctx_t pt_root_ppn);
 errno_t     vmm_map_k(vpn_t *virt_base_out, vpn_t virt_len, ppn_t phys_base, uint32_t flags);
 // Map a range of memory for a user page table at a specific virtual address.
 errno_t     vmm_map_k_at(vpn_t virt_base, vpn_t virt_len, ppn_t phys_base, uint32_t flags);
+// Unmap a range of kernel memory.
+errno_t     vmm_unmap_k(vpn_t virt_base, vpn_t virt_len);
 // Map a range of memory for a user page table at a specific virtual address.
 errno_t     vmm_map_u_at(vmm_ctx_t *ctx, vpn_t virt_base, vpn_t virt_len, ppn_t phys_base, uint32_t flags);
+// Unmap a range of user memory.
+errno_t     vmm_unmap_u(vmm_ctx_t *ctx, vpn_t virt_base, vpn_t virt_len);
 // Translate a virtual to a physical address.
 virt2phys_t vmm_virt2phys(vmm_ctx_t *ctx, size_t vaddr);
 // Switch to a different user virtual memory context.

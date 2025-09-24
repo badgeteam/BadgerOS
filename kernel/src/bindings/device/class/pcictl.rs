@@ -9,7 +9,7 @@ use crate::{
         log::LogLevel,
         raw::{self, dev_class_t_DEV_CLASS_PCICTL, device_pcictl_t, pci_bar_info_t},
     },
-    logkf,
+    config, logkf, mem,
 };
 
 /// Representation of some mapped PCIe BAR memory.
@@ -26,7 +26,18 @@ impl MappedBar {
 
 impl Drop for MappedBar {
     fn drop(&mut self) {
-        logkf!(LogLevel::Warning, "TODO: Unmap PCI BAR memory");
+        let mut vaddr = self.vaddr;
+        let mut size = self.info.len;
+        size += vaddr % config::PAGE_SIZE as usize;
+        vaddr -= vaddr % config::PAGE_SIZE as usize;
+        let res = unsafe {
+            mem::vmm::unmap_k(
+                vaddr / config::PAGE_SIZE as usize,
+                size.div_ceil(config::PAGE_SIZE as usize),
+            )
+        };
+        #[cfg(debug_assertions)]
+        res.unwrap();
     }
 }
 

@@ -114,6 +114,7 @@ unsafe extern "C" {
 }
 
 // Memory management context.
+#[repr(C)]
 pub struct Context {
     pt_root_ppn: PPN,
 }
@@ -342,7 +343,7 @@ pub fn create_user_ctx() -> EResult<Context> {
 /// # Safety
 /// - The caller is responsible for ensuring the context is no longer in use.
 pub unsafe fn destroy_user_ctx(ctx: Context) {
-    todo!()
+    logkf!(LogLevel::Warning, "TODO: vmm::destroy_user_ctx");
 }
 
 /// Describes the result of a virtual to physical address translation.
@@ -538,7 +539,7 @@ pub unsafe extern "C" fn vmm_create_user_ctx(ctx: *mut Context) -> errno_t {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn vmm_destroy_user_ctx(ctx: Context) {
-    todo!()
+    unsafe { destroy_user_ctx(ctx) };
 }
 
 #[unsafe(no_mangle)]
@@ -572,6 +573,11 @@ pub unsafe extern "C" fn vmm_map_k_at(
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn vmm_unmap_k(virt_base: VPN, virt_len: VPN) -> errno_t {
+    Errno::extract(unsafe { unmap_k(virt_base, virt_len) })
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vmm_map_u_at(
     vmm_ctx: *mut Context,
     virt_base: VPN,
@@ -580,6 +586,15 @@ pub unsafe extern "C" fn vmm_map_u_at(
     flags: u32,
 ) -> errno_t {
     Errno::extract(unsafe { map_u_at(&*vmm_ctx, virt_base, virt_len, phys_base, flags) })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn vmm_unmap_u(
+    vmm_ctx: *mut Context,
+    virt_base: VPN,
+    virt_len: VPN,
+) -> errno_t {
+    Errno::extract(unsafe { unmap_u(&*vmm_ctx, virt_base, virt_len) })
 }
 
 #[unsafe(no_mangle)]
