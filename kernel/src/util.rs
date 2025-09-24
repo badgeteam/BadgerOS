@@ -1,4 +1,4 @@
-use core::{ops::Deref, ptr::slice_from_raw_parts};
+use core::ops::Deref;
 
 use alloc::string::String;
 use uuid::Uuid;
