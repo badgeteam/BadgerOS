@@ -1,4 +1,11 @@
-use core::sync::atomic::{AtomicU32, AtomicUsize};
+// SPDX-FileCopyrightText: 2025 Julian Scheffers <julian@scheffers.net>
+// SPDX-FileType: SOURCE
+// SPDX-License-Identifier: MIT
+
+use core::{
+    ops::Range,
+    sync::atomic::{AtomicU32, AtomicUsize},
+};
 
 use crate::bindings::{
     self,
@@ -44,6 +51,8 @@ pub struct Page {
     // TODO: Pointer to structure that exposes where it's mapped in user virtual memory.
     // Kernel virtual mappings need not be tracked because they are not swappable.
 }
+unsafe impl Send for Page {}
+unsafe impl Sync for Page {}
 
 /// Unsigned integer that can store a physical page number.
 pub type AtomicPPN = AtomicUsize;
@@ -58,6 +67,11 @@ pub static KERNEL_PAGES: AtomicPPN = AtomicPPN::new(0);
 pub static CACHE_PAGES: AtomicPPN = AtomicPPN::new(0);
 /// Physical pages used in use.
 pub static USED_PAGES: AtomicPPN = AtomicPPN::new(0);
+
+/// Range of pages covered by the page allocator.
+static mut PAGE_RANGE: Range<PPN> = 0..0;
+/// Pointer to the page struct array.
+static mut PAGE_STRUCTS: *mut Page = core::ptr::null_mut();
 
 /// Allocate pages of physical memory.
 pub unsafe fn page_alloc(count: usize) -> EResult<PPN> {
@@ -76,6 +90,9 @@ pub unsafe fn page_free(ppn: PPN, count: usize) {
 
 /// Get the [`Page`] struct for some physical page number.
 /// Manipulating the data within the struct is unsafe.
-pub unsafe fn page_struct(ppn: PPN) -> Option<&'static Page> {
+pub unsafe fn page_struct(ppn: PPN) -> Option<&'static mut Page> {
     todo!()
 }
+
+/// Initialize the physical memory allocator.
+pub unsafe fn init() {}
