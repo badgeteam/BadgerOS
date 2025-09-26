@@ -17,11 +17,11 @@ unsafe impl<T, const SHARED: bool> Send for Spinlock<T, SHARED> {}
 unsafe impl<T, const SHARED: bool> Sync for Spinlock<T, SHARED> {}
 
 impl<T, const SHARED: bool> Spinlock<T, SHARED> {
-    unsafe fn spinlock(&self) -> &mut spinlock_t {
+    pub unsafe fn spinlock(&self) -> &mut spinlock_t {
         unsafe { self.inner.as_mut_unchecked() }
     }
 
-    unsafe fn data(&self) -> &mut T {
+    pub unsafe fn data(&self) -> &mut T {
         unsafe { self.data.as_mut_unchecked() }
     }
 }
