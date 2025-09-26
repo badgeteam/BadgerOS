@@ -22,9 +22,9 @@ impl<T: Sized> PhysBox<T> {
     /// Try to allocate some page-aligned physical memory and map it.
     pub unsafe fn try_new(io: bool, nc: bool) -> EResult<Self> {
         unsafe {
-            let page_count = size_of::<T>().div_ceil(config::PAGE_SIZE as usize);
-            let aligned_size = page_count * config::PAGE_SIZE as usize;
-            let ppn = mem::pmm::page_alloc(page_count)?;
+            let order = mem::pmm::size_to_order(size_of::<T>());
+            let aligned_size = mem::pmm::order_to_size(order);
+            let ppn = mem::pmm::page_alloc(order, mem::pmm::PageUsage::KernelAnon)?;
             let paddr = ppn * config::PAGE_SIZE as usize;
             let flags = mem::vmm::flags::RW
                 + mem::vmm::flags::A
@@ -33,7 +33,7 @@ impl<T: Sized> PhysBox<T> {
                 + nc as u32 * mem::vmm::flags::NC;
             let res = mem::vmm::map_k(aligned_size, ppn, flags);
             if let Err(e) = &res {
-                mem::pmm::page_free(ppn, page_count);
+                mem::pmm::page_free(ppn, order);
                 return Err(*e);
             }
             let vaddr = (res.unwrap() * PAGE_SIZE as usize) as *mut T;
@@ -71,9 +71,14 @@ impl<T: Sized> DerefMut for PhysBox<T> {
 impl<T: Sized> Drop for PhysBox<T> {
     fn drop(&mut self) {
         unsafe {
-            let page_count = size_of::<T>().div_ceil(config::PAGE_SIZE as usize);
-            mem::vmm::unmap_k(self.vaddr as usize, page_count * PAGE_SIZE as usize).unwrap();
-            mem::pmm::page_free(self.paddr / PAGE_SIZE as usize, page_count);
+            let order = mem::pmm::size_to_order(size_of::<T>());
+            let aligned_size = mem::pmm::order_to_size(order);
+            mem::vmm::unmap_k(
+                self.vaddr as usize / config::PAGE_SIZE as usize,
+                aligned_size / config::PAGE_SIZE as usize,
+            )
+            .unwrap();
+            mem::pmm::page_free(self.paddr / PAGE_SIZE as usize, order);
         }
     }
 }

@@ -88,7 +88,7 @@ fn get_vpn_index(vpn: VPN, level: u8) -> usize {
 
 /// Try to allocate a new page table page.
 pub(super) fn alloc_pgtable_page() -> EResult<PPN> {
-    let ppn = unsafe { page_alloc(1) }?;
+    let ppn = unsafe { page_alloc(0, pmm::PageUsage::PageTable) }?;
     for i in 0..1usize << BITS_PER_LEVEL {
         unsafe { xchg_pte(ppn, i, INVALID_PTE) };
     }
@@ -98,7 +98,7 @@ pub(super) fn alloc_pgtable_page() -> EResult<PPN> {
 /// Try to split a page table leaf node.
 fn split_pgtable_leaf(orig: PTE, new_level: u8) -> EResult<PPN> {
     debug_assert!(orig.leaf && orig.valid);
-    let ppn = unsafe { page_alloc(0) }?;
+    let ppn = unsafe { page_alloc(0, pmm::PageUsage::PageTable) }?;
     for i in 0..1usize << BITS_PER_LEVEL {
         unsafe {
             xchg_pte(

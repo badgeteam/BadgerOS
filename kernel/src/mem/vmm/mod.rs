@@ -95,23 +95,23 @@ unsafe extern "C" {
     /// Higher-half direct map virtual address.
     /// Provided by boot protocol.
     #[link_name = "vmm_hhdm_vaddr"]
-    static mut HHDM_VADDR: usize;
+    pub static mut HHDM_VADDR: usize;
     /// Higher-half direct map address offset (paddr -> vaddr).
     /// Provided by boot protocol.
     #[link_name = "vmm_hhdm_offset"]
-    static mut HHDM_OFFSET: usize;
+    pub static mut HHDM_OFFSET: usize;
     /// Higher-half direct map size.
     /// Provided by boot protocol.
     #[link_name = "vmm_hhdm_size"]
-    static mut HHDM_SIZE: usize;
+    pub static mut HHDM_SIZE: usize;
     /// Kernel base virtual address.
     /// Provided by boot protocol.
     #[link_name = "vmm_kernel_vaddr"]
-    static mut KERNEL_VADDR: usize;
+    pub static mut KERNEL_VADDR: usize;
     /// Kernel base physical address.
     /// Provided by boot protocol.
     #[link_name = "vmm_kernel_paddr"]
-    static mut KERNEL_PADDR: usize;
+    pub static mut KERNEL_PADDR: usize;
 }
 
 // Memory management context.
@@ -320,7 +320,7 @@ pub unsafe fn unmap_u(ctx: &Context, virt_base: VPN, virt_len: VPN) -> EResult<(
 /// Create a user virtual memory context.
 pub fn create_user_ctx() -> EResult<Context> {
     unsafe {
-        let pt_root_ppn = page_alloc(1)?;
+        let pt_root_ppn = page_alloc(0, pmm::PageUsage::PageTable)?;
 
         // Copy the current kernel mappings into this new user page table.
         let new_pt_hhdm = &*slice_from_raw_parts(
@@ -488,11 +488,16 @@ pub unsafe fn init() {
             )?;
 
             // Page of zeroes.
-            let zeroes_ppn = pmm::page_alloc(1)?;
-            let zeroes_vpn = map_k(1, zeroes_ppn, flags::R | flags::G | flags::A | flags::D)?;
+            let zeroes_order = 0;
+            let zeroes_ppn = pmm::page_alloc(zeroes_order, pmm::PageUsage::KernelAnon)?;
+            let zeroes_vpn = map_k(
+                1 << zeroes_order,
+                zeroes_ppn,
+                flags::R | flags::G | flags::A | flags::D,
+            )?;
             ZEROES = slice_from_raw_parts(
                 (zeroes_vpn * PAGE_SIZE as usize) as *const u8,
-                PAGE_SIZE as usize,
+                (PAGE_SIZE as usize) << zeroes_order,
             );
             (*(ZEROES as *mut [u8])).fill(0);
         };
