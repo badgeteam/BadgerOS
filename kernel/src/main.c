@@ -10,6 +10,7 @@
 #include "interrupt.h"
 #include "isr_ctx.h"
 #include "kmodule.h"
+#include "ktest.h"
 #include "log.h"
 #include "malloc.h"
 #include "memprotect.h"
@@ -62,6 +63,7 @@ void basic_runtime_init() {
     memprotect_early_init();
     // Early platform initialization.
     bootp_early_init();
+    ktests_runlevel(KTEST_WHEN_EARLY);
 
     // Announce that we're alive.
     logk_from_isr(LOG_INFO, "================================================");
@@ -70,11 +72,13 @@ void basic_runtime_init() {
 
     // Kernel memory allocator initialization.
     kernel_heap_init();
+    ktests_runlevel(KTEST_WHEN_HEAP);
 
     // Post-heap memory protection initialization.
     memprotect_postheap_init();
     // Post-heap protocol-dependent initialization.
     bootp_postheap_init();
+    ktests_runlevel(KTEST_WHEN_VMM);
 
     // Global scheduler initialization.
     sched_init();
@@ -95,6 +99,8 @@ void basic_runtime_init() {
 
 // Manages the kernel's lifetime after basic runtime initialization.
 static void kernel_lifetime_func() {
+    ktests_runlevel(KTEST_WHEN_SCHED);
+
     // Initialize the built-in kernel modules.
     for (kmodule_t const **cur = start_kmodules; cur != stop_kmodules; cur++) {
         logkf(LOG_INFO, "Init built-in module '%{cs}'", (**cur).name);
@@ -155,6 +161,7 @@ static void kernel_init() {
 
     // Try to mount the root filesystem.
     fs_mount_root_fs();
+    ktests_runlevel(KTEST_WHEN_ROOTFS);
 }
 
 

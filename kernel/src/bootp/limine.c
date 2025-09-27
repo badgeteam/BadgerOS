@@ -8,6 +8,7 @@
 #include "device/class/pcictl.h"
 #include "device/dev_class.h"
 #include "device/device.h"
+#include "ktest.h"
 #include "log.h"
 #include "panic.h"
 #include "rawprint.h"
@@ -208,6 +209,7 @@ void bootp_early_init() {
         (void *)(early_pool->base + early_pool->length + mmu_hhdm_vaddr),
         0
     );
+    ktests_runlevel(KTEST_WHEN_PMM);
 }
 
 // Post-heap protocol-dependent initialization; after the boot announcement log.

@@ -37,6 +37,8 @@ pub mod badgelib;
 pub mod config;
 pub mod device;
 pub mod filesystem;
+#[macro_use]
+pub mod ktest;
 pub mod kparam;
 pub mod util;
 

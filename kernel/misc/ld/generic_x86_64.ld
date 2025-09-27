@@ -34,12 +34,9 @@ SECTIONS
         __start_kmodules = .;
         KEEP(*(.kmodules .kmodules.*))
         __stop_kmodules = .;
-        __start_drivers = .;
-        KEEP(*(.drivers .drivers.*))
-        __stop_drivers = .;
-        __start_fsdrivers = .;
-        KEEP(*(.fsdrivers .fsdrivers.*))
-        __stop_fsdrivers = .;
+        __start_ktests = .;
+        KEEP(*(.ktests .ktests.*))
+        __stop_ktests = .;
     } :rodata
     .dynstr : { *(.dynstr) } :rodata
     .dynsym : { *(.dynsym) } :rodata
