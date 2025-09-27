@@ -61,6 +61,8 @@ endif()
 config_const(NOMMU false "Build for system without an MMU")
 config_const(PAGE_SIZE 4096 "MMU / memory map page size")
 
+config_bool(KTEST false "Run kernel self tests")
+
 
 
 set(common_compiler_flags
@@ -214,11 +216,16 @@ endforeach()
 file(CONFIGURE OUTPUT "cmake_config.rs" CONTENT "${RUST_CONFIG_FILE}")
 
 # Integrate Rust.
+if(${CONFIG_KTEST})
+    set(rust_features --features=ktest)
+else()
+    set(rust_features)
+endif()
 set(rust_target ${CMAKE_CURRENT_LIST_DIR}/misc/rust_target/${CONFIG_CPU}-kernel.json)
 set(rust_lib ${CMAKE_CURRENT_LIST_DIR}/target/${CONFIG_CPU}-kernel/debug/libbadgeros_kernel.a)
 add_custom_target(
     rust.target ALL
-    cargo +nightly build -Z build-std=core,alloc --target=${rust_target}
+    cargo +nightly build -Z build-std=core,alloc --target=${rust_target} ${rust_features}
 )
 add_dependencies(${target} rust.target)
 target_link_libraries(${target} PRIVATE -Wl,--whole-archive ${rust_lib} -Wl,--no-whole-archive)

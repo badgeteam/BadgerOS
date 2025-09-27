@@ -33,6 +33,8 @@ pub mod badgelib;
 pub mod config;
 pub mod device;
 pub mod filesystem;
+#[macro_use]
+pub mod ktest;
 pub mod kparam;
 pub mod mem;
 pub mod util;
@@ -45,26 +47,7 @@ pub mod cpu;
 pub mod cpu;
 
 use bindings::log::*;
-use core::{alloc::GlobalAlloc, ffi::c_void, ops::Deref, panic::PanicInfo};
-
-#[derive(Clone, Copy)]
-pub struct ReadOnly<T> {
-    inner: T,
-}
-
-impl<T> ReadOnly<T> {
-    pub fn new<'a>(thing: &'a mut T) -> &'a mut ReadOnly<T> {
-        unsafe { &mut *(thing as *mut T as *mut ReadOnly<T>) }
-    }
-}
-
-impl<T> Deref for ReadOnly<T> {
-    type Target = T;
-
-    fn deref(&self) -> &Self::Target {
-        &self.inner
-    }
-}
+use core::{alloc::GlobalAlloc, ffi::c_void, panic::PanicInfo};
 
 #[global_allocator]
 pub static BADGEROS_RUST_MALLOC: BadgerOSMalloc = BadgerOSMalloc {};

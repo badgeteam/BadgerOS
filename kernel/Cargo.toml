@@ -3,6 +3,10 @@ name = "badgeros_kernel"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+# Uses a custom framework to perform various unit tests in-kernel.
+ktest = []
+
 [lib]
 crate-type = ["staticlib"]
 test = false

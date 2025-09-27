@@ -1511,14 +1511,54 @@ impl VfsOps for E2Fs {
     fn rename(
         &self,
         arc_self: &Arc<Vfs>,
-        src_dir: &Arc<VNode>,
+        _src_dir: &Arc<VNode>,
         src_name: &[u8],
         src_mutexinner: &mut VNodeMtxInner,
         dest_dir: &Arc<VNode>,
         dest_name: &[u8],
         dest_mutexinner: &mut VNodeMtxInner,
     ) -> EResult<Dirent> {
-        todo!()
+        let src_ops = (src_mutexinner.ops.as_mut() as &mut dyn Any)
+            .downcast_mut::<E2VNode>()
+            .unwrap();
+        let dest_ops = (dest_mutexinner.ops.as_mut() as &mut dyn Any)
+            .downcast_mut::<E2VNode>()
+            .unwrap();
+
+        // Find source dirent.
+        let mut found = None;
+        src_ops.iter_dirents(&arc_self, &mut |dent, offset, dent_name| {
+            if *src_name == *dent_name {
+                found = Some((*dent, offset));
+                Ok(false)
+            } else {
+                Ok(true)
+            }
+        })?;
+        let (found, _offset) = found.ok_or(Errno::ENOENT)?;
+
+        // Create new dirent.
+        dest_ops.create_dirent(
+            dest_dir,
+            NonZeroU32::new(found.ino).ok_or(Errno::EIO)?,
+            dest_name,
+            found.file_type.try_into()?,
+        )?;
+
+        // Delete old dirent.
+        src_ops.delete_dirent(
+            &arc_self,
+            src_name,
+            Some(NonZeroU32::new(found.ino).unwrap()),
+        )?;
+
+        Ok(Dirent {
+            ino: found.ino as u64,
+            type_: FileType::try_from(found.file_type)?.into(),
+            name: dest_name.into(),
+            dirent_disk_off: 0,
+            dirent_off: 0,
+        })
     }
 
     fn sync(&self) -> EResult<()> {

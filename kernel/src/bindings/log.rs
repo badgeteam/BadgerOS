@@ -16,7 +16,7 @@ pub enum LogLevel {
     Debug,
 }
 
-/// Print a hexdump without locking the mutex.
+/// Log a hexdump without locking the mutex.
 pub fn logk_hexdump_unlocked(level: LogLevel, msg: &str, addr: Option<usize>, data: &[u8]) {
     unsafe {
         raw::logk_len_hexdump_vaddr_from_isr(
@@ -30,7 +30,7 @@ pub fn logk_hexdump_unlocked(level: LogLevel, msg: &str, addr: Option<usize>, da
     }
 }
 
-/// Print a hexdump.
+/// Log a hexdump.
 pub fn logk_hexdump(level: LogLevel, msg: &str, addr: Option<usize>, data: &[u8]) {
     unsafe {
         raw::logk_len_hexdump_vaddr(
@@ -44,14 +44,14 @@ pub fn logk_hexdump(level: LogLevel, msg: &str, addr: Option<usize>, data: &[u8]
     }
 }
 
-/// Print an unformatted message without locking the mutex.
+/// Log an unformatted message without locking the mutex.
 pub fn logk_unlocked(level: LogLevel, msg: &str) {
     unsafe {
         raw::logk_len_from_isr(level as u32, msg.as_ptr() as *const c_char, msg.len());
     }
 }
 
-/// Print an unformatted message.
+/// Log an unformatted message.
 pub fn logk(level: LogLevel, msg: &str) {
     unsafe {
         raw::logk_len(level as u32, msg.as_ptr() as *const c_char, msg.len());
@@ -69,7 +69,7 @@ impl Write for LogWriter {
     }
 }
 
-/// Print a formatted message without locking the mutex.
+/// Log a formatted message without locking the mutex.
 pub fn logkf_unlocked(level: LogLevel, thing: &dyn Display) {
     unsafe {
         raw::logk_prefix(level as u32);
@@ -82,7 +82,7 @@ pub fn logkf_unlocked(level: LogLevel, thing: &dyn Display) {
     }
 }
 
-/// Print a formatted message.
+/// Log a formatted message.
 pub fn logkf(level: LogLevel, thing: &dyn Display) {
     let acq = unsafe { raw::mutex_acquire(&raw mut raw::log_mtx, raw::LOG_MUTEX_TIMEOUT.into()) };
     logkf_unlocked(level, thing);
@@ -91,7 +91,23 @@ pub fn logkf(level: LogLevel, thing: &dyn Display) {
     }
 }
 
-/// Print a formatted message without locking the mutex.
+/// Write a formatted string without locking the mutex.
+pub fn printf_unlocked(thing: &dyn Display) {
+    let mut writer = LogWriter {};
+    let mut fmt = Formatter::new(&mut writer, Default::default());
+    let _ = thing.fmt(&mut fmt);
+}
+
+/// Write a formatted string.
+pub fn printf(thing: &dyn Display) {
+    let acq = unsafe { raw::mutex_acquire(&raw mut raw::log_mtx, raw::LOG_MUTEX_TIMEOUT.into()) };
+    printf_unlocked(thing);
+    if acq {
+        unsafe { raw::mutex_release(&raw mut raw::log_mtx) };
+    }
+}
+
+/// Log a formatted message without locking the mutex.
 #[macro_export]
 macro_rules! logkf_unlocked {
     ($level: expr, $($args:expr),*) => {
@@ -99,7 +115,7 @@ macro_rules! logkf_unlocked {
     };
 }
 
-/// Print a formatted message.
+/// Log a formatted message.
 #[macro_export]
 macro_rules! logkf {
     ($level: expr, $($args:expr),*) => {
@@ -107,21 +123,7 @@ macro_rules! logkf {
     };
 }
 
-/// Write an unformatted message.
-pub fn print(msg: &str) {
-    unsafe {
-        raw::rawprint_substr(msg.as_ptr(), msg.len());
-    }
-}
-
 /// Write a formatted message.
-pub fn printf(thing: &dyn Display) {
-    let mut writer = LogWriter {};
-    let mut fmt = Formatter::new(&mut writer, Default::default());
-    let _ = thing.fmt(&mut fmt);
-}
-
-/// Print a formatted message.
 #[macro_export]
 macro_rules! printf {
     ($($args:expr),*) => {

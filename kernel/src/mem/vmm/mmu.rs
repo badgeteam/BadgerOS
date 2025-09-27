@@ -9,7 +9,7 @@ use core::{
 
 use crate::{
     badgelib::{irq::IrqGuard, rcu::RcuGuard},
-    bindings::{error::EResult, log::print},
+    bindings::error::EResult,
     config,
     cpu::mmu::{BITS_PER_LEVEL, INVALID_PTE, PackedPTE},
     mem::pmm::{PPN, page_alloc},
@@ -222,7 +222,7 @@ unsafe fn dump_impl(pgtable_ppn: PPN, level: u8, min_level: u8, indent: u8, vpn:
         }
         use flags::*;
         for _ in 0..indent {
-            print("    ");
+            printf!("    ");
         }
         printf!(
             "[{:3}] 0x{:x} {}{}{}{}{}{}{} {} {}",
@@ -251,10 +251,10 @@ unsafe fn dump_impl(pgtable_ppn: PPN, level: u8, min_level: u8, indent: u8, vpn:
         if pte.leaf {
             printf!(" (leaf 0x{:x})\n", vpn);
         } else if level > min_level {
-            print("\n");
+            printf!("\n");
             unsafe { dump_impl(pte.ppn, level - 1, min_level, indent + 1, vpn) };
         } else {
-            print("\n");
+            printf!("\n");
         }
     }
 }

@@ -6,6 +6,7 @@
 #include "device/class/pcictl.h"
 #include "device/dev_class.h"
 #include "device/device.h"
+#include "ktest.h"
 #include "log.h"
 #include "mem/pmm.h"
 #include "mem/vmm.h"
@@ -211,6 +212,7 @@ void bootp_early_init() {
         (early_pool->base + CONFIG_PAGE_SIZE - 1) / CONFIG_PAGE_SIZE,
         (early_pool->base + early_pool->length) / CONFIG_PAGE_SIZE
     );
+    ktests_runlevel(KTEST_WHEN_PMM);
 }
 
 // Post-heap protocol-dependent initialization; after the boot announcement log.
