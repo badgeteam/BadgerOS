@@ -47,28 +47,9 @@ pub mod cpu;
 #[path = "../cpu/x86_64/src/mod.rs"]
 pub mod cpu;
 
-use core::{alloc::GlobalAlloc, ffi::c_void, ops::Deref, panic::PanicInfo};
+use core::{alloc::GlobalAlloc, ffi::c_void, panic::PanicInfo};
 
 pub use bindings::log::*;
-
-#[derive(Clone, Copy)]
-pub struct ReadOnly<T> {
-    inner: T,
-}
-
-impl<T> ReadOnly<T> {
-    pub fn new<'a>(thing: &'a mut T) -> &'a mut ReadOnly<T> {
-        unsafe { &mut *(thing as *mut T as *mut ReadOnly<T>) }
-    }
-}
-
-impl<T> Deref for ReadOnly<T> {
-    type Target = T;
-
-    fn deref(&self) -> &Self::Target {
-        &self.inner
-    }
-}
 
 #[global_allocator]
 pub static BADGEROS_RUST_MALLOC: BadgerOSMalloc = BadgerOSMalloc {};
