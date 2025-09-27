@@ -11,15 +11,14 @@ use core::{
 use crate::{
     badgelib::irq::IrqGuard,
     bindings::{
-        self,
         error::{EResult, Errno},
-        log::LogLevel,
         spinlock::Spinlock,
     },
     config,
     mem::vmm,
 };
 
+mod c_api;
 pub mod phys_box;
 
 /// Kinds of usage for pages of memory.
@@ -38,6 +37,8 @@ pub enum PageUsage {
     UserAnon,
     /// Anonymous kernel memory.
     KernelAnon,
+    /// Kernel slabs memory (may be removed in the future).
+    KernelSlab,
     /// Dummy entry for unusable page.
     Unusable,
 }
@@ -145,15 +146,37 @@ pub const fn order_to_size(order: u32) -> usize {
 
 /// Unlink a page from its freelist.
 unsafe fn free_list_unlink(block: PPN, list_head: &mut PPN) {
-    todo!()
+    let link = unsafe {
+        *((block * config::PAGE_SIZE as usize + vmm::HHDM_OFFSET) as *const FreeListLink)
+    };
+    if link.next != PPN::MAX {
+        let next_link = unsafe {
+            &mut *((link.next * config::PAGE_SIZE as usize + vmm::HHDM_OFFSET) as *mut FreeListLink)
+        };
+        next_link.prev = link.prev;
+    }
+    if link.prev != PPN::MAX {
+        let prev_link = unsafe {
+            &mut *((link.next * config::PAGE_SIZE as usize + vmm::HHDM_OFFSET) as *mut FreeListLink)
+        };
+        prev_link.next = link.next;
+    } else {
+        *list_head = link.next;
+    }
 }
 
 /// Link a page into a freelist.
 unsafe fn free_list_link(block: PPN, list_head: &mut PPN) {
-    todo!()
+    let page_vaddr = block * config::PAGE_SIZE as usize + unsafe { vmm::HHDM_OFFSET };
+    let link = page_vaddr as *mut FreeListLink;
+    unsafe {
+        (*link).next = *list_head;
+        (*link).prev = PPN::MAX;
+    }
+    *list_head = block;
 }
 
-/// Allocate pages of physical memory.
+/// Allocate `1 << order` pages of physical memory.
 pub unsafe fn page_alloc(order: u32, usage: PageUsage) -> EResult<PPN> {
     debug_assert!(order < MAX_ORDER);
     debug_assert!(usage != PageUsage::Unusable && usage != PageUsage::Free);
@@ -187,11 +210,11 @@ pub unsafe fn page_alloc(order: u32, usage: PageUsage) -> EResult<PPN> {
     }
 
     // Mark block as in use.
-    let block = free_list[split_order as usize];
+    let block = free_list[order as usize];
     if block == PPN::MAX {
         return Err(Errno::ENOMEM);
     }
-    unsafe { free_list_unlink(block, &mut free_list[split_order as usize]) };
+    unsafe { free_list_unlink(block, &mut free_list[order as usize]) };
     for i in 0..1 << order {
         let page_meta = unsafe { &*page_struct(block + i) };
         page_meta.refcount.store(1, Ordering::Relaxed);
@@ -209,7 +232,7 @@ pub unsafe fn page_alloc(order: u32, usage: PageUsage) -> EResult<PPN> {
         PageUsage::Cache => {
             CACHE_PAGES.fetch_add(1 << order, Ordering::Relaxed);
         }
-        PageUsage::PageTable | PageUsage::KernelAnon => {
+        PageUsage::PageTable | PageUsage::KernelAnon | PageUsage::KernelSlab => {
             KERNEL_PAGES.fetch_add(1 << order, Ordering::Relaxed);
             USED_PAGES.fetch_add(1 << order, Ordering::Relaxed);
         }
@@ -269,7 +292,7 @@ unsafe fn mark_one_free(mut page: PPN, mut order: u32) {
         PageUsage::Cache => {
             CACHE_PAGES.fetch_sub(pages_freed, Ordering::Relaxed);
         }
-        PageUsage::PageTable | PageUsage::KernelAnon => {
+        PageUsage::PageTable | PageUsage::KernelAnon | PageUsage::KernelSlab => {
             KERNEL_PAGES.fetch_sub(pages_freed, Ordering::Relaxed);
             USED_PAGES.fetch_sub(pages_freed, Ordering::Relaxed);
         }
@@ -291,24 +314,8 @@ unsafe fn mark_one_free(mut page: PPN, mut order: u32) {
         }
 
         // Remove buddy from freelist.
-        let link = unsafe {
-            *((page * config::PAGE_SIZE as usize + vmm::HHDM_OFFSET) as *const FreeListLink)
-        };
-        if link.next != PPN::MAX {
-            let next_link = unsafe {
-                &mut *((link.next * config::PAGE_SIZE as usize + vmm::HHDM_OFFSET)
-                    as *mut FreeListLink)
-            };
-            next_link.prev = link.prev;
-        }
-        if link.prev != PPN::MAX {
-            let prev_link = unsafe {
-                &mut *((link.next * config::PAGE_SIZE as usize + vmm::HHDM_OFFSET)
-                    as *mut FreeListLink)
-            };
-            prev_link.next = link.next;
-        } else {
-            free_list[order as usize] = link.next;
+        unsafe {
+            free_list_unlink(page, &mut free_list[order as usize]);
         }
 
         true
@@ -321,7 +328,7 @@ unsafe fn mark_one_free(mut page: PPN, mut order: u32) {
     }
 
     // Set the pages up for future usage.
-    for i in page..page + 1 << order {
+    for i in page..page + (1 << order) {
         let page_meta = unsafe { &*page_struct(i) };
         page_meta
             .flags
@@ -330,13 +337,7 @@ unsafe fn mark_one_free(mut page: PPN, mut order: u32) {
     }
 
     // Insert it into the freelist.
-    let page_vaddr = page * config::PAGE_SIZE as usize + unsafe { vmm::HHDM_OFFSET };
-    let link = page_vaddr as *mut FreeListLink;
-    unsafe {
-        (*link).next = free_list[order as usize];
-        (*link).prev = PPN::MAX;
-    }
-    free_list[order as usize] = page;
+    unsafe { free_list_link(page, &mut free_list[order as usize]) };
 
     // Account the memory as free.
     FREE_PAGES.fetch_add(pages_freed, Ordering::Relaxed);
@@ -370,6 +371,7 @@ pub unsafe fn init(total: Range<PPN>, early: Range<PPN>) {
         if early.end - early.start < meta_pages + 64 {
             panic!("Insufficient memory");
         }
+        PAGE_STRUCTS_PAGE = early.start;
 
         // Mark all pages as unusable...
         for page in total {

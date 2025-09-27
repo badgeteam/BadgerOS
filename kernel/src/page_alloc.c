@@ -46,13 +46,3 @@ void phys_page_free(size_t ppn) {
     buddy_deallocate((void *)(ppn * CONFIG_PAGE_SIZE));
 #endif
 }
-
-// Split a physical page allocation into two in the allocator.
-// Uses physical page numbers (paddr / CONFIG_PAGE_SIZE).
-void phys_page_split(size_t ppn) {
-#if !CONFIG_NOMMU
-    buddy_split_allocated((void *)(ppn * CONFIG_PAGE_SIZE + vmm_hhdm_offset));
-#else
-    buddy_split_allocated((void *)(ppn * CONFIG_PAGE_SIZE));
-#endif
-}
