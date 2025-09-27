@@ -8,6 +8,7 @@
 #include "device/device.h"
 #include "ktest.h"
 #include "log.h"
+#include "mem/pmm.h"
 #include "mem/vmm.h"
 #include "panic.h"
 #include "rawprint.h"
@@ -137,8 +138,8 @@ void bootp_early_init() {
     size_t biggest_pool_index = 0;
     size_t usable_len         = 0;
     size_t reclaim_len        = 0;
-    size_t hhdm_end           = 0;
-    size_t hhdm_start         = SIZE_MAX;
+    size_t usable_end         = 0;
+    size_t usable_start       = SIZE_MAX;
     for (uint64_t i = 0; i < mem->entry_count; i++) {
         struct limine_memmap_entry *entry = mem->entries[i];
         logkf_from_isr(
@@ -168,12 +169,12 @@ void bootp_early_init() {
         }
 #endif
         if (entry->type != LIMINE_MEMMAP_BAD_MEMORY && entry->type != LIMINE_MEMMAP_RESERVED &&
-            hhdm_start > entry->base) {
-            hhdm_start = entry->base;
+            usable_start > entry->base) {
+            usable_start = entry->base;
         }
         if (entry->type != LIMINE_MEMMAP_BAD_MEMORY && entry->type != LIMINE_MEMMAP_RESERVED &&
-            hhdm_end < entry->base + entry->length) {
-            hhdm_end = entry->base + entry->length;
+            usable_end < entry->base + entry->length) {
+            usable_end = entry->base + entry->length;
         }
     }
 
@@ -182,9 +183,9 @@ void bootp_early_init() {
         logkf_from_isr(LOG_FATAL, "Kernel is not aligned to page size");
         panic_poweroff();
     }
-    vmm_hhdm_size    = hhdm_end - hhdm_start;
+    vmm_hhdm_size    = usable_end - usable_start;
     vmm_hhdm_offset  = bootp_hhdm_req.response->offset;
-    vmm_hhdm_vaddr   = vmm_hhdm_offset + hhdm_start;
+    vmm_hhdm_vaddr   = vmm_hhdm_offset + usable_start;
     vmm_kernel_paddr = bootp_addr_req.response->physical_base;
     vmm_kernel_vaddr = bootp_addr_req.response->virtual_base;
 
@@ -205,10 +206,11 @@ void bootp_early_init() {
         early_pool->base,
         early_pool->base + early_pool->length - 1
     );
-    init_pool(
-        (void *)(early_pool->base + vmm_hhdm_offset),
-        (void *)(early_pool->base + early_pool->length + vmm_hhdm_offset),
-        0
+    pmm_init(
+        (usable_start + CONFIG_PAGE_SIZE - 1) / CONFIG_PAGE_SIZE,
+        usable_end / CONFIG_PAGE_SIZE,
+        (early_pool->base + CONFIG_PAGE_SIZE - 1) / CONFIG_PAGE_SIZE,
+        (early_pool->base + early_pool->length) / CONFIG_PAGE_SIZE
     );
     ktests_runlevel(KTEST_WHEN_PMM);
 }
@@ -303,10 +305,9 @@ void bootp_reclaim_mem() {
 
     // Reclaim all reclaimable memory.
     for (size_t i = 0; i < reclaimable_len; i++) {
-        init_pool(
-            (void *)(reclaimable[i].base + vmm_hhdm_offset),
-            (void *)(reclaimable[i].base + reclaimable[i].length + vmm_hhdm_offset),
-            0
+        pmm_mark_free(
+            (reclaimable[i].base + CONFIG_PAGE_SIZE - 1) / CONFIG_PAGE_SIZE,
+            (reclaimable[i].base + reclaimable[i].length) / CONFIG_PAGE_SIZE
         );
     }
     free(reclaimable);

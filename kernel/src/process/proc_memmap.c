@@ -14,6 +14,7 @@
 #include "process/types.h"
 #include "scheduler/cpu.h"
 #include "scheduler/types.h"
+#include "todo.h"
 
 #if !CONFIG_NOMMU
 #include "cpu/mmu.h"
@@ -147,38 +148,7 @@ nomem:
 
 // Split the memory map until `vaddr` to `vaddr+len` is an unique range.
 static inline size_t split_regions(proc_memmap_t *map, size_t index, size_t vaddr, size_t len) {
-    while (1) {
-        proc_memmap_ent_t *ent = map->regions + index;
-        if (ent->vaddr == vaddr && ent->size == len) {
-            // Range matches memmap entry; we're done here.
-            return index;
-        }
-
-        // Split entry.
-        phys_page_split(ent->paddr / CONFIG_PAGE_SIZE);
-        ent->size                 /= 2;
-        proc_memmap_ent_t new_ent  = *ent;
-        new_ent.paddr             += new_ent.size;
-        new_ent.vaddr             += new_ent.size;
-
-        // Insert new entry in memory map.
-        if (!array_lencap_insert(
-                &map->regions,
-                sizeof(proc_memmap_ent_t),
-                &map->regions_len,
-                &map->regions_cap,
-                &new_ent,
-                index + 1
-            )) {
-            logk(LOG_FATAL, "Out of memory");
-            panic_abort();
-        }
-
-        if (new_ent.vaddr <= vaddr) {
-            // Continue with second half instead of first half.
-            index++;
-        }
-    }
+    TODO();
 }
 
 // Release memory allocated to a process from `vaddr` to `vaddr+len`.
