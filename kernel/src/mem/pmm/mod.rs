@@ -385,3 +385,19 @@ pub unsafe fn init(total: Range<PPN>, early: Range<PPN>) {
         mark_free(early.start + meta_pages..early.end);
     }
 }
+
+pmm_ktest!(PMM_BASIC, unsafe {
+    // Allocate one page of a couple orders.
+    let mut ppn = [0; 4];
+    for order in 0..3 {
+        ppn[order] = page_alloc(order as u32, PageUsage::KernelAnon)?;
+    }
+    for x in 1..3 {
+        for y in 0..x {
+            ktest_expect!(ppn[x], !=, ppn[y], [x, y]);
+        }
+    }
+    for order in 0..3 {
+        page_free(ppn[order], order as u32);
+    }
+});
