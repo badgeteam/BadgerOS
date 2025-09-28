@@ -2,8 +2,9 @@
 // SPDX-FileType: SOURCE
 // SPDX-License-Identifier: MIT
 
-use crate::bindings::error::EResult;
-use core::ptr::slice_from_raw_parts;
+use alloc::boxed::Box;
+
+use core::{error::Error, fmt::Display, ptr::slice_from_raw_parts};
 
 /// Describes at what level of init a testcase should run.
 #[repr(C)]
@@ -28,7 +29,7 @@ pub enum KTestWhen {
 pub struct KTest {
     pub when: KTestWhen,
     pub name: &'static str,
-    pub func: &'static fn() -> EResult<()>,
+    pub func: &'static fn() -> Result<(), Box<dyn Error>>,
 }
 
 /// Run test cases of a certain level.
@@ -91,48 +92,48 @@ pub fn ktests_runlevel(_level: KTestWhen) {}
 /// Register a kernel test case to run after `bootp_early_init`.
 #[macro_export]
 macro_rules! early_ktest {
-    ($name: ident, $code: block) => {
-        crate::ktest!(crate::ktest::KTestWhen::Early, $name, $code);
+    ($name: ident, $($code: tt)*) => {
+        crate::ktest!(crate::ktest::KTestWhen::Early, $name, $($code)*);
     };
 }
 
 /// Register a kernel test case to run after PMM is set up.
 #[macro_export]
 macro_rules! pmm_ktest {
-    ($name: ident, $code: block) => {
-        crate::ktest!(crate::ktest::KTestWhen::PMM, $name, $code);
+    ($name: ident, $($code: tt)*) => {
+        crate::ktest!(crate::ktest::KTestWhen::PMM, $name, $($code)*);
     };
 }
 
 /// Register a kernel test case to run after VMM is set up.
 #[macro_export]
 macro_rules! vmm_ktest {
-    ($name: ident, $code: block) => {
-        crate::ktest!(crate::ktest::KTestWhen::VMM, $name, $code);
+    ($name: ident, $($code: tt)*) => {
+        crate::ktest!(crate::ktest::KTestWhen::VMM, $name, $($code)*);
     };
 }
 
 /// Register a kernel test case to run after `kernel_heap_init`.
 #[macro_export]
 macro_rules! heap_ktest {
-    ($name: ident, $code: block) => {
-        crate::ktest!(crate::ktest::KTestWhen::Heap, $name, $code);
+    ($name: ident, $($code: tt)*) => {
+        crate::ktest!(crate::ktest::KTestWhen::Heap, $name, $($code)*);
     };
 }
 
 /// Register a kernel test case to run when the scheduler has started.
 #[macro_export]
 macro_rules! sched_ktest {
-    ($name: ident, $code: block) => {
-        crate::ktest!(crate::ktest::KTestWhen::Sched, $name, $code);
+    ($name: ident, $($code: tt)*) => {
+        crate::ktest!(crate::ktest::KTestWhen::Sched, $name, $($code)*);
     };
 }
 
 /// Register a kernel test case to run when filesystem is mounted.
 #[macro_export]
 macro_rules! rootfs_ktest {
-    ($name: ident, $code: block) => {
-        crate::ktest!(crate::ktest::KTestWhen::RootFs, $name, $code);
+    ($name: ident, $($code: tt)*) => {
+        crate::ktest!(crate::ktest::KTestWhen::RootFs, $name, $($code)*);
     };
 }
 
@@ -140,17 +141,17 @@ macro_rules! rootfs_ktest {
 #[macro_export]
 #[cfg(feature = "ktest")]
 macro_rules! ktest {
-    ($when: expr, $name: ident, $code: block) => {
+    ($when: expr, $name: ident, $($code: tt)*) => {
         #[used]
         #[unsafe(link_section = ".ktests")]
-        static $name: KTest = KTest {
+        static $name: crate::ktest::KTest = crate::ktest::KTest {
             when: $when,
             name: stringify!($name),
             func: {
-                fn func() -> crate::bindings::error::EResult<()> {
-                    try { $code }
+                fn func() -> Result<(), alloc::boxed::Box<dyn core::error::Error>> {
+                    try { $($code)* }
                 }
-                &(func as fn() -> crate::bindings::error::EResult<()>)
+                &(func as fn() -> Result<(), alloc::boxed::Box<dyn core::error::Error>>)
             },
         };
     };
@@ -160,5 +161,53 @@ macro_rules! ktest {
 #[macro_export]
 #[cfg(not(feature = "ktest"))]
 macro_rules! ktest {
-    ($when: expr, $name: ident, $code: block) => {};
+    ($when: expr, $name: ident, $($code: tt)*) => {};
+}
+
+/// Kernel test assertion failure.
+#[derive(Debug)]
+pub struct KTestAssertFail {}
+
+impl Display for KTestAssertFail {
+    fn fmt(&self, fmt: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        fmt.write_str("FAILED")
+    }
+}
+impl Error for KTestAssertFail {}
+
+/// Assert that some expression has a certain relation.
+macro_rules! ktest_expect {
+    ($lhs: expr, $oper: tt, $rhs: expr $(, [ $($ctx: expr),* ])?) => {
+        let lhs = $lhs;
+        let rhs = $rhs;
+        if !(lhs $oper rhs) {
+            crate::printf!(
+                "\n\x1b[31mExpected\x1b[0m {} {} {}\x1b[31m, got\x1b[0m {} \x1b[31mand\x1b[0m {}\n",
+                stringify!($lhs), stringify!($oper), stringify!($rhs), {lhs}, {rhs}
+            );
+            $($(
+                crate::printf!("    where {} => {}\n", stringify!($ctx), {$ctx});
+            )*)?
+            Err(crate::ktest::KTestAssertFail{})?;
+        }
+    };
+    ($lhs: expr, $rhs: expr $(, [ $($ctx: expr),* ])?) => {
+        crate::ktest_expect!($lhs, $rhs, == $(, $ctx)*);
+    };
+}
+
+/// Assert that some condition is satisfiead.
+macro_rules! ktest_assert {
+    ($cond: expr $(, [ $($ctx: expr),* ])?) => {
+        if !$cond {
+            crate::printf!(
+                "\n\x1b[31mAssertion\x1b[0m {} \x1b[31mfailed\x1b[0m\n",
+                stringify!($cond)
+            );
+            $($(
+                crate::printf!("    where {} => {}\n", stringify!($ctx), {$ctx});
+            )*)?
+            Err(crate::ktest::KTestAssertFail{})?;
+        }
+    };
 }
