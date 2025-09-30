@@ -176,6 +176,7 @@ impl Display for KTestAssertFail {
 impl Error for KTestAssertFail {}
 
 /// Assert that some expression has a certain relation.
+#[macro_export]
 macro_rules! ktest_expect {
     ($lhs: expr, $oper: tt, $rhs: expr $(, [ $($ctx: expr),* ])?) => {
         let lhs = $lhs;
@@ -192,11 +193,12 @@ macro_rules! ktest_expect {
         }
     };
     ($lhs: expr, $rhs: expr $(, [ $($ctx: expr),* ])?) => {
-        crate::ktest_expect!($lhs, $rhs, == $(, $ctx)*);
+        crate::ktest_expect!($lhs, ==, $rhs $(, $ctx)*);
     };
 }
 
 /// Assert that some condition is satisfiead.
+#[macro_export]
 macro_rules! ktest_assert {
     ($cond: expr $(, [ $($ctx: expr),* ])?) => {
         if !$cond {

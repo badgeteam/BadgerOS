@@ -176,6 +176,19 @@ unsafe fn free_list_link(block: PPN, list_head: &mut PPN) {
     *list_head = block;
 }
 
+/// Check whether a page is in a certain freelist.
+unsafe fn free_list_contains(block: PPN, mut list_head: PPN) -> bool {
+    while list_head != PPN::MAX {
+        if list_head == block {
+            return true;
+        }
+        let page_vaddr = block * config::PAGE_SIZE as usize + unsafe { vmm::HHDM_OFFSET };
+        let link = page_vaddr as *mut FreeListLink;
+        list_head = unsafe { (*link).next };
+    }
+    false
+}
+
 /// Allocate `1 << order` pages of physical memory.
 pub unsafe fn page_alloc(order: u32, usage: PageUsage) -> EResult<PPN> {
     debug_assert!(order < MAX_ORDER);
@@ -392,11 +405,19 @@ pmm_ktest!(PMM_BASIC, unsafe {
     for order in 0..3 {
         ppn[order] = page_alloc(order as u32, PageUsage::KernelAnon)?;
     }
+    // Make sure we didn't get duplicates.
     for x in 1..3 {
         for y in 0..x {
             ktest_expect!(ppn[x], !=, ppn[y], [x, y]);
         }
     }
+    // Ensure metadata for alloc'ed blocks is ok.
+    for order in 0..3 {
+        let page_meta = &*page_struct(ppn[order]);
+        ktest_expect!(page_meta.refcount.load(Ordering::Relaxed), 1);
+        ktest_assert!(!free_list_contains(ppn[order], FREE_LIST.lock()[order]));
+    }
+    // Free pages again.
     for order in 0..3 {
         page_free(ppn[order], order as u32);
     }
