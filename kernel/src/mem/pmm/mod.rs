@@ -144,47 +144,68 @@ pub const fn order_to_size(order: u32) -> usize {
     (config::PAGE_SIZE as usize) << order
 }
 
+/// Helper function that gets the freelist link for a block, assuming it is free.
+unsafe fn free_list_struct(page: PPN) -> *mut FreeListLink {
+    (page * config::PAGE_SIZE as usize + unsafe { vmm::HHDM_OFFSET }) as *mut FreeListLink
+}
+
 /// Unlink a page from its freelist.
 unsafe fn free_list_unlink(block: PPN, list_head: &mut PPN) {
-    let link = unsafe {
-        *((block * config::PAGE_SIZE as usize + vmm::HHDM_OFFSET) as *const FreeListLink)
-    };
+    debug_assert!(unsafe { free_list_contains(block, *list_head) });
+    let link = unsafe { *free_list_struct(block) };
+    debug_assert!(link.prev != block);
+    debug_assert!(link.next != block);
+
     if link.next != PPN::MAX {
-        let next_link = unsafe {
-            &mut *((link.next * config::PAGE_SIZE as usize + vmm::HHDM_OFFSET) as *mut FreeListLink)
-        };
+        let next_link = unsafe { &mut *free_list_struct(link.next) };
         next_link.prev = link.prev;
+        debug_assert!(next_link.prev != link.next);
+        debug_assert!(next_link.next != link.next);
     }
+
     if link.prev != PPN::MAX {
-        let prev_link = unsafe {
-            &mut *((link.next * config::PAGE_SIZE as usize + vmm::HHDM_OFFSET) as *mut FreeListLink)
-        };
+        let prev_link = unsafe { &mut *free_list_struct(link.prev) };
         prev_link.next = link.next;
+        debug_assert!(prev_link.next != link.prev);
+        debug_assert!(prev_link.prev != link.prev);
     } else {
         *list_head = link.next;
     }
+    debug_assert!(!unsafe { free_list_contains(block, *list_head) });
 }
 
 /// Link a page into a freelist.
 unsafe fn free_list_link(block: PPN, list_head: &mut PPN) {
-    let page_vaddr = block * config::PAGE_SIZE as usize + unsafe { vmm::HHDM_OFFSET };
-    let link = page_vaddr as *mut FreeListLink;
-    unsafe {
-        (*link).next = *list_head;
-        (*link).prev = PPN::MAX;
+    debug_assert!(!unsafe { free_list_contains(block, *list_head) });
+    let link = unsafe { &mut *free_list_struct(block) };
+
+    link.next = *list_head;
+    link.prev = PPN::MAX;
+    if link.next != PPN::MAX {
+        let next_link = unsafe { &mut *free_list_struct(link.next) };
+        next_link.prev = block;
+        debug_assert!(next_link.prev != link.next);
+        debug_assert!(next_link.next != link.next);
     }
+
     *list_head = block;
+
+    debug_assert!(link.prev != block);
+    debug_assert!(link.next != block);
+    debug_assert!(unsafe { free_list_contains(block, *list_head) });
 }
 
 /// Check whether a page is in a certain freelist.
-unsafe fn free_list_contains(block: PPN, mut list_head: PPN) -> bool {
-    while list_head != PPN::MAX {
-        if list_head == block {
+unsafe fn free_list_contains(block: PPN, list_head: PPN) -> bool {
+    debug_assert!(unsafe { PAGE_RANGE.start <= block && block < PAGE_RANGE.end });
+    let mut cur_node = list_head;
+    while cur_node != PPN::MAX {
+        debug_assert!(unsafe { PAGE_RANGE.start <= cur_node && cur_node < PAGE_RANGE.end });
+        if cur_node == block {
             return true;
         }
-        let page_vaddr = block * config::PAGE_SIZE as usize + unsafe { vmm::HHDM_OFFSET };
-        let link = page_vaddr as *mut FreeListLink;
-        list_head = unsafe { (*link).next };
+        let link = unsafe { *free_list_struct(cur_node) };
+        cur_node = link.next;
     }
     false
 }
@@ -292,6 +313,7 @@ pub fn page_struct_base(ppn: PPN, order: u32) -> *mut Page {
 
 /// Mark a single block of arbitrary order as free.
 unsafe fn mark_one_free(mut page: PPN, mut order: u32) {
+    debug_assert!(unsafe { PAGE_RANGE.start <= page && page < PAGE_RANGE.end });
     debug_assert!(page % (1usize << order) == 0);
     let pages_freed: PPN = 1 << order;
     let _noirq = unsafe { IrqGuard::new() };
@@ -328,7 +350,7 @@ unsafe fn mark_one_free(mut page: PPN, mut order: u32) {
 
         // Remove buddy from freelist.
         unsafe {
-            free_list_unlink(page, &mut free_list[order as usize]);
+            free_list_unlink(buddy, &mut free_list[order as usize]);
         }
 
         true
