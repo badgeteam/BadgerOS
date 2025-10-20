@@ -4,6 +4,7 @@
 
 use core::{
     hint::unreachable_unchecked,
+    mem::offset_of,
     ops::Range,
     sync::atomic::{AtomicU32, AtomicUsize, Ordering},
 };
@@ -12,6 +13,7 @@ use crate::{
     badgelib::irq::IrqGuard,
     bindings::{
         error::{EResult, Errno},
+        log::LogLevel,
         spinlock::Spinlock,
     },
     config,
@@ -23,7 +25,7 @@ pub mod phys_box;
 
 /// Kinds of usage for pages of memory.
 #[repr(u32)]
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum PageUsage {
     /// Unused page.
     Free = 0,
@@ -229,17 +231,21 @@ pub unsafe fn page_alloc(order: u32, usage: PageUsage) -> EResult<PPN> {
     // Split blocks until one of the desired order is created.
     for split_order in (order + 1..split_order + 1).rev() {
         let block = free_list[split_order as usize];
+        // Not asserting block order here because it might be temporarily out of date.
+        debug_assert!(block == block >> split_order << split_order);
         unsafe { free_list_unlink(block, &mut free_list[split_order as usize]) };
+        // Upper half of block gets the order changed because the lower half will be alloc'ed anyway
         for i in 1 << (split_order - 1)..1 << split_order {
             let page_meta = unsafe { &*page_struct(block + i) };
             page_meta.set_order(split_order - 1);
         }
         unsafe {
-            free_list_link(block, &mut free_list[split_order as usize - 1]);
+            // Do not reorder these inserts.
             free_list_link(
                 block + (1 << (split_order - 1)),
                 &mut free_list[split_order as usize - 1],
             );
+            free_list_link(block, &mut free_list[split_order as usize - 1]);
         }
     }
 
@@ -312,15 +318,15 @@ pub fn page_struct_base(ppn: PPN, order: u32) -> *mut Page {
 }
 
 /// Mark a single block of arbitrary order as free.
-unsafe fn mark_one_free(mut page: PPN, mut order: u32) {
-    debug_assert!(unsafe { PAGE_RANGE.start <= page && page < PAGE_RANGE.end });
-    debug_assert!(page % (1usize << order) == 0);
+unsafe fn mark_one_free(mut block: PPN, mut order: u32) {
+    debug_assert!(unsafe { PAGE_RANGE.start <= block && block < PAGE_RANGE.end });
+    debug_assert!(block % (1usize << order) == 0);
     let pages_freed: PPN = 1 << order;
     let _noirq = unsafe { IrqGuard::new() };
     let mut free_list = FREE_LIST.lock();
 
     // Remove the pages from where they were previously accounted.
-    let page_meta = unsafe { &*page_struct(page) };
+    let page_meta = unsafe { &*page_struct(block) };
     match page_meta.usage() {
         PageUsage::Free => unreachable!("Unused page marked as free again"),
         PageUsage::Unusable => (), // Not accounted as being used for something.
@@ -337,9 +343,9 @@ unsafe fn mark_one_free(mut page: PPN, mut order: u32) {
     }
 
     /// Try to coalesce a block with its buddy.
-    fn try_coalesce(page: PPN, order: u32, free_list: &mut [PPN; MAX_ORDER as usize]) -> bool {
+    fn try_coalesce(block: PPN, order: u32, free_list: &mut [PPN; MAX_ORDER as usize]) -> bool {
         // Determine whether coalescing is possible.
-        let buddy = page ^ (1 << order);
+        let buddy = block ^ (1 << order);
         if !unsafe { PAGE_RANGE.start <= buddy && buddy < PAGE_RANGE.end } {
             return false;
         }
@@ -347,6 +353,7 @@ unsafe fn mark_one_free(mut page: PPN, mut order: u32) {
         if buddy_page.refcount.load(Ordering::Relaxed) > 0 || buddy_page.order() != order {
             return false;
         }
+        debug_assert!(buddy_page.usage() == PageUsage::Free);
 
         // Remove buddy from freelist.
         unsafe {
@@ -357,13 +364,13 @@ unsafe fn mark_one_free(mut page: PPN, mut order: u32) {
     }
 
     // Attempt to coalesce.
-    while order < MAX_ORDER && try_coalesce(page, order, &mut free_list) {
-        page &= !(1 << order);
+    while order < MAX_ORDER && try_coalesce(block, order, &mut free_list) {
+        block &= !(1 << order);
         order += 1;
     }
 
     // Set the pages up for future usage.
-    for i in page..page + (1 << order) {
+    for i in block..block + (1 << order) {
         let page_meta = unsafe { &*page_struct(i) };
         page_meta
             .flags
@@ -372,7 +379,7 @@ unsafe fn mark_one_free(mut page: PPN, mut order: u32) {
     }
 
     // Insert it into the freelist.
-    unsafe { free_list_link(page, &mut free_list[order as usize]) };
+    unsafe { free_list_link(block, &mut free_list[order as usize]) };
 
     // Account the memory as free.
     FREE_PAGES.fetch_add(pages_freed, Ordering::Relaxed);
