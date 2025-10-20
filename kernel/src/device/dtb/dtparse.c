@@ -5,6 +5,7 @@
 
 #include "arrays.h"
 #include "assertions.h"
+#include "badge_strings.h"
 #include "device/dev_addr.h"
 #include "device/dev_class.h"
 #include "device/device.h"
@@ -99,7 +100,8 @@ static device_t *
     dtparse_impl(dtb_handle_t *handle, dtb_node_t *node, uint32_t alen, uint32_t slen, device_t *parent_device) {
     device_t *device = NULL;
 
-    if (dtb_get_prop(handle, node, "compatible")) {
+    dtb_prop_t *compat = dtb_get_prop(handle, node, "compatible");
+    if (compat) {
         // If a compatible node is present, register it as a device.
         if (parent_device) {
             device_push_ref(parent_device);
@@ -114,6 +116,15 @@ static device_t *
         device = device_add(info);
         if (!device) {
             logkf(LOG_ERROR, "Failed to add DTB device %{cs}", node->name);
+        } else {
+            logkf(LOG_INFO, "Added DTB device %{cs}", node->name);
+            size_t offset = 0;
+            while (offset < compat->content_len) {
+                char const *substr = (char const *)compat->content + offset;
+                size_t      len    = cstr_length_upto(substr, compat->content_len - offset);
+                logkf(LOG_INFO, " -> %{char;c;arr}", substr, len);
+                offset += len + 1;
+            }
         }
     }
 

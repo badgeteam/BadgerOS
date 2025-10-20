@@ -10,12 +10,14 @@ use crate::bindings::{
 pub mod ahci;
 pub mod dev_null;
 pub mod dev_zero;
+pub mod serial;
 
 #[unsafe(no_mangle)]
 unsafe extern "C" fn add_rust_builtin_drivers() {
     ahci::add_drivers();
     dev_null::add_driver();
     dev_zero::add_driver();
+    serial::add_drivers();
 }
 
 #[unsafe(no_mangle)]

@@ -207,6 +207,10 @@ static errno_bool_t device_add_to_driver(device_t *device, driver_t const *drive
                 return 1;
             }
 
+            if (device->driver->post_add) {
+                device->driver->post_add(device);
+            }
+
             device_t *parent = device->info.parent;
             if (parent) {
                 mutex_acquire_shared(&parent->driver_mtx, TIMESTAMP_US_MAX);

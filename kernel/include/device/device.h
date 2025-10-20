@@ -146,6 +146,8 @@ struct driver {
     bool (*match)(device_info_t *info);
     // Register a new device to this driver.
     errno_t (*add)(device_t *device);
+    // Post-add callback used for e.g. enabling interrupts.
+    void (*post_add)(device_t *device);
     // Remove a device from this driver.
     void (*remove)(device_t *device);
     // [optional] Called after a direct child device is added with `device_add`.

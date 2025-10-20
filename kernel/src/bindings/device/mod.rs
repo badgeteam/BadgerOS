@@ -2,6 +2,7 @@ use crate::{
     LogLevel,
     bindings::{
         self,
+        device::dtb::DtbNode,
         raw::{dev_class_t, dev_filter_t, set_ent_t, timestamp_us_t},
     },
     filesystem::File,
@@ -15,6 +16,7 @@ use class::{block::BlockDevice, char::CharDevice, pcictl::PciCtlDevice};
 
 pub mod addr;
 pub mod class;
+pub mod dtb;
 
 use crate::bindings::raw::mutex_t;
 
@@ -95,9 +97,28 @@ impl<'a> DeviceInfoView<'a> {
     pub fn addrs(&'a self) -> &'a [dev_addr_t] {
         unsafe { &*core::ptr::slice_from_raw_parts(self.inner.addrs, self.inner.addrs_len) }
     }
-    // TODO: DTB handles.
+    pub fn dtb(&self) -> Option<&'static DtbNode> {
+        unsafe { core::mem::transmute(self.inner.dtb_node) }
+    }
     pub fn phandle(&self) -> Option<NonZero<u32>> {
         NonZero::try_from(self.inner.phandle).ok()
+    }
+    pub fn dtb_match(&self, supported: &[&str]) -> bool {
+        let compatible: Option<_> = try { self.dtb()?.get_prop("compatible")?.bytes() };
+        let compatible = match compatible {
+            Some(x) => x,
+            None => return false,
+        };
+
+        for substr in compatible.split(|x| *x == 0) {
+            for substr2 in supported {
+                if *substr == *substr2.as_bytes() {
+                    return true;
+                }
+            }
+        }
+
+        false
     }
 }
 
@@ -523,50 +544,48 @@ impl HasBaseDevice for Device {
 
 /// Common device driver functions.
 pub trait BaseDriver: Sync {
+    /// Post-add callback used for e.g. enabling interrupts.
+    fn post_add(&self) {}
     /// Remove a device from this driver; only called once.
     fn remove(&mut self) {}
     /// [optional] Called after a direct child device is added with [`Device::add`].
     /// If this fails, the child is removed again.
-    fn child_added(&mut self, _child: BaseDevice) -> EResult<()> {
+    fn child_added(&self, _child: BaseDevice) -> EResult<()> {
         Ok(())
     }
     /// [optional] Called after a direct child is activated with [`HasBaseDevice::activate`].
-    fn child_activated(&mut self, _child: BaseDevice) {}
+    fn child_activated(&self, _child: BaseDevice) {}
     /// [optional] Called after a direct child device gets added to a driver.
-    fn child_got_driver(&mut self, _child: BaseDevice) {}
+    fn child_got_driver(&self, _child: BaseDevice) {}
     /// [optional] Called before a direct child device gets removed from a driver.
     /// Always called before `child_removed`.
-    fn child_lost_driver(&mut self, _child: BaseDevice) {}
+    fn child_lost_driver(&self, _child: BaseDevice) {}
     /// [optional] Called before a direct child device is removed with [`Device::remove`].
-    fn child_removed(&mut self, _child: BaseDevice) {}
+    fn child_removed(&self, _child: BaseDevice) {}
     /// Device interrupt handler; also responsible for any potential forwarding of interrupts.
     /// Only called from an interrupt context.
     /// Returns true if this handled an interrupt request.
-    fn interrupt(&mut self, _irq: irqno_t) -> bool {
+    fn interrupt(&self, _irq: irqno_t) -> bool {
         false
     }
     /// Enable a certain interrupt output.
     /// Can be called with interrupts disabled.
-    fn enable_irq_out(&mut self, _irq: irqno_t, _enable: bool) -> EResult<()> {
+    fn enable_irq_out(&self, _irq: irqno_t, _enable: bool) -> EResult<()> {
         Err(Errno::ENOTSUP)
     }
     /// [optional] Enable an incoming interrupt.
     /// Can be called with interrupts disabled.
-    fn enable_irq_in(&mut self, _irq: irqno_t, _enable: bool) -> EResult<()> {
+    fn enable_irq_in(&self, _irq: irqno_t, _enable: bool) -> EResult<()> {
         Err(Errno::ENOTSUP)
     }
     /// [optional] Cascade-enable interrupts from some input designator.
     /// Can be called with interrupts disabled.
-    fn cascase_enable_irq(&mut self, _irq: irqno_t) -> EResult<()> {
+    fn cascase_enable_irq(&self, _irq: irqno_t) -> EResult<()> {
         Err(Errno::ENOTSUP)
     }
     /// [optional] Create additional device node files.
     /// Called when a new `devtmpfs` is mounted OR after registered to the driver.
-    fn create_devnodes(
-        &mut self,
-        _devtmpfs_root: &dyn File,
-        _devnode_dir: &dyn File,
-    ) -> EResult<()> {
+    fn create_devnodes(&self, _devtmpfs_root: &dyn File, _devnode_dir: &dyn File) -> EResult<()> {
         Ok(())
     }
 }
@@ -605,6 +624,13 @@ macro_rules! abstract_driver_struct {
                     }
                 }
                 Some(add_wrapper)
+            },
+            post_add: {
+                unsafe extern "C" fn post_add_wrapper(device: *mut device_t) {
+                    let ptr = unsafe{&mut *((*device).cookie as *mut $type)};
+                    ptr.post_add()
+                }
+                Some(post_add_wrapper)
             },
             remove: {
                 unsafe extern "C" fn remove_wrapper(device: *mut device_t) {

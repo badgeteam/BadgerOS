@@ -198,7 +198,7 @@ impl BaseDriver for AhciDriver {
         todo!()
     }
 
-    fn interrupt(&mut self, _: irqno_t) -> bool {
+    fn interrupt(&self, _: irqno_t) -> bool {
         let port_irqs = self.mmio.irq_status.get();
         let mut handled = 0u32;
         while (port_irqs ^ handled) != 0 {
