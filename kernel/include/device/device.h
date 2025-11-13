@@ -209,6 +209,9 @@ extern set_t   drivers;
 
 
 
+// Initialize the device subsystem on a DTB platform.
+void device_init_dtb(void *fdt_ptr);
+
 // Test a device info against a set of DTB compatible strings.
 bool      device_test_dtb_compat(device_info_t const *info, size_t compats_len, char const *const *compats);
 // Register a new device.
