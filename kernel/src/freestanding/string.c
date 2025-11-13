@@ -101,9 +101,11 @@ void *memset(void *dest, uint8_t value, size_t size) {
         type const *b_ptr = (b); /* NOLINT*/                                                                           \
         size_t      _size = (size) / (alignment);                                                                      \
         for (size_t i = 0; i < _size; i++) {                                                                           \
-            if (a_ptr[i] != b_ptr[i]) {                                                                                \
-                for (size_t j = i * (size); j < (i + 1) * (size); j++) {                                               \
-                    uint8_t tmp = ((uint8_t *)(a))[j] - ((uint8_t *)(b))[j];                                           \
+            if (__builtin_expect(a_ptr[i] != b_ptr[i], 0)) {                                                           \
+                int8_t const *a_bytes = (int8_t const *)(a_ptr + i);                                                   \
+                int8_t const *b_bytes = (int8_t const *)(b_ptr + i);                                                   \
+                for (size_t j = 0; j < (alignment); j++) {                                                             \
+                    int8_t tmp = a_bytes[j] - b_bytes[j];                                                              \
                     if (tmp) {                                                                                         \
                         return tmp;                                                                                    \
                     }                                                                                                  \
