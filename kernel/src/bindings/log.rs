@@ -91,6 +91,20 @@ pub fn logkf(level: LogLevel, thing: &dyn Display) {
     }
 }
 
+/// Write a  string without locking the mutex.
+pub fn write_unlocked(thing: &str) {
+    unsafe { raw::rawprint_substr(thing.as_ptr() as *const u8, thing.len()) }
+}
+
+/// Write a  string.
+pub fn write(thing: &str) {
+    let acq = unsafe { raw::mutex_acquire(&raw mut raw::log_mtx, raw::LOG_MUTEX_TIMEOUT.into()) };
+    write_unlocked(thing);
+    if acq {
+        unsafe { raw::mutex_release(&raw mut raw::log_mtx) };
+    }
+}
+
 /// Write a formatted string without locking the mutex.
 pub fn printf_unlocked(thing: &dyn Display) {
     let mut writer = LogWriter {};
