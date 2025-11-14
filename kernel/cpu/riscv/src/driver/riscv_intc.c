@@ -19,7 +19,6 @@ bool riscv_intc_match(device_info_t *info) {
 }
 
 errno_t riscv_intc_add(device_t *device) {
-    asm("csrwi sie, 0");
     return 0;
 }
 

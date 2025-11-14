@@ -5,6 +5,7 @@
 
 #include "arrays.h"
 #include "assertions.h"
+#include "badge_strings.h"
 #include "device/dev_addr.h"
 #include "device/dev_class.h"
 #include "device/device.h"
@@ -33,6 +34,7 @@ static bool determine_atype(device_t *parent_device, dev_atype_t *atype) {
             case DEV_CLASS_BLOCK:   // Has no standard child address format.
             case DEV_CLASS_IRQCTL:  // Has no standard child address format.
             case DEV_CLASS_TTY:     // Has no standard child address format.
+            case DEV_CLASS_CHAR:    // Has no standard child address format.
             case DEV_CLASS_AHCI:    // Should not be in the DTB.
                 return false;
 
@@ -99,7 +101,8 @@ static device_t *
     dtparse_impl(dtb_handle_t *handle, dtb_node_t *node, uint32_t alen, uint32_t slen, device_t *parent_device) {
     device_t *device = NULL;
 
-    if (dtb_get_prop(handle, node, "compatible")) {
+    dtb_prop_t *compat = dtb_get_prop(handle, node, "compatible");
+    if (compat) {
         // If a compatible node is present, register it as a device.
         if (parent_device) {
             device_push_ref(parent_device);
@@ -114,6 +117,15 @@ static device_t *
         device = device_add(info);
         if (!device) {
             logkf(LOG_ERROR, "Failed to add DTB device %{cs}", node->name);
+        } else {
+            logkf(LOG_INFO, "Added DTB device %{cs}", node->name);
+            size_t offset = 0;
+            while (offset < compat->content_len) {
+                char const *substr = (char const *)compat->content + offset;
+                size_t      len    = cstr_length_upto(substr, compat->content_len - offset);
+                logkf(LOG_INFO, " -> %{char;c;arr}", substr, len);
+                offset += len + 1;
+            }
         }
     }
 
@@ -151,9 +163,53 @@ static void dtparse_phandles(device_t *device) {
         device_push_ref(device->info.irq_parent);
     }
 
-    // Parse interrupts-extended.
+    // Parse interrupts or interrupts-extended.
     dtb_prop_t *irq_ext_prop = dtb_get_prop(device->info.dtb_handle, device->info.dtb_node, "interrupts-extended");
-    if (irq_ext_prop) {
+    dtb_prop_t *irq_prop     = dtb_get_prop(device->info.dtb_handle, device->info.dtb_node, "interrupts");
+    if (irq_ext_prop && irq_prop) {
+        logkf(LOG_ERROR, "DTB device %{cs} has both interrupts and interrupts-extended", device->info.dtb_node->name);
+    } else if (irq_prop) {
+        if (!device->info.irq_parent) {
+            logkf(LOG_ERROR, "DTB device %{cs} is missing an interrupt parent", device->info.dtb_node->name);
+            goto skipirq;
+        }
+        device_t *irq_parent = device->info.irq_parent;
+
+        // Get number of cells for this parent.
+        dtb_prop_t *irq_cells_prop =
+            dtb_get_prop(device->info.dtb_handle, irq_parent->info.dtb_node, "#interrupt-cells");
+        if (!irq_cells_prop) {
+            device_pop_ref(irq_parent);
+            logkf(LOG_ERROR, "Missing #interrupt-cells for interrupt parent %{cs}", irq_parent->info.dtb_node->name);
+            goto skipirq;
+        }
+        uint32_t irq_cells = dtb_prop_read_uint(device->info.dtb_handle, irq_cells_prop);
+
+        uint32_t tot_cells = irq_prop->content_len / 4;
+        for (uint32_t irq = 0; irq < tot_cells / irq_cells; irq++) {
+            // Read that many cells for the interrupt number.
+            int parent_irqno = (int)dtb_prop_read_cells(device->info.dtb_handle, irq_prop, irq * irq_cells, irq_cells);
+
+            // Add the interrupt link.
+            if (parent_irqno >= 0) {
+                errno_t res = device_link_irq(device, irq, irq_parent, parent_irqno);
+                if (res < 0) {
+                    logkf(
+                        LOG_ERROR,
+                        "Failed to link interrupts[%{u32;d}] for device %{cs}: %{cs} (%{cs})",
+                        irq,
+                        device->info.dtb_node->name,
+                        errno_get_name(-res),
+                        errno_get_desc(-res)
+                    );
+                    break;
+                }
+            }
+
+            device_pop_ref(irq_parent);
+        }
+
+    } else if (irq_ext_prop) {
         uint32_t tot_cells   = irq_ext_prop->content_len / 4;
         uint32_t i           = 0;
         irqno_t  child_irqno = 0;
@@ -210,10 +266,11 @@ static void dtparse_phandles(device_t *device) {
         }
     }
 
+skipirq:
     device_activate(device);
 
     // Resolve for child devices.
-    set_foreach(device_t, child_dev, device->children) {
+    set_foreach(device_t, child_dev, &device->children) {
         dtparse_phandles(child_dev);
     }
 }

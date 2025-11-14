@@ -12,11 +12,15 @@
 #include "device/device.h"
 #include "device/dtb/dtb.h"
 #include "errno.h"
+#include "list.h"
 #include "log.h"
-#include "malloc.h"
+#include "map.h"
 #include "panic.h"
-#include "set.h"
 #include "smp.h"
+
+#include <stddef.h>
+
+#include <malloc.h>
 
 #define REG_READ(addr)       (*(uint32_t const volatile *)(addr))
 #define REG_WRITE(addr, val) (*(uint32_t volatile *)(addr) = (val))
@@ -47,6 +51,8 @@ static bool riscv_plic_match(device_info_t *info) {
 }
 
 static errno_t riscv_plic_add(device_t *device) {
+    size_t vaddr = device->info.addrs[0].mmio.vaddr;
+
     // PLIC must have one MMIO address.
     if (device->info.addrs_len != 1 || device->info.addrs[0].type != DEV_ATYPE_MMIO) {
         return -EINVAL;
@@ -74,27 +80,23 @@ static errno_t riscv_plic_add(device_t *device) {
     }
 
     // For each outgoing interrupt (PLIC context)
-    set_t all_out = device_all_out_irq(device);
-    set_foreach(void, ctx_irqno, &all_out) {
-        devirqno_arr_t outs = device_list_out_irq(device, (size_t)ctx_irqno);
-        for (size_t j = 0; j < outs.len; j++) {
-            device_t *parent       = outs.arr[j].device;
-            irqno_t   parent_irqno = outs.arr[j].irqno;
-            if (parent_irqno == RISCV_INT_EXT) {
-                // Get CPU ID from DTB parent node.
-                dtb_node_t *cpu_node = parent->info.dtb_node ? parent->info.dtb_node->parent : NULL;
-                if (!cpu_node)
-                    continue;
-                uint32_t cpu_id      = dtb_read_uint(parent->info.dtb_handle, cpu_node, "reg");
-                int      logical_cpu = smp_get_cpu(cpu_id);
-                if (logical_cpu >= 0 && logical_cpu < smp_count) {
-                    cookie->ctx_by_cpu[logical_cpu] = (size_t)ctx_irqno;
-                }
+    map_foreach(ent, &device->irq_parents) {
+        irqno_t ctx_irqno = (irqno_t)(size_t)ent->key;
+        dlist_foreach_node(irqconn_t, conn, (dlist_t *)ent->value) {
+            if (conn->irqno != RISCV_INT_EXT)
+                continue;
+
+            // Get CPU ID from DTB parent node.
+            dtb_node_t *cpu_node = conn->device->info.dtb_node ? conn->device->info.dtb_node->parent : NULL;
+            if (!cpu_node)
+                continue;
+            uint32_t cpu_id      = dtb_read_uint(conn->device->info.dtb_handle, cpu_node, "reg");
+            int      logical_cpu = smp_get_cpu(cpu_id);
+            if (logical_cpu >= 0 && logical_cpu < smp_count) {
+                cookie->ctx_by_cpu[logical_cpu] = (int)(size_t)ctx_irqno;
             }
         }
-        devirqno_arr_free(outs);
     }
-    set_clear(&all_out);
 
     // Ensure every logical CPU has a valid PLIC context.
     for (int i = 0; i < smp_count; i++) {
@@ -105,9 +107,20 @@ static errno_t riscv_plic_add(device_t *device) {
     }
 
     // Disable all interrupts.
-    for (size_t i = 0; i < device->irq_children_len; i++) {
-        riscv_plic_enable_irq_in(device, i, false);
+    for (int i = 0; i < smp_count; i++) {
+        uint32_t ctx_no = cookie->ctx_by_cpu[i];
+        REG_WRITE(PLIC_THRESH_OFF(ctx_no) + vaddr, 0);
     }
+
+    map_foreach(ent, &device->irq_children) {
+        irqno_t pin = (irqno_t)(size_t)ent->key;
+        logkf(LOG_DEBUG, "Setup PLIC IRQ %{d}", pin);
+        for (int i = 0; i < smp_count; i++) {
+            uint32_t ctx_no = cookie->ctx_by_cpu[i];
+            REG_SET_BIT(PLIC_ENABLE_OFF(ctx_no) + pin / 32 * 4 + vaddr, pin % 32);
+        }
+    }
+
     return 0;
 }
 
@@ -120,6 +133,7 @@ static bool riscv_plic_interrupt(device_t *device, irqno_t pin) {
     uint32_t             ctx_no = plic->ctx_by_cpu[smp_cur_cpu()];
     uint32_t             irq    = REG_READ(PLIC_CLAIM_OFF(ctx_no) + vaddr);
     if (irq) {
+        REG_WRITE(PLIC_CLAIM_OFF(ctx_no) + vaddr, irq);
         // Interrupt claimed by this CPU.
         return device_forward_interrupt(device, irq);
     } else {
@@ -135,6 +149,7 @@ static errno_t riscv_plic_enable_irq_out(device_t *device, irqno_t pin, bool ena
 static errno_t riscv_plic_enable_irq_in(device_t *device, irqno_t pin, bool enable) {
     size_t               vaddr = device->info.addrs[0].mmio.vaddr;
     device_riscv_plic_t *plic  = device->cookie;
+    REG_WRITE(PLIC_PRIO_OFF + (size_t)pin * 4 + vaddr, enable);
     for (int i = 0; i < smp_count; i++) {
         uint32_t ctx_no = plic->ctx_by_cpu[i];
         if (enable) {
@@ -147,30 +162,9 @@ static errno_t riscv_plic_enable_irq_in(device_t *device, irqno_t pin, bool enab
 }
 
 static errno_t riscv_plic_cascade_enable(device_t *device, irqno_t irq_in_pin) {
-    device_riscv_plic_t *plic = device->cookie;
+    riscv_plic_enable_irq_in(device, irq_in_pin, true);
 
-    // Enable the input IRQ.
-    RETURN_ON_ERRNO(riscv_plic_enable_irq_in(device, irq_in_pin, true));
-
-    for (int cpu = 0; cpu < smp_count; cpu++) {
-        int ctx_no = plic->ctx_by_cpu[cpu];
-
-        // Find the parent interrupt controller for this context
-        devirqno_arr_t outs = device_list_out_irq(device, ctx_no);
-        for (size_t j = 0; j < outs.len; j++) {
-            device_t *parent       = outs.arr[j].device;
-            irqno_t   parent_irqno = outs.arr[j].irqno;
-            if (parent->dev_class == DEV_CLASS_IRQCTL && parent_irqno == RISCV_INT_EXT) {
-                // Enable the external interrupt on the parent controller
-                errno_t res = device_enable_irq_in(parent, parent_irqno, true);
-                if (res < 0) {
-                    devirqno_arr_free(outs);
-                    return res;
-                }
-            }
-        }
-        devirqno_arr_free(outs);
-    }
+    // No need to go enabling `sie` bits here; those are done during `irq_init`.
 
     return 0;
 }

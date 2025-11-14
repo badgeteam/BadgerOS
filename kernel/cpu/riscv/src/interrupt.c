@@ -4,6 +4,7 @@
 #include "interrupt.h"
 
 #include "cpu/isr.h"
+#include "cpu/riscv.h"
 #include "cpulocal.h"
 
 
@@ -16,5 +17,5 @@ void irq_init(isr_ctx_t *tmp_ctx) {
     asm volatile("csrw sscratch, %0" ::"r"(tmp_ctx));
 
     // Disable all internal interrupts.
-    asm volatile("csrw sie, 0");
+    asm volatile("csrw sie, %0" ::"r"(1 << RISCV_INT_EXT));
 }

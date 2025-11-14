@@ -64,7 +64,7 @@ macro_rules! char_driver_struct {
         driver_char_t {
             base: crate::abstract_driver_struct! {
                 $type,
-                dev_class_t_DEV_CLASS_BLOCK,
+                dev_class_t_DEV_CLASS_CHAR,
                 $match_,
                 $add
             },

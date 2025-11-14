@@ -42,19 +42,6 @@ int timertask_timestamp_cmp(void const *a_ptr, void const *b_ptr) {
     }
 }
 
-// Comparator for timer tasks by ID.
-int timertask_id_cmp(void const *a_ptr, void const *b_ptr) {
-    timertask_t const *a = *(void *const *)a_ptr;
-    timertask_t const *b = *(void *const *)b_ptr;
-    if (a->taskno < b->taskno) {
-        return -1;
-    } else if (a->taskno > b->taskno) {
-        return 1;
-    } else {
-        return 0;
-    }
-}
-
 
 
 // Evaluate the timer for this CPU.
@@ -63,7 +50,7 @@ static void eval_cpu_timer(time_cpulocal_t *ctx) {
     if (tasks_len && (ctx->preempt_time <= 0 || tasks[tasks_len - 1]->timestamp < ctx->preempt_time)) {
         // There is a timer task scheduled that will run first.
         ctx->timer_is_preempt = false;
-        time_set_cpu_timer(tasks[0]->timestamp);
+        time_set_cpu_timer(tasks[tasks_len - 1]->timestamp);
     } else {
         // No task or the task will run after the preemption.
         ctx->timer_is_preempt = true;

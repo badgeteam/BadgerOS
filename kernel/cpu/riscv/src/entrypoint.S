@@ -1,6 +1,9 @@
 
 # SPDX-License-Identifier: MIT
 
+#include "cpu/regs.h"
+#include "cpu/riscv.h"
+
     # This is the C entrypoint, which will be called when basic CRT is set up.
     .global basic_runtime_init
     # The global pointer is used for relaxation of `.data` accesses.

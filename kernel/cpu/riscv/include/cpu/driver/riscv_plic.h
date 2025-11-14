@@ -6,7 +6,6 @@
 #pragma once
 
 #include "device/class/irqctl.h"
-#include "device/device.h"
 
 
 

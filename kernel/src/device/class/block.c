@@ -9,7 +9,6 @@
 #include "badge_strings.h"
 #include "cpu/interrupt.h"
 #include "log.h"
-#include "malloc.h"
 #include "mutex.h"
 #include "radixtree.h"
 #include "rcu.h"
@@ -17,6 +16,8 @@
 #include "time.h"
 
 #include <stdint.h>
+
+#include <malloc.h>
 
 // Batch size for syncing blocks.
 #define BLK_SYNC_BATCH_SIZE 32
@@ -90,7 +91,7 @@ errno_t device_block_erase_blocks(device_block_t *device, uint64_t start, uint64
     if (start + count < start || start + count > device->block_count) {
         logkf(
             LOG_WARN,
-            "OOB block device access rejected; erasing 0x%{u64;x} @ 0x%{u64;x} on a 0x%{u64;x}x0x%{u64;x} device",
+            "OOB block device access rejected; erasing 0x%{u64;x} @ 0x%{u64;x} on a 0x%{u64;x}*%{u64;d} device",
             start << device->block_size_exp,
             count << device->block_size_exp,
             device->block_count,
@@ -219,7 +220,7 @@ errno_t device_block_write_bytes(device_block_t *device, uint64_t offset, uint64
     if (offset + size < offset || offset + size > device->block_count << device->block_size_exp) {
         logkf(
             LOG_WARN,
-            "OOB block device access rejected; writing 0x%{u64;x} @ 0x%{u64;x} on a 0x%{u64;x}x0x%{u64;x} device",
+            "OOB block device access rejected; writing 0x%{u64;x} @ 0x%{u64;x} on a 0x%{u64;x}*%{u64;d} device",
             offset,
             size,
             device->block_count,
@@ -255,7 +256,7 @@ errno_t device_block_read_bytes(device_block_t *device, uint64_t offset, uint64_
     if (offset + size < offset || offset + size > device->block_count << device->block_size_exp) {
         logkf(
             LOG_WARN,
-            "OOB block device access rejected; writing 0x%{u64;x} @ 0x%{u64;x} on a 0x%{u64;x}x0x%{u64;x} device",
+            "OOB block device access rejected; reading 0x%{u64;x} @ 0x%{u64;x} on a 0x%{u64;x}*%{u64;d} device",
             offset,
             size,
             device->block_count,
