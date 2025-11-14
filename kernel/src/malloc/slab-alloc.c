@@ -27,7 +27,7 @@
 
 #define BITMAP_WORDS        4
 #define DATA_OFFSET         64
-#define PAGE_ALLOC_BITS(x)  (((PAGE_SIZE - 32) - ((x)-1)) / (x))
+#define PAGE_ALLOC_BITS(x)  (((PAGE_SIZE - 32) - ((x) - 1)) / (x))
 #define PAGE_ALLOC_BYTES(x) ((PAGE_ALLOC_BITS(x) + 7) / 8)
 
 enum slab_sizes_t { SLAB_SIZE_32 = 0, SLAB_SIZE_64 = 1, SLAB_SIZE_128 = 2, SLAB_SIZE_256 = 3 };
@@ -238,6 +238,11 @@ void slab_deallocate(void *ptr) {
         BADGEROS_MALLOC_MSG_ERROR("slab_deallocate(" FMT_P ") = Double free", ptr);
         return;
     }
+
+#ifndef NDEBUG
+    // Fill with dummy value in debug builds to catch UAF.
+    mem_set(ptr, 0xec, slab_bytes[header->size]);
+#endif
 
     header->bitmap[word_index] = new_bitmap;
     --header->use_count;

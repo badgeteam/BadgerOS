@@ -269,7 +269,7 @@ bool smp_poweron(int cpu, void *entrypoint, void *stack) {
         for (uint64_t i = 0; i < smp_req.response->cpu_count; i++) {
             if (smp_req.response->cpus[i]->smp_resp_procid == cpuid) {
                 smp_req.response->cpus[i]->extra_argument = cpu;
-                atomic_store(&smp_req.response->cpus[i]->goto_address, &cpu1_init0_limine);
+                atomic_store((atomic_size_t *)&smp_req.response->cpus[i]->goto_address, (size_t)&cpu1_init0_limine);
                 cpu_status[cpu].did_jump = true;
                 return true;
             }

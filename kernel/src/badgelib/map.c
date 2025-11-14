@@ -169,7 +169,7 @@ bool map_set(map_t *map, void const *key, void const *value) {
 
     if (!value) {
         // No item to be removed.
-        return false;
+        return true;
     }
 
     // Allocate a new item.
@@ -177,12 +177,8 @@ bool map_set(map_t *map, void const *key, void const *value) {
     if (!ent) {
         return false;
     }
-    ent->node = DLIST_NODE_EMPTY;
-    ent->key  = map->vtable->key_dup(key);
-    if (!ent->key) {
-        free(ent);
-        return false;
-    }
+    ent->node  = DLIST_NODE_EMPTY;
+    ent->key   = map->vtable->key_dup(key);
     ent->value = (void *)value;
     ent->hash  = hash;
 

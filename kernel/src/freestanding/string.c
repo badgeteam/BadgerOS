@@ -69,8 +69,12 @@ void *memcpy(void *dest, void const *src, size_t size) {
     {                                                                                                                  \
         type  *dest_ptr = (dest); /* NOLINT */                                                                         \
         size_t _size    = (size) / (alignment);                                                                        \
+        type   _value   = 0;                                                                                           \
+        for (size_t i = 0; i < (alignment); i++) {                                                                     \
+            _value |= (type)(value) << (i * 8);                                                                        \
+        }                                                                                                              \
         for (size_t i = 0; i < _size; i++) {                                                                           \
-            dest_ptr[i] = (value);                                                                                     \
+            dest_ptr[i] = _value;                                                                                      \
         }                                                                                                              \
     }
 

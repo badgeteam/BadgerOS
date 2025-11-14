@@ -60,6 +60,7 @@
 
 #include "static-buddy.h"
 
+#include "badge_strings.h"
 #include "bitops.h"
 #include "debug.h"
 
@@ -519,6 +520,11 @@ void buddy_deallocate(void *ptr) {
     if (!block) {
         return;
     }
+
+#ifndef NDEBUG
+    // Fill with dummy value in debug builds to catch UAF.
+    mem_set(ptr, 0xec, CONFIG_PAGE_SIZE << block->order);
+#endif
 
     pool->free_pages += (1lu << block->order);
     block->type       = BLOCK_TYPE_FREE;
