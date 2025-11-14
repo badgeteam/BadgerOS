@@ -132,8 +132,9 @@ static device_t *
     // Walk child nodes.
     uint32_t inner_alen = dtb_read_uint(handle, node, "#address-cells");
     uint32_t inner_slen = dtb_read_uint(handle, node, "#size-cells");
-    for (dtb_node_t *child = node->nodes; child; child = child->next) {
-        device_t *child_dev =
+    for (size_t i = 0; i < node->nodes_len; i++) {
+        dtb_node_t *child = &node->nodes[i];
+        device_t   *child_dev =
             dtparse_impl(handle, child, inner_alen ?: alen, inner_slen ?: slen, device ?: parent_device);
         if (child_dev) {
             device_pop_ref(child_dev);
@@ -294,7 +295,8 @@ void dtparse(void *dtb_ptr) {
     smp_init_dtb(handle);
 
     // Walk the CPU nodes to find CPU root interrupt controllers.
-    for (dtb_node_t *cpu = cpus->nodes; cpu; cpu = cpu->next) {
+    for (size_t i = 0; i < cpus->nodes_len; i++) {
+        dtb_node_t *cpu = &cpus->nodes[i];
         dtb_prop_t *reg = dtb_get_prop(handle, cpu, "reg");
         if (!reg) {
             continue;
@@ -317,8 +319,9 @@ void dtparse(void *dtb_ptr) {
     }
 
     // Walk the SOC node to detect devices and install drivers.
-    for (dtb_node_t *node = soc->nodes; node; node = node->next) {
-        device_t *child_dev = dtparse_impl(handle, node, soc_alen, soc_slen, NULL);
+    for (size_t i = 0; i < soc->nodes_len; i++) {
+        dtb_node_t *node      = &soc->nodes[i];
+        device_t   *child_dev = dtparse_impl(handle, node, soc_alen, soc_slen, NULL);
         if (child_dev) {
             device_pop_ref(child_dev);
         }
@@ -397,8 +400,8 @@ static void dtdump_r(dtb_handle_t *handle, dtb_node_t *node) {
     rawprint(node->name);
     rawprint(" {\n");
 
-    dtb_prop_t *prop = node->props;
-    while (prop) {
+    for (size_t i = 0; i < node->props_len; i++) {
+        dtb_prop_t *prop = &node->props[i];
         pindent(node->depth + 1);
         rawprint(prop->name);
         if (prop->content_len) {
@@ -418,13 +421,11 @@ static void dtdump_r(dtb_handle_t *handle, dtb_node_t *node) {
             }
         }
         rawprint(";\n");
-        prop = prop->next;
     }
 
-    dtb_node_t *subnode = node->nodes;
-    while (subnode) {
+    for (size_t i = 0; i < node->nodes_len; i++) {
+        dtb_node_t *subnode = &node->nodes[i];
         dtdump_r(handle, subnode);
-        subnode = subnode->next;
     }
 
     pindent(node->depth);

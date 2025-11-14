@@ -132,19 +132,19 @@ void smp_init_dtb(dtb_handle_t *dtb) {
     // Parse CPU ID information from the DTB.
     dtb_node_t *cpus = dtb_get_node(dtb, dtb_root_node(dtb), "cpus");
     assert_always(cpus);
-    dtb_node_t *cpu = cpus->nodes;
-    assert_always(cpu);
+    assert_always(cpus->nodes_len >= 1);
     uint32_t cpu_acells = dtb_read_uint(dtb, cpus, "#address-cells");
     assert_always(cpu_acells && cpu_acells <= sizeof(size_t) / 4);
     assert_always(dtb_read_uint(dtb, cpus, "#size-cells") == 0);
     size_t bsp_cpuid = smp_req.response->bsp_hartid;
 
-    while (cpu) {
+    for (size_t i = 0; i < cpus->nodes_len; i++) {
+        dtb_node_t *cpu = &cpus->nodes[i];
+
         // Detect usable architecture.
         uint32_t    isa_len = 0;
         char const *isa     = dtb_prop_content(dtb, dtb_get_prop(dtb, cpu, "riscv,isa"), &isa_len);
         if (isa_len < 5 || !cstr_prefix_equals(isa, __riscv_xlen == 32 ? "rv32i" : "rv64i", 5)) {
-            cpu = cpu->next;
             continue;
         }
 
@@ -152,7 +152,6 @@ void smp_init_dtb(dtb_handle_t *dtb) {
         uint32_t    mmu_len = 0;
         char const *mmu     = dtb_prop_content(dtb, dtb_get_prop(dtb, cpu, "mmu-type"), &mmu_len);
         if (!mmu || !mmu_dtb_supported(mmu)) {
-            cpu = cpu->next;
             continue;
         }
 
@@ -176,8 +175,6 @@ void smp_init_dtb(dtb_handle_t *dtb) {
         };
         assert_always(array_len_sorted_insert(&smp_map, sizeof(smp_map_t), &smp_map_len, &new_ent, smp_cpuid_cmp));
         assert_always(array_len_sorted_insert(&smp_unmap, sizeof(smp_map_t), &smp_unmap_len, &new_ent, smp_cpu_cmp));
-
-        cpu = cpu->next;
     }
     int cur_cpu = smp_cur_cpu();
 

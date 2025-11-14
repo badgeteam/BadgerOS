@@ -5,12 +5,12 @@
 
 // This file is for temporary backwards compatibility with the old static-buddy.c API for page allocations.
 
+#include "badge_strings.h"
 #include "log.h"
 #include "mem/pmm.h"
 #include "mem/vmm.h"
 #include "panic.h"
 #include "static-buddy.h"
-#include "todo.h"
 
 void *buddy_allocate(size_t size, enum block_type type, uint32_t flags) {
     page_usage_t usage;
@@ -21,7 +21,7 @@ void *buddy_allocate(size_t size, enum block_type type, uint32_t flags) {
         case BLOCK_TYPE_SLAB: usage = PAGE_USAGE_KERNEL_SLAB; break;
     }
     uint32_t order = 0;
-    while ((1llu << order) < size) {
+    while (((size_t)CONFIG_PAGE_SIZE << order) < size) {
         order++;
     }
     errno_ppn_t page = pmm_page_alloc(order, usage);
@@ -33,7 +33,24 @@ void *buddy_allocate(size_t size, enum block_type type, uint32_t flags) {
 }
 
 void *buddy_reallocate(void *ptr, size_t size) {
-    TODO();
+    if (!ptr) {
+        buddy_deallocate(ptr);
+        return NULL;
+    }
+
+    size_t old_size = buddy_get_size(ptr);
+
+    if (old_size >= size) {
+        return ptr;
+    }
+
+    void  *newmem    = buddy_allocate(size, buddy_get_type(ptr), 0);
+    size_t copy_size = old_size < size ? old_size : size;
+    mem_copy(newmem, ptr, copy_size);
+
+    buddy_deallocate(ptr);
+
+    return newmem;
 }
 
 void buddy_deallocate(void *ptr) {
@@ -61,5 +78,5 @@ enum block_type buddy_get_type(void *ptr) {
 
 size_t buddy_get_size(void *ptr) {
     pmm_page_t *page_meta = pmm_page_struct(((size_t)ptr - vmm_hhdm_offset) / CONFIG_PAGE_SIZE);
-    return 1llu << ((page_meta->flags & PGFLAGS_ORDER_MASK) >> PGFLAGS_ORDER_EXP);
+    return (size_t)CONFIG_PAGE_SIZE << ((page_meta->flags & PGFLAGS_ORDER_MASK) >> PGFLAGS_ORDER_EXP);
 }

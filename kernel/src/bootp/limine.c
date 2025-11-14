@@ -315,12 +315,6 @@ void bootp_reclaim_mem() {
 
 // Send a single character to the log output.
 void bootp_early_putc(char msg) {
-    // Artificial delay.
-    timestamp_us_t lim = time_us();
-    if (lim) {
-        lim += 100;
-        while (time_us() < lim);
-    }
     // TODO: More proper way to do this.
 #ifdef __x86_64__
     outb(0x3f8, msg);

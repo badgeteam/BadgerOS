@@ -71,10 +71,6 @@ typedef struct dtb_node_t dtb_node_t;
 
 // DTB prop.
 typedef struct dtb_prop_t {
-    // Next sibling prop.
-    dtb_prop_t *next;
-    // Previous sibling prop.
-    dtb_prop_t *prev;
     // Parent node.
     dtb_node_t *parent;
     // Prop name.
@@ -89,10 +85,6 @@ typedef struct dtb_prop_t {
 
 // DTB node.
 typedef struct dtb_node_t {
-    // Next sibling node.
-    dtb_node_t *next;
-    // Previous sibling node.
-    dtb_node_t *prev;
     // Parent node.
     dtb_node_t *parent;
     // Node name.

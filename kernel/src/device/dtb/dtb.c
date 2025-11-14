@@ -114,18 +114,10 @@ static void dtb_build_refs(dtb_handle_t *handle, dtb_node_t *node) {
     for (size_t i = 0; i < node->props_len; i++) {
         node->props[i].parent = node;
     }
-    for (size_t i = 0; i + 1 < node->props_len; i++) {
-        node->props[i].next     = node->props + i + 1;
-        node->props[i + 1].prev = node->props + i;
-    }
 
     // Update child node relative pointers.
     for (size_t i = 0; i < node->nodes_len; i++) {
         node->nodes[i].parent = node;
-    }
-    for (size_t i = 0; i + 1 < node->nodes_len; i++) {
-        node->nodes[i].next     = node->nodes + i + 1;
-        node->nodes[i + 1].prev = node->nodes + i;
     }
 
     // Check for phandles.
@@ -204,12 +196,11 @@ dtb_node_t *dtb_root_node(dtb_handle_t *handle) {
 // Get a node with a specific name.
 dtb_node_t *dtb_get_node_l(dtb_handle_t *handle, dtb_node_t *parent_node, char const *name, size_t name_len) {
     (void)handle;
-    dtb_node_t *node = parent_node->nodes;
-    while (node) {
+    for (size_t i = 0; i < parent_node->nodes_len; i++) {
+        dtb_node_t *node = &parent_node->nodes[i];
         if (cstr_prefix_equals(node->name, name, name_len) && node->name[name_len] == 0) {
             return node;
         }
-        node = node->next;
     }
     return NULL;
 }
@@ -217,12 +208,11 @@ dtb_node_t *dtb_get_node_l(dtb_handle_t *handle, dtb_node_t *parent_node, char c
 // Get a prop with a specific name.
 dtb_prop_t *dtb_get_prop_l(dtb_handle_t *handle, dtb_node_t *parent_node, char const *name, size_t name_len) {
     (void)handle;
-    dtb_prop_t *prop = parent_node->props;
-    while (prop) {
+    for (size_t i = 0; i < parent_node->props_len; i++) {
+        dtb_prop_t *prop = &parent_node->props[i];
         if (cstr_prefix_equals(prop->name, name, name_len) && prop->name[name_len] == 0) {
             return prop;
         }
-        prop = prop->next;
     }
     return NULL;
 }

@@ -4,7 +4,6 @@
 
 use core::{
     hint::unreachable_unchecked,
-    mem::offset_of,
     ops::Range,
     sync::atomic::{AtomicU32, AtomicUsize, Ordering},
 };
@@ -13,7 +12,6 @@ use crate::{
     badgelib::irq::IrqGuard,
     bindings::{
         error::{EResult, Errno},
-        log::LogLevel,
         spinlock::Spinlock,
     },
     config,
