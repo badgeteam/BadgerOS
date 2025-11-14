@@ -13,6 +13,8 @@
 #include "isr_ctx.h"
 #include "log.h"
 #include "malloc.h"
+#include "memprotect.h"
+#include "page_alloc.h"
 #include "panic.h"
 #include "process/sighandler.h"
 #include "process/types.h"
@@ -22,6 +24,7 @@
 #include "scheduler/types.h"
 #include "smp.h"
 #include "spinlock.h"
+#include "static-buddy.h"
 #include "time.h"
 
 
@@ -268,6 +271,41 @@ void sched_request_switch_from_isr() {
 
 
 
+// Allocate a kernel stack.
+// Returns the stack bottom address.
+size_t sched_alloc_stack() {
+    size_t vaddr = memprotect_alloc_vaddr(CONFIG_STACK_SIZE);
+    if (!vaddr)
+        goto err0;
+    size_t paddr = phys_page_alloc(CONFIG_STACK_SIZE / CONFIG_PAGE_SIZE, false) * CONFIG_PAGE_SIZE;
+    if (!paddr)
+        goto err1;
+    if (!memprotect_k(vaddr, paddr, CONFIG_STACK_SIZE, MEMPROTECT_FLAG_RW))
+        goto err2;
+    memprotect_commit(&mpu_global_ctx);
+    return vaddr;
+
+err2:
+    phys_page_free(paddr / CONFIG_PAGE_SIZE);
+err1:
+    memprotect_free_vaddr(vaddr);
+err0:
+    return 0;
+}
+
+// Free a kernel stack.
+// Takes the stack bottom address.
+void sched_free_stack(size_t vaddr) {
+    virt2phys_t res = memprotect_virt2phys(&mpu_global_ctx, vaddr);
+    assert_dev_drop(res.flags == (MEMPROTECT_FLAG_RW | MEMPROTECT_FLAG_KERNEL | MEMPROTECT_FLAG_GLOBAL));
+    memprotect_k(vaddr, 0, CONFIG_STACK_SIZE, 0);
+    memprotect_commit(&mpu_global_ctx);
+    phys_page_free(res.paddr / CONFIG_PAGE_SIZE);
+    memprotect_free_vaddr(vaddr);
+}
+
+
+
 // Compare the ID of `sched_thread_t *` to an `int`.
 static int tid_int_cmp(void const *a, void const *b) {
     sched_thread_t *thread = *(sched_thread_t **)a;
@@ -306,7 +344,7 @@ static void sched_housekeeping(int taskno, void *arg) {
     // Clean up all dead threads.
     while (tmp.len) {
         sched_thread_t *thread = (void *)dlist_pop_front(&tmp);
-        free((void *)thread->kernel_stack_bottom);
+        sched_free_stack(thread->kernel_stack_bottom);
         if (thread->name) {
             free(thread->name);
         }
@@ -509,7 +547,7 @@ tid_t thread_new_user(char const *name, process_t *process, size_t user_entrypoi
     }
     mem_set(thread, 0, sizeof(sched_thread_t));
 
-    thread->kernel_stack_bottom = (size_t)malloc(CONFIG_STACK_SIZE);
+    thread->kernel_stack_bottom = sched_alloc_stack();
     if (!thread->kernel_stack_bottom) {
         free(thread);
         return -ENOMEM;
@@ -519,7 +557,7 @@ tid_t thread_new_user(char const *name, process_t *process, size_t user_entrypoi
         size_t name_len = cstr_length(name);
         thread->name    = malloc(name_len + 1);
         if (!thread->name) {
-            free((void *)thread->kernel_stack_bottom);
+            sched_free_stack(thread->kernel_stack_bottom);
             free(thread);
             return -ENOMEM;
         }
@@ -546,7 +584,7 @@ tid_t thread_new_user(char const *name, process_t *process, size_t user_entrypoi
         if (thread->name) {
             free(thread->name);
         }
-        free((void *)thread->kernel_stack_bottom);
+        sched_free_stack(thread->kernel_stack_bottom);
         free(thread);
         return -ENOMEM;
     }
@@ -563,7 +601,7 @@ tid_t thread_new_kernel(char const *name, sched_entry_t entrypoint, void *arg, i
     }
     mem_set(thread, 0, sizeof(sched_thread_t));
 
-    thread->kernel_stack_bottom = (size_t)malloc(CONFIG_STACK_SIZE);
+    thread->kernel_stack_bottom = sched_alloc_stack();
     if (!thread->kernel_stack_bottom) {
         free(thread);
         return -ENOMEM;
@@ -573,7 +611,7 @@ tid_t thread_new_kernel(char const *name, sched_entry_t entrypoint, void *arg, i
         size_t name_len = cstr_length(name);
         thread->name    = malloc(name_len + 1);
         if (!thread->name) {
-            free((void *)thread->kernel_stack_bottom);
+            sched_free_stack(thread->kernel_stack_bottom);
             free(thread);
             return -ENOMEM;
         }
@@ -598,7 +636,7 @@ tid_t thread_new_kernel(char const *name, sched_entry_t entrypoint, void *arg, i
         if (thread->name) {
             free(thread->name);
         }
-        free((void *)thread->kernel_stack_bottom);
+        sched_free_stack(thread->kernel_stack_bottom);
         free(thread);
         return -ENOMEM;
     }
