@@ -15,13 +15,13 @@
 #include <stdint.h>
 
 // The minimum time a thread will run. `SCHED_PRIO_LOW` maps to this.
-#define SCHED_MIN_US              5000
+#define SCHED_MIN_US              5000ll
 // The time quota increment per increased priority.
-#define SCHED_INC_US              500
+#define SCHED_INC_US              500ll
 // The microsecond interval on which schedulers measure CPU load.
-#define SCHED_LOAD_INTERVAL       250000
+#define SCHED_LOAD_INTERVAL       250000ll
 // The minimum amount of microseconds that must pass before a thread is allowed to be migrated by work stealing.
-#define SCHED_WORK_STEAL_INTERVAL 50000
+#define SCHED_WORK_STEAL_INTERVAL 50000ll
 
 
 

@@ -106,7 +106,7 @@ pub struct MutexGuard<'a, T: ?Sized, const SHARED: bool> {
     marker: PhantomData<&'a mutex_t>,
 }
 
-impl<'a, T: ?Sized, const SHARED: bool> MutexGuard<'a, T, SHARED> {
+impl<'a, T: ?Sized + 'a, const SHARED: bool> MutexGuard<'a, T, SHARED> {
     /// Convert into raw parts.
     pub fn to_raw_parts(self) -> (*mut mutex_t, &'a mut T) {
         // Using this unsafe block to bypass borrow checker from preventing the `core::mem::forget`.
@@ -203,7 +203,7 @@ pub struct SharedMutexGuard<'a, T: ?Sized> {
     marker: PhantomData<&'a mutex_t>,
 }
 
-impl<'a, T: ?Sized> SharedMutexGuard<'a, T> {
+impl<'a, T: ?Sized + 'a> SharedMutexGuard<'a, T> {
     /// Convert into raw parts.
     pub fn to_raw_parts(self) -> (*mut mutex_t, &'a T) {
         // Using this unsafe block to bypass borrow checker from preventing the `core::mem::forget`.

@@ -144,13 +144,6 @@ pub fn print(msg: &str) {
     }
 }
 
-/// Write a formatted message.
-pub fn printf(thing: &dyn Display) {
-    let mut writer = LogWriter {};
-    let mut fmt = Formatter::new(&mut writer, Default::default());
-    let _ = thing.fmt(&mut fmt);
-}
-
 /// Print a formatted message.
 #[macro_export]
 macro_rules! printf {

@@ -401,10 +401,6 @@ pub unsafe fn mark_free(mut pages: Range<PPN>) {
 /// Initialize the physical memory allocator.
 pub unsafe fn init(total: Range<PPN>, early: Range<PPN>) {
     unsafe {
-        for ent in FREE_LIST.data() {
-            *ent = PPN::MAX;
-        }
-
         TOTAL_PAGES.store(total.end - total.start, Ordering::Relaxed);
         PAGE_RANGE = total.clone();
         // How many pages will be used by the page metadata structs.

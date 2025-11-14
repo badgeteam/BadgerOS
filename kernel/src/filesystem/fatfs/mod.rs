@@ -18,7 +18,7 @@ use crate::{
         mutex::Mutex,
     },
     filesystem::{VNodeMtxInner, fatfs::spec::attr2, vfs::vnflags},
-    util::zeroes,
+    mem::vmm::zeroes,
 };
 
 use super::NAME_MAX;

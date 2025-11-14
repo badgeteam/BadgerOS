@@ -12,8 +12,7 @@
 #include "interrupt.h"
 #include "isr_ctx.h"
 #include "log.h"
-#include "malloc.h"
-#include "memprotect.h"
+#include "mem/vmm.h"
 #include "page_alloc.h"
 #include "panic.h"
 #include "process/sighandler.h"
@@ -24,8 +23,9 @@
 #include "scheduler/types.h"
 #include "smp.h"
 #include "spinlock.h"
-#include "static-buddy.h"
 #include "time.h"
+
+#include <malloc.h>
 
 
 
@@ -274,21 +274,18 @@ void sched_request_switch_from_isr() {
 // Allocate a kernel stack.
 // Returns the stack bottom address.
 size_t sched_alloc_stack() {
-    size_t vaddr = memprotect_alloc_vaddr(CONFIG_STACK_SIZE);
-    if (!vaddr)
+    ppn_t ppn = phys_page_alloc(CONFIG_STACK_SIZE / CONFIG_PAGE_SIZE, false);
+    if (!ppn)
         goto err0;
-    size_t paddr = phys_page_alloc(CONFIG_STACK_SIZE / CONFIG_PAGE_SIZE, false) * CONFIG_PAGE_SIZE;
-    if (!paddr)
-        goto err1;
-    if (!memprotect_k(vaddr, paddr, CONFIG_STACK_SIZE, MEMPROTECT_FLAG_RW))
-        goto err2;
-    memprotect_commit(&mpu_global_ctx);
-    return vaddr;
 
-err2:
-    phys_page_free(paddr / CONFIG_PAGE_SIZE);
+    vpn_t vpn;
+    if (vmm_map_k(&vpn, CONFIG_STACK_SIZE / CONFIG_PAGE_SIZE, ppn, VMM_FLAG_RW) < 0)
+        goto err1;
+
+    return vpn * CONFIG_PAGE_SIZE;
+
 err1:
-    memprotect_free_vaddr(vaddr);
+    phys_page_free(ppn);
 err0:
     return 0;
 }
@@ -296,12 +293,9 @@ err0:
 // Free a kernel stack.
 // Takes the stack bottom address.
 void sched_free_stack(size_t vaddr) {
-    virt2phys_t res = memprotect_virt2phys(&mpu_global_ctx, vaddr);
-    assert_dev_drop(res.flags == (MEMPROTECT_FLAG_RW | MEMPROTECT_FLAG_KERNEL | MEMPROTECT_FLAG_GLOBAL));
-    memprotect_k(vaddr, 0, CONFIG_STACK_SIZE, 0);
-    memprotect_commit(&mpu_global_ctx);
+    virt2phys_t res = vmm_virt2phys(NULL, vaddr);
+    vmm_unmap_k(vaddr / CONFIG_PAGE_SIZE, CONFIG_STACK_SIZE / CONFIG_PAGE_SIZE);
     phys_page_free(res.paddr / CONFIG_PAGE_SIZE);
-    memprotect_free_vaddr(vaddr);
 }
 
 
@@ -362,7 +356,6 @@ static void sched_housekeeping(int taskno, void *arg) {
 // Idle function ran when a CPU has no threads.
 static void idle_func(void *arg) {
     (void)arg;
-    timestamp_us_t    lim      = 1000000 + 200000 * smp_cur_cpu();
     sched_cpulocal_t *info     = isr_ctx_get()->cpulocal->sched;
     int               this_cpu = smp_cur_cpu();
     while (1) {

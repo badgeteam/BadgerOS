@@ -8,7 +8,7 @@ use crate::{
         device::{HasBaseDevice, class::block::BlockDevice},
         error::{EResult, Errno},
     },
-    util::zeroes,
+    mem::vmm::zeroes,
 };
 
 /// Specifies some type of media a filesystem can be mounted on.

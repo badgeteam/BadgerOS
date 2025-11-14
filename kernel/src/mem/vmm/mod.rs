@@ -509,3 +509,11 @@ pub unsafe fn init() {
         logkf!(LogLevel::Info, "Virtual memory management initialized");
     }
 }
+
+/// Returns at least one page of zeroed memory.
+pub fn zeroes() -> &'static [u8] {
+    unsafe {
+        assert!(!ZEROES.is_null());
+        &*ZEROES
+    }
+}

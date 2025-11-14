@@ -3,15 +3,7 @@ use core::ops::Deref;
 use alloc::string::String;
 use uuid::Uuid;
 
-use crate::bindings::{
-    error::EResult,
-    raw::{memprotect_zeroes, memprotect_zeroes_len},
-};
-
-/// Get a naturally slice that is a page or more of zeroes.
-pub fn zeroes() -> &'static [u8] {
-    unsafe { &*slice_from_raw_parts(memprotect_zeroes, memprotect_zeroes_len) }
-}
+use crate::bindings::error::EResult;
 
 /// Enum that represents either a const or a mut reference.
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
