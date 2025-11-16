@@ -112,7 +112,7 @@ static bool device_init(device_union_t *device) {
                         if (size % CONFIG_PAGE_SIZE) {
                             size += CONFIG_PAGE_SIZE - size % CONFIG_PAGE_SIZE;
                         }
-                        assert_dev_keep(vmm_unmap_k(vaddr / CONFIG_PAGE_SIZE, size / CONFIG_PAGE_SIZE) >= 0);
+                        vmm_unmap_k(vaddr / CONFIG_PAGE_SIZE, size / CONFIG_PAGE_SIZE);
                         addr->vaddr = 0;
                     }
                 }
@@ -138,7 +138,7 @@ static void device_deinit(device_union_t *device) {
             if (addr.size % CONFIG_PAGE_SIZE) {
                 addr.size += CONFIG_PAGE_SIZE - addr.size % CONFIG_PAGE_SIZE;
             }
-            assert_dev_keep(vmm_unmap_k(addr.vaddr / CONFIG_PAGE_SIZE, addr.size / CONFIG_PAGE_SIZE) >= 0);
+            vmm_unmap_k(addr.vaddr / CONFIG_PAGE_SIZE, addr.size / CONFIG_PAGE_SIZE);
         }
     }
 

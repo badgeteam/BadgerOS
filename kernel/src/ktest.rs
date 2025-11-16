@@ -4,7 +4,7 @@
 
 use alloc::boxed::Box;
 
-use core::{error::Error, fmt::Display, ptr::slice_from_raw_parts};
+use core::{error::Error, fmt::Display};
 
 /// Describes at what level of init a testcase should run.
 #[repr(C)]
@@ -41,6 +41,8 @@ pub extern "C" fn ktests_runlevel(level: KTestWhen) {
         static __stop_ktests: u8;
     }
     let tests = unsafe {
+        use core::ptr::slice_from_raw_parts;
+
         let start = &raw const __start_ktests as *const KTest;
         let stop = &raw const __stop_ktests as *const KTest;
         &*slice_from_raw_parts(start, stop.offset_from_unsigned(start))

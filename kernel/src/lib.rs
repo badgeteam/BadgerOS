@@ -22,6 +22,8 @@
 #![feature(generic_const_exprs)]
 #![feature(int_lowest_highest_one)]
 #![feature(generic_atomic)]
+#![feature(btree_cursors)]
+#![feature(linked_list_cursors)]
 
 #[macro_use]
 extern crate alloc;

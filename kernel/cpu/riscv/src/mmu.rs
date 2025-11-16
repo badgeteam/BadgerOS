@@ -6,7 +6,7 @@ use core::arch::asm;
 
 use crate::mem::{
     pmm::PPN,
-    vmm::mmu::{ASID_BITS, PAGING_LEVELS, PTE},
+    vmm::pagetable::{ASID_BITS, PAGING_LEVELS, PTE},
 };
 
 /// Data type that can store a packed page table entry.

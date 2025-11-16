@@ -20,6 +20,7 @@ use crate::{
 
 mod c_api;
 pub mod phys_box;
+pub mod phys_ptr;
 
 /// Kinds of usage for pages of memory.
 #[repr(u32)]
@@ -39,6 +40,8 @@ pub enum PageUsage {
     KernelAnon,
     /// Kernel slabs memory (may be removed in the future).
     KernelSlab,
+    /// The actual kernel executable itself, be that code or data.
+    KernelSegment,
     /// Dummy entry for unusable page.
     Unusable,
 }
@@ -71,14 +74,14 @@ pub struct Page {
 
 impl Page {
     /// Get the buddy alloc page order.
-    pub fn order(&self) -> u32 {
-        (self.flags.load(Ordering::Relaxed) & pgflags::ORDER_MASK) >> pgflags::ORDER_EXP
+    pub fn order(&self) -> u8 {
+        ((self.flags.load(Ordering::Relaxed) & pgflags::ORDER_MASK) >> pgflags::ORDER_EXP) as u8
     }
     /// Set the buddy alloc page order.
-    fn set_order(&self, order: u32) {
+    fn set_order(&self, order: u8) {
         self.flags
             .update(Ordering::Relaxed, Ordering::Relaxed, |flags| {
-                (flags & !pgflags::ORDER_MASK) | (order << pgflags::ORDER_EXP)
+                (flags & !pgflags::ORDER_MASK) | ((order as u32) << pgflags::ORDER_EXP)
             });
     }
     /// Get the buddy alloc page order.
@@ -110,7 +113,7 @@ pub type AtomicPPN = AtomicUsize;
 pub type PPN = usize;
 
 /// Maximum order that blocks can be coalesced into.
-pub const MAX_ORDER: u32 = 64;
+pub const MAX_ORDER: u8 = 64;
 
 /// Total physical pages.
 pub static TOTAL_PAGES: AtomicPPN = AtomicPPN::new(0);
@@ -132,16 +135,28 @@ static FREE_LIST: Spinlock<[PPN; MAX_ORDER as usize]> =
     unsafe { Spinlock::new_static([PPN::MAX; MAX_ORDER as usize]) };
 
 /// Calculates the minimum sized order that will fit this many bytes.
-pub const fn size_to_order(byte_size: usize) -> u32 {
+pub const fn size_to_order(byte_size: usize) -> u8 {
     debug_assert!(byte_size > 0);
     let pages = byte_size.div_ceil(config::PAGE_SIZE as usize) as PPN;
-    PPN::BITS - (pages - 1).leading_zeros()
+    (PPN::BITS - (pages - 1).leading_zeros()) as u8
 }
 
 /// Calculates how many bytes are in a block of a certain order.
-pub const fn order_to_size(order: u32) -> usize {
+pub const fn order_to_size(order: u8) -> usize {
     debug_assert!(order < MAX_ORDER);
     (config::PAGE_SIZE as usize) << order
+}
+
+/// Calculates the minimum sized order that will fit this many bytes.
+pub const fn pages_to_order(pages: usize) -> u8 {
+    debug_assert!(pages > 0);
+    (PPN::BITS - (pages - 1).leading_zeros()) as u8
+}
+
+/// Calculates how many bytes are in a block of a certain order.
+pub const fn order_to_pages(order: u8) -> usize {
+    debug_assert!(order < MAX_ORDER);
+    1 << order
 }
 
 /// Helper function that gets the freelist link for a block, assuming it is free.
@@ -211,7 +226,7 @@ unsafe fn free_list_contains(block: PPN, list_head: PPN) -> bool {
 }
 
 /// Allocate `1 << order` pages of physical memory.
-pub unsafe fn page_alloc(order: u32, usage: PageUsage) -> EResult<PPN> {
+pub unsafe fn page_alloc(order: u8, usage: PageUsage) -> EResult<PPN> {
     debug_assert!(order < MAX_ORDER);
     debug_assert!(usage != PageUsage::Unusable && usage != PageUsage::Free);
     let _noirq = unsafe { IrqGuard::new() };
@@ -266,7 +281,9 @@ pub unsafe fn page_alloc(order: u32, usage: PageUsage) -> EResult<PPN> {
     // Account memory usage.
     FREE_PAGES.fetch_sub(1 << order, Ordering::Relaxed);
     match usage {
-        PageUsage::Free | PageUsage::Unusable => unsafe { unreachable_unchecked() },
+        PageUsage::Free | PageUsage::Unusable | PageUsage::KernelSegment => unsafe {
+            unreachable_unchecked()
+        },
         PageUsage::Cache => {
             CACHE_PAGES.fetch_add(1 << order, Ordering::Relaxed);
         }
@@ -283,13 +300,19 @@ pub unsafe fn page_alloc(order: u32, usage: PageUsage) -> EResult<PPN> {
 }
 
 /// Free pages of physical memory.
-pub unsafe fn page_free(block: PPN, order: u32) {
+pub unsafe fn page_free(block: PPN) {
     unsafe {
-        debug_assert!(block >> order << order == block);
         let page_meta = page_struct(block);
+        let order = (*page_meta).order();
+        debug_assert!(
+            block >> order << order == block,
+            "page_free() block is not aligned"
+        );
         let refcount = (*page_meta).refcount.fetch_sub(1, Ordering::Relaxed);
-        debug_assert!(refcount == 1);
-        mark_one_free(block, order);
+        assert!(refcount >= 1);
+        if refcount == 1 {
+            mark_one_free(block, order);
+        }
     }
 }
 
@@ -307,8 +330,9 @@ pub fn page_struct(ppn: PPN) -> *mut Page {
 
 /// Get the [`Page`] struct for the start of the block that some physical page number lies in.
 /// Manipulating the data within the struct is unsafe.
-pub fn page_struct_base(ppn: PPN, order: u32) -> *mut Page {
+pub fn page_struct_base(ppn: PPN) -> *mut Page {
     unsafe {
+        let order = (*page_struct(ppn)).order();
         let page = page_struct(ppn >> order << order);
         debug_assert!((*page).order() == order);
         return page;
@@ -316,7 +340,7 @@ pub fn page_struct_base(ppn: PPN, order: u32) -> *mut Page {
 }
 
 /// Mark a single block of arbitrary order as free.
-unsafe fn mark_one_free(mut block: PPN, mut order: u32) {
+unsafe fn mark_one_free(mut block: PPN, mut order: u8) {
     debug_assert!(unsafe { PAGE_RANGE.start <= block && block < PAGE_RANGE.end });
     debug_assert!(block % (1usize << order) == 0);
     let pages_freed: PPN = 1 << order;
@@ -327,7 +351,7 @@ unsafe fn mark_one_free(mut block: PPN, mut order: u32) {
     let page_meta = unsafe { &*page_struct(block) };
     match page_meta.usage() {
         PageUsage::Free => unreachable!("Unused page marked as free again"),
-        PageUsage::Unusable => (), // Not accounted as being used for something.
+        PageUsage::Unusable | PageUsage::KernelSegment => (), // Not accounted as being used for something.
         PageUsage::Cache => {
             CACHE_PAGES.fetch_sub(pages_freed, Ordering::Relaxed);
         }
@@ -341,7 +365,7 @@ unsafe fn mark_one_free(mut block: PPN, mut order: u32) {
     }
 
     /// Try to coalesce a block with its buddy.
-    fn try_coalesce(block: PPN, order: u32, free_list: &mut [PPN; MAX_ORDER as usize]) -> bool {
+    fn try_coalesce(block: PPN, order: u8, free_list: &mut [PPN; MAX_ORDER as usize]) -> bool {
         // Determine whether coalescing is possible.
         let buddy = block ^ (1 << order);
         if !unsafe { PAGE_RANGE.start <= buddy && buddy < PAGE_RANGE.end } {
@@ -372,7 +396,7 @@ unsafe fn mark_one_free(mut block: PPN, mut order: u32) {
         let page_meta = unsafe { &*page_struct(i) };
         page_meta
             .flags
-            .store(order << pgflags::ORDER_EXP, Ordering::Relaxed);
+            .store((order as u32) << pgflags::ORDER_EXP, Ordering::Relaxed);
         page_meta.refcount.store(0, Ordering::Relaxed);
     }
 
@@ -390,13 +414,14 @@ pub unsafe fn mark_free(mut pages: Range<PPN>) {
         let max_order = pages
             .start
             .trailing_zeros()
-            .min((pages.end - pages.start).ilog2());
+            .min((pages.end - pages.start).ilog2()) as u8;
         unsafe { mark_one_free(pages.start, max_order) };
         pages.start += 1 << max_order;
     }
 }
 
 /// Initialize the physical memory allocator.
+/// It is assumed that the boot protocol implementation hereafter marks the kernel executable with [`PageUsage::KernelSegment`].
 pub unsafe fn init(total: Range<PPN>, early: Range<PPN>) {
     unsafe {
         TOTAL_PAGES.store(total.end - total.start, Ordering::Relaxed);
@@ -426,7 +451,7 @@ pmm_ktest!(PMM_BASIC, unsafe {
     // Allocate one page of a couple orders.
     let mut ppn = [0; 4];
     for order in 0..3 {
-        ppn[order] = page_alloc(order as u32, PageUsage::KernelAnon)?;
+        ppn[order] = page_alloc(order as u8, PageUsage::KernelAnon)?;
     }
     // Make sure we didn't get duplicates.
     for x in 1..3 {
@@ -442,6 +467,6 @@ pmm_ktest!(PMM_BASIC, unsafe {
     }
     // Free pages again.
     for order in 0..3 {
-        page_free(ppn[order], order as u32);
+        page_free(ppn[order]);
     }
 });
