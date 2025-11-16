@@ -590,14 +590,14 @@ void proc_delete_runtime_raw(process_t *process) {
         dlist_concat(&init->children, &process->children);
     }
 
-    // Unmap all memory regions.
-    while (process->memmap.regions_len) {
-#if !CONFIG_NOMMU
-        proc_unmap_raw(process, process->memmap.regions[0].vaddr, process->memmap.regions[0].size);
-#else
-        proc_unmap_raw(process, process->memmap.regions[0].paddr, process->memmap.regions[0].size);
-#endif
-    }
+    //     // Unmap all memory regions.
+    //     while (process->memmap.regions_len) {
+    // #if !CONFIG_NOMMU
+    //         proc_unmap_raw(process, process->memmap.regions[0].vaddr, process->memmap.regions[0].size);
+    // #else
+    //         proc_unmap_raw(process, process->memmap.regions[0].paddr, process->memmap.regions[0].size);
+    // #endif
+    //     }
 
     // Close pipes and files.
     for (size_t i = 0; i < process->fds_len; i++) {

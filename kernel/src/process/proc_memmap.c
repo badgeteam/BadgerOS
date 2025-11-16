@@ -154,6 +154,9 @@ static inline size_t split_regions(proc_memmap_t *map, size_t index, size_t vadd
 // Release memory allocated to a process from `vaddr` to `vaddr+len`.
 // The given span should not fall outside an area mapped with `proc_map_raw`.
 errno_t proc_unmap_raw(process_t *proc, size_t vaddr, size_t len) {
+    logk(LOG_WARN, "TODO: proc_unmap_raw");
+    return 0;
+
     proc_memmap_t *map = &proc->memmap;
     if (!(proc_map_contains_raw(proc, vaddr, len) & 8)) {
         return -EINVAL;

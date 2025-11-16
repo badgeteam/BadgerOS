@@ -22,7 +22,7 @@ use super::*;
 pub struct PTE {
     /// Physical page number that this PTE points to.
     pub ppn: PPN,
-    /// Page protection flags, see [`super::vmm::flags`].
+    /// Page protection flags, see [`super::flags`].
     pub flags: u32,
     /// At what level of the page table this PTE is stored.
     pub level: u8,
@@ -35,10 +35,10 @@ pub struct PTE {
 impl PartialEq for PTE {
     fn eq(&self, other: &Self) -> bool {
         self.ppn == other.ppn
-            && (self.flags | flags::IO | flags::NC) == (other.flags | flags::IO | flags::NC)
+            && (self.flags & flags::RWX) == (other.flags & flags::RWX)
             && self.level == other.level
             && self.valid == other.valid
-            && self.leaf == other.leaf
+            && (self.leaf == other.leaf || !self.valid && !other.valid)
     }
 }
 

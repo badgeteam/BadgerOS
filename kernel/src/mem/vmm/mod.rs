@@ -148,7 +148,7 @@ unsafe fn map_impl(
                     ppn: phys_base + offset,
                     flags,
                     level,
-                    valid: true,
+                    valid: flags & flags::RWX != 0,
                     leaf: true,
                 },
             )
