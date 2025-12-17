@@ -1,0 +1,30 @@
+#!/bin/sh
+
+name=mlibc
+revision=1
+
+imagedeps="meson ninja-build"
+hostdeps="pkg-config gcc"
+allow_network=yes
+
+deps="mlibc-headers"
+from_source=mlibc
+
+configure() {
+        CFLAGS="$TARGET_CFLAGS" \
+        CXXFLAGS="$TARGET_CXXFLAGS" \
+        LDFLAGS="$TARGET_LDFLAGS -Wl,${base_dir}/misc/early_libgcc/libgcc-${JINX_ARCH}.a" \
+    meson_configure_noflags \
+        -Dno_headers=true \
+        -Ddefault_library=both \
+        -Dlibgcc_dependency=false \
+        -Duse_freestnd_hdrs=enabled
+}
+
+build() {
+    ninja -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" ninja install
+}

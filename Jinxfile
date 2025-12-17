@@ -1,0 +1,62 @@
+#! /bin/sh
+
+JINX_MAJOR_VER=0.8
+JINX_ARCH=riscv64
+TARGET_TRIPLET=${JINX_ARCH}-unknown-badgeros-mlibc
+
+JINX_DEBIAN_SNAPSHOT=20251202T083052Z
+JINX_BASE_PACKAGES="gettext-base build-essential"
+
+HOST_CFLAGS="-O2"
+HOST_CXXFLAGS="${HOST_CFLAGS}"
+HOST_LDFLAGS="-Wl,--as-needed -Wl,-z,now"
+
+TARGET_CFLAGS="$HOST_CFLAGS -g"
+TARGET_CXXFLAGS="$HOST_CXXFLAGS"
+TARGET_LDFLAGS="$HOST_LDFLAGS"
+
+TARGET_CC="${TARGET_TRIPLET}-gcc"
+TARGET_CXX="${TARGET_TRIPLET}-g++"
+
+case ${JINX_ARCH} in
+    riscv64 )
+        TARGET_CFLAGS="${TARGET_CFLAGS} -march=rv64gc -mabi=lp64d"
+        TARGET_CXXFLAGS="${TARGET_CXXFLAGS} -march=rv64gc -mabi=lp64d"
+        ;;
+    * )
+        echo "UNKNOWN ARCHITECTURE!"
+        echo "Don't know how to build BadgerOS for ${JINX_ARCH}"
+        exit 1
+        ;;
+esac
+
+meson_configure() {
+        CFLAGS="$TARGET_CFLAGS" \
+        CXXFLAGS="$TARGET_CXXFLAGS" \
+        LDFLAGS="$TARGET_LDFLAGS" \
+    meson_configure_noflags "$@"
+}
+
+meson_configure_noflags() {
+    if [ -z "${meson_source_dir}" ]; then
+        meson_source_dir="${source_dir}"
+    fi
+
+        JINX_ARCH=${JINX_ARCH} \
+        TARGET_TRIPLET=${TARGET_TRIPLET} \
+        sysroot_dir=${sysroot_dir} \
+    envsubst < "${base_dir}/misc/meson-cross.conf" > ./cross-file.txt
+
+    meson setup "${meson_source_dir}" \
+        --cross-file=cross-file.txt \
+        --prefix=${prefix} \
+        --sysconfdir=/etc \
+        --localstatedir=/var \
+        --libdir=lib \
+        --sbindir=sbin \
+        --bindir=bin \
+        --datadir=share \
+        --buildtype=release \
+        -Ddefault_library=shared \
+        "$@"
+}

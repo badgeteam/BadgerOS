@@ -1,0 +1,34 @@
+diff --git binutils-clean/config.sub binutils-workdir/config.sub
+index 4aaae46..82811d0 100755
+--- binutils-clean/config.sub
++++ binutils-workdir/config.sub
+@@ -1976,6 +1976,7 @@ case $os in
+ 	| atheos* \
+ 	| auroraux* \
+ 	| aux* \
++	| badgeros* \
+ 	| beos* \
+ 	| bitrig* \
+ 	| bme* \
+@@ -2208,6 +2209,8 @@ esac
+ # As a final step for OS-related things, validate the OS-kernel combination
+ # (given a valid OS), if there is a kernel.
+ case $kernel-$os-$obj in
++	badgeros-mlibc*- )
++		;;
+ 	linux-gnu*- | linux-android*- | linux-dietlibc*- | linux-llvm*- \
+ 		    | linux-mlibc*- | linux-musl*- | linux-newlib*- \
+ 		    | linux-relibc*- | linux-uclibc*- | linux-ohos*- )
+diff --git binutils-clean/ld/configure.tgt binutils-workdir/ld/configure.tgt
+index ea01ccf..825a26d 100644
+--- binutils-clean/ld/configure.tgt
++++ binutils-workdir/ld/configure.tgt
+@@ -829,7 +829,7 @@ riscv64be*-*-linux*)	targ_emul=elf64briscv
+ 			targ_extra_emuls="elf64briscv_lp64f elf64briscv_lp64 elf32briscv elf32briscv_ilp32f elf32briscv_ilp32 elf64lriscv elf64lriscv_lp64f elf64lriscv_lp64 elf32lriscv elf32lriscv_ilp32f elf32lriscv_ilp32"
+ 			targ_extra_libpath=$targ_extra_emuls
+ 			;;
+-riscv64*-*-linux*)	targ_emul=elf64lriscv
++riscv64*-*-linux* | riscv64*-*-badgeros*)	targ_emul=elf64lriscv
+ 			targ_extra_emuls="elf64lriscv_lp64f elf64lriscv_lp64 elf32lriscv elf32lriscv_ilp32f elf32lriscv_ilp32 elf64briscv elf64briscv_lp64f elf64briscv_lp64 elf32briscv elf32briscv_ilp32f elf32briscv_ilp32"
+ 			targ_extra_libpath=$targ_extra_emuls
+ 			;;

@@ -1,0 +1,34 @@
+#! /bin/sh
+
+name=libgcc
+revision=1
+
+hostdeps="gcc libtool pkg-config"
+imagedeps="build-essential libmpfr-dev libgmp-dev libmpc-dev"
+
+from_source=gcc
+deps="mlibc"
+
+build() {
+    cd "${build_dir}"/host-builds/gcc
+
+    make -j${parallelism} all-target-libgcc
+}
+
+package() {
+    cd "${build_dir}"/host-builds/gcc
+
+    rm -rf tmp_libgcc_dir
+    mkdir tmp_libgcc_dir
+
+    DESTDIR="$(realpath tmp_libgcc_dir)" make install-target-libgcc
+
+    mkdir -p "${dest_dir}${prefix}"
+
+    cp -r tmp_libgcc_dir/usr/local/lib "${dest_dir}${prefix}"/
+    cp -r tmp_libgcc_dir/usr/local/${TARGET_TRIPLET}/* "${dest_dir}${prefix}"/
+
+    # Copy libgcc into GCC's tree else it will complain.
+    mkdir -p "${build_dir}"/host-pkgs/gcc/usr/local/lib
+    cp -r tmp_libgcc_dir/usr/local/lib/* "${build_dir}"/host-pkgs/gcc/usr/local/lib/
+}

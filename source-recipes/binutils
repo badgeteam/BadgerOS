@@ -1,0 +1,6 @@
+#!/bin/sh
+
+name=binutils
+
+tarball_url=https://sourceware.org/pub/binutils/releases/binutils-2.45.tar.gz
+tarball_sha512=5c71ec80884c0b4c0f7a4f8600946f1f6feebe584261b63185b0942cba4062d5b6cf2337539132d0ca03505c0a74f3c2760bc62ed08843c3b7db03df7f5798ad

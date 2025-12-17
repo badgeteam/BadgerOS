@@ -1,0 +1,18 @@
+#! /bin/sh
+
+name=ktest-init
+revision=1
+
+hostdeps="gcc"
+imagedeps="build-essential"
+
+source_dir=ktest-init
+deps="mlibc libgcc"
+
+build() {
+    gcc ${source_dir}/main.c -o init
+}
+
+package() {
+    install ${build_dir}/init /sbin/init
+}

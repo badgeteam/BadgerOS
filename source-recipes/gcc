@@ -1,0 +1,8 @@
+#!/bin/sh
+
+name=gcc
+revision=1
+version=15.2.0
+
+tarball_url=https://mirror.koddos.net/gcc/releases/gcc-15.2.0/gcc-15.2.0.tar.gz
+tarball_sha512=59b9f409b8047ed10954542c7a3404f10bf413ed1a79e78aeeb3dadcc55c13c8d1eef199452d3e271a20b7914c1a197ad8eb0c64a1cfd6a5344316cdefe34199

@@ -1,0 +1,8 @@
+#!/bin/sh
+
+name=mlibc
+version=3.6.1
+source_dir=mlibc
+# git_url=https://github.com/badgeteam/badgeros-mlibc
+# commit=541e31827cae84b4e7ed972a8274b11662cbcc2d
+shallow=no

@@ -1,0 +1,37 @@
+#!/bin/sh
+
+name=gcc
+revision=1
+
+imagedeps="build-essential libmpfr-dev libgmp-dev libmpc-dev"
+hostrundeps="binutils"
+
+from_source=gcc
+deps="mlibc-headers"
+
+configure() {
+        CFLAGS="$HOST_CFLAGS" \
+        CXXFLAGS="$HOST_CXXFLAGS" \
+        LDFLAGS="$HOST_LDFLAGS" \
+        CFLAGS_FOR_TARGET="$TARGET_CFLAGS" \
+        CXXFLAGS_FOR_TARGET="$TARGET_CXXFLAGS" \
+    ${source_dir}/configure \
+        --with-sysroot=${sysroot_dir} \
+        --prefix=${prefix} \
+        --target=${TARGET_TRIPLET} \
+        --disable-nls \
+        --enable-languages=c,c++ \
+        --enable-threads=posix \
+        --enable-default-pie \
+        --disable-multilib \
+        --enable-shared \
+        --enable-host-shared
+}
+
+build () {
+    make -j${parallelism} all-gcc
+}
+
+package () {
+    DESTDIR=${dest_dir} make install-gcc
+}

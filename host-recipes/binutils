@@ -1,0 +1,28 @@
+#!/bin/sh
+
+name=binutils
+revision=1
+
+imagedeps=build-essential
+from_source=binutils
+
+configure() {
+        CFLAGS="$HOST_CFLAGS" \
+        CXXFLAGS="$HOST_CXXFLAGS" \
+        LDFLAGS="$HOST_LDFLAGS" \
+    ${source_dir}/configure \
+        --with-sysroot=${sysroot_dir} \
+        --prefix=${prefix} \
+        --target=${TARGET_TRIPLET} \
+        --disable-nls \
+        --disable-gdb \
+        --with-pic
+}
+
+build() {
+    make -j${parallelism}
+}
+
+package() {
+    DESTDIR=${dest_dir} make install
+}

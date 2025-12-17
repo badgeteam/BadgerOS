@@ -1,0 +1,181 @@
+diff --git gcc-clean/config.sub gcc-workdir/config.sub
+index 38f3d03..da6a444 100755
+--- gcc-clean/config.sub
++++ gcc-workdir/config.sub
+@@ -1749,7 +1749,7 @@ case $os in
+ 	     | onefs* | tirtos* | phoenix* | fuchsia* | redox* | bme* \
+ 	     | midnightbsd* | amdhsa* | unleashed* | emscripten* | wasi* \
+ 	     | nsk* | powerunix* | genode* | zvmoe* | qnx* | emx* | zephyr* \
+-	     | fiwix* )
++	     | fiwix* | mlibc* )
+ 		;;
+ 	# This one is extra strict with allowed versions
+ 	sco3.2v2 | sco3.2v[4-9]* | sco5v6*)
+@@ -1766,6 +1766,8 @@ esac
+ # As a final step for OS-related things, validate the OS-kernel combination
+ # (given a valid OS), if there is a kernel.
+ case $kernel-$os in
++	badgeros-mlibc* )
++		;;
+ 	linux-gnu* | linux-dietlibc* | linux-android* | linux-newlib* \
+ 		   | linux-musl* | linux-relibc* | linux-uclibc* )
+ 		;;
+diff --git gcc-workdir/gcc/config/badgeros.h gcc-workdir/gcc/config/badgeros.h
+new file mode 100644
+index 0000000..e1c77e4
+--- /dev/null
++++ gcc-workdir/gcc/config/badgeros.h
+@@ -0,0 +1,25 @@
++
++#undef TARGET_BADGEROS
++#define TARGET_BADGEROS 1
++
++#undef LIB_SPEC
++#define LIB_SPEC "-lc"
++
++#undef STARTFILE_SPEC
++#define STARTFILE_SPEC "crt0.o%s crti.o%s"
++
++#undef ENDFILE_SPEC
++#define ENDFILE_SPEC "crtn.o%s"
++
++#undef GNU_USER_TARGET_OS_CPP_BUILTINS
++#define GNU_USER_TARGET_OS_CPP_BUILTINS()                                      \
++  do {                                                                         \
++    builtin_define("__badgeros__");                                            \
++    builtin_define("__unix__");                                                \
++    builtin_assert("system=badgeros");                                         \
++    builtin_assert("system=unix");                                             \
++    builtin_assert("system=posix");                                            \
++  } while (0);
++
++#undef PID_TYPE
++#define PID_TYPE "int"
+diff --git gcc-workdir/gcc/config/riscv/badgeros.h gcc-workdir/gcc/config/riscv/badgeros.h
+new file mode 100644
+index 0000000..f3416ea
+--- /dev/null
++++ gcc-workdir/gcc/config/riscv/badgeros.h
+@@ -0,0 +1,35 @@
++
++#undef GCC_RISCV_BADGEROS
++#define GCC_RISCV_BADGEROS 1
++
++#define ICACHE_FLUSH_FUNC "__riscv_flush_icache"
++
++#undef GNU_USER_DYNAMIC_LINKER
++#define GNU_USER_DYNAMIC_LINKER "/lib/ld.so"
++
++#define LD_EMUL_SUFFIX                                                         \
++  "%{mabi=lp64d:}"                                                             \
++  "%{mabi=lp64f:_lp64f}"                                                       \
++  "%{mabi=lp64:_lp64}"                                                         \
++  "%{mabi=ilp32d:}"                                                            \
++  "%{mabi=ilp32f:_ilp32f}"                                                     \
++  "%{mabi=ilp32:_ilp32}"
++
++#define LINK_SPEC                                                              \
++  "\
++-melf" XLEN_SPEC DEFAULT_ENDIAN_SPEC "riscv" LD_EMUL_SUFFIX " \
++%{mno-relax:--no-relax} \
++%{mbig-endian:-EB} \
++%{mlittle-endian:-EL} \
++%{shared} \
++  %{!shared: \
++    %{!static: \
++      %{!static-pie: \
++    %{rdynamic:-export-dynamic} \
++    -dynamic-linker " GNU_USER_DYNAMIC_LINKER "}} \
++    %{static:-static} %{static-pie:-static -pie --no-dynamic-linker -z text}}"
++
++#define TARGET_OS_CPP_BUILTINS()                                               \
++  do {                                                                         \
++    GNU_USER_TARGET_OS_CPP_BUILTINS();                                         \
++  } while (0)
+diff --git gcc-clean/gcc/config.gcc gcc-workdir/gcc/config.gcc
+index 087aaa7..5867203 100644
+--- gcc-clean/gcc/config.gcc
++++ gcc-workdir/gcc/config.gcc
+@@ -723,6 +723,13 @@ x86_cpus="generic intel"
+ 
+ # Common parts for widely ported systems.
+ case ${target} in
++*-*-badgeros*)
++  extra_options="$extra_options gnu-user.opt"
++  gas=yes
++  gnu_ld=yes
++  default_use_cxa_atexit=yes
++  use_gcc_stdint=provide
++  ;;
+ *-*-darwin*)
+   tmake_file="t-darwin "
+   tm_file="${tm_file} darwin.h"
+@@ -2519,6 +2526,9 @@ microblaze*-*-elf)
+ 	cxx_target_objs="${cxx_target_objs} microblaze-c.o"
+ 	tmake_file="${tmake_file} microblaze/t-microblaze"
+         ;;
++riscv*-*-badgeros*)
++	tm_file="elfos.h gnu-user.h badgeros.h glibc-stdint.h ${tm_file} riscv/badgeros.h"
++	;;
+ riscv*-*-linux*)
+ 	tm_file="elfos.h gnu-user.h linux.h glibc-stdint.h ${tm_file} riscv/linux.h"
+ 	case "x${enable_multilib}" in
+diff --git gcc-clean/libgcc/config.host gcc-workdir/libgcc/config.host
+index 6a88ee5..ae18c92 100644
+--- gcc-clean/libgcc/config.host
++++ gcc-workdir/libgcc/config.host
+@@ -222,6 +222,11 @@ esac
+ 
+ # Common parts for widely ported systems.
+ case ${host} in
++*-*-*-mlibc)
++  extra_parts="$extra_parts crtbegin.o crtbeginS.o crtbeginT.o crtend.o crtendS.o"
++  tmake_file="$tmake_file t-crtstuff-pic"
++  tmake_file="$tmake_file t-slibgcc t-slibgcc-gld t-slibgcc-elf-ver t-libgcc-pic"
++  ;;
+ *-*-darwin*)
+   asm_hidden_op=.private_extern
+   tmake_file="$tmake_file t-darwin ${cpu_type}/t-darwin t-libgcc-pic"
+@@ -1358,6 +1363,11 @@ riscv*-*-freebsd*)
+ 	tmake_file="${tmake_file} riscv/t-crtstuff riscv/t-softfp${host_address} t-softfp riscv/t-elf riscv/t-elf${host_address} t-slibgcc-libgcc"
+ 	extra_parts="$extra_parts crtbegin.o crtend.o crti.o crtn.o crtendS.o crtbeginT.o"
+ 	;;
++riscv*-*-badgeros*)
++	tmake_file="${tmake_file} riscv/t-crtstuff riscv/t-softfp${host_address} t-softfp riscv/t-elf riscv/t-elf${host_address} t-slibgcc-libgcc"
++	extra_parts="$extra_parts crtbegin.o crtend.o crti.o crtn.o crtendS.o crtbeginT.o"
++	# md_unwind_header=riscv/linux-unwind.h # TODO: This may need to be further customized.
++	;;
+ riscv*-*-*)
+ 	tmake_file="${tmake_file} riscv/t-softfp${host_address} t-softfp riscv/t-elf riscv/t-elf${host_address}"
+ 	extra_parts="$extra_parts crtbegin.o crtend.o crti.o crtn.o"
+diff --git gcc-clean/libstdc++-v3/configure gcc-workdir/libstdc++-v3/configure
+index 819a1d8..52df448 100755
+--- gcc-clean/libstdc++-v3/configure
++++ gcc-workdir/libstdc++-v3/configure
+@@ -38856,7 +38856,7 @@ $as_echo "#define HAVE_TLS 1" >>confdefs.h
+ 
+   fi
+     ;;
+-  *-linux* | *-uclinux* | *-gnu* | *-kfreebsd*-gnu | *-cygwin* | *-solaris*)
++  *-linux* | *-uclinux* | *-gnu* | *-kfreebsd*-gnu | *-cygwin* | *-solaris* | *-mlibc*)
+ 
+   # All these tests are for C++; save the language and the compiler flags.
+   # The CXXFLAGS thing is suspicious, but based on similar bits previously
+diff --git gcc-clean/libstdc++-v3/crossconfig.m4 gcc-workdir/libstdc++-v3/crossconfig.m4
+index b3269cb..1f66e0f 100644
+--- gcc-clean/libstdc++-v3/crossconfig.m4
++++ gcc-workdir/libstdc++-v3/crossconfig.m4
+@@ -67,6 +67,13 @@ case "${host}" in
+     AC_DEFINE(HAVE_USELOCALE)
+     ;;
+ 
++  *-badgeros*)
++    GLIBCXX_CHECK_COMPILER_FEATURES
++    GLIBCXX_CHECK_LINKER_FEATURES
++    GLIBCXX_CHECK_MATH_SUPPORT
++    GLIBCXX_CHECK_STDLIB_SUPPORT
++    ;;
++
+   *-darwin*)
+     # Darwin versions vary, but the linker should work in a cross environment,
+     # so we just check for all the features here.

@@ -1,0 +1,20 @@
+CompileFlags:
+  Add: [
+    -nostdinc,
+    -Ibuild/builds/mlibc,
+    -Imlibc/sysdeps/badgeros/include,
+    -Imlibc/sysdeps/generic-helpers/include,
+    -Imlibc/options/rtld/include,
+    -Imlibc/options/rtld/riscv64,
+    -Imlibc/options/posix/include,
+    -Imlibc/options/ansi/include,
+    -Imlibc/options/lsb/include,
+    -Imlibc/options/bsd/include,
+    -Imlibc/options/elf/include,
+    -Imlibc/options/internal/include,
+    -Imlibc/options/internal/riscv64-include,
+    -Imlibc/subprojects/libsmarter/include,
+    -Imlibc/subprojects/frigg/include,
+    -Imlibc/subprojects/freestnd-c-hdrs/riscv64/include,
+    -Imlibc/subprojects/freestnd-cxx-hdrs/riscv64/include
+  ]
