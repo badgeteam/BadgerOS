@@ -16,7 +16,8 @@ configure() {
         CFLAGS_FOR_TARGET="$TARGET_CFLAGS" \
         CXXFLAGS_FOR_TARGET="$TARGET_CXXFLAGS" \
     ${source_dir}/configure \
-        --with-sysroot=${sysroot_dir} \
+        --with-sysroot=/ \
+        --with-build-sysroot=${sysroot_dir} \
         --prefix=${prefix} \
         --target=${TARGET_TRIPLET} \
         --disable-nls \
