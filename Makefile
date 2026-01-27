@@ -7,7 +7,7 @@ PACKAGES ?= '*'
 
 
 .PHONY: image
-image:
+image: sysroot
 	mkdir -p build/image
 	./scripts/make_fatfs.sh $(EFI_PART_SIZE) build/efiroot build/image/efi.fatfs
 	./scripts/make_e2fs.sh $(ROOT_PART_SIZE) build/sysroot build/image/root.e2fs
@@ -15,7 +15,6 @@ image:
 		build/image.hdd \
 		'EFI partition'  boot build/image/efi.fatfs 0x0700 \
 		'Root partition' root build/image/root.e2fs 0x8300
-
 
 .PHONY: sysroot
 sysroot: build/.jinx-parameters
@@ -40,11 +39,14 @@ sysroot: build/.jinx-parameters
 	rm build/sysroot/boot
 	mkdir -p build/sysroot/boot
 
+.PHONY: clean-image
+clean-image:
+	rm -rf build/sysroot build/efiroot build/image build/image.hdd
+
 
 build/.jinx-parameters:
 	mkdir -p build
 	cd build && ../jinx init .. ARCH=$(ARCH)
-
 
 .PHONY: build
 build: build/.jinx-parameters
@@ -61,7 +63,6 @@ rebuild: build/.jinx-parameters
 .PHONY: host-rebuild
 host-rebuild: build/.jinx-parameters
 	cd build && ../jinx host-rebuild $(PACKAGES)
-
 
 .PHONY: clean
 clean:

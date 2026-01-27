@@ -48,6 +48,7 @@ format_gpt() {
         OFFSET=$[OFFSET + BLOCKSZ]
         IDX=$[IDX + 1]
     done
+    echo "$ARGS"
     sgdisk -a 1 $ARGS $IMAGE
 }
 
@@ -59,6 +60,7 @@ copy_content() {
         local BYTESZ=`stat --printf='%s' $BLOB`
         local BLOCKSZ=$[(BYTESZ + 511) / 512]
         
+        echo "$BLOB -> $IMAGE @ $OFFSET"
         dd if=$BLOB of=$IMAGE bs=512 seek=$OFFSET conv=notrunc
         
         OFFSET=$[OFFSET + BLOCKSZ]

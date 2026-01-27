@@ -11,8 +11,8 @@ source_dir=ktest-init
 deps="mlibc libgcc"
 
 build() {
-    echo ${sysroot_dir}
-    ${TARGET_CC} -v -static ${source_dir}/main.c -o init
+    find /sysroot/usr/lib -type f
+    ${TARGET_CC} -v -g -static ${source_dir}/main.c -o init
 }
 
 package() {

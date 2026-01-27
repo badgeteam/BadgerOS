@@ -22,27 +22,43 @@ index 38f3d03..da6a444 100755
  		;;
 diff --git gcc-workdir/gcc/config/badgeros.h gcc-workdir/gcc/config/badgeros.h
 new file mode 100644
-index 0000000..e1c77e4
+index 0000000..6d2f220
 --- /dev/null
 +++ gcc-workdir/gcc/config/badgeros.h
-@@ -0,0 +1,25 @@
+@@ -0,0 +1,41 @@
 +
 +#undef TARGET_BADGEROS
 +#define TARGET_BADGEROS 1
 +
++#define LD_EMUL_SUFFIX /* append to the linker emulation mode */               \
++  "%{mabi=lp64d:}"                                                             \
++  "%{mabi=lp64f:_lp64f}"                                                       \
++  "%{mabi=lp64:_lp64}"                                                         \
++  "%{mabi=ilp32d:}"                                                            \
++  "%{mabi=ilp32f:_ilp32f}"                                                     \
++  "%{mabi=ilp32:_ilp32}"
++
 +#undef LIB_SPEC
 +#define LIB_SPEC "-lc"
 +
++#undef LINK_SPEC
++#define LINK_SPEC                                                              \
++  "%{shared:-shared} %{static:-static} %{!shared: %{!static: "                 \
++  "%{rdynamic:-export-dynamic}}} %{!dynamic-linker:-dynamic-linker "           \
++  "/usr/lib/ld.so}"
++
 +#undef STARTFILE_SPEC
-+#define STARTFILE_SPEC "crt0.o%s crti.o%s"
++#define STARTFILE_SPEC                                                         \
++  "%{!shared:crt0.o%s} %{shared:crtbeginS.o%s;:crtbegin.o%s} crti.o%s"
 +
 +#undef ENDFILE_SPEC
-+#define ENDFILE_SPEC "crtn.o%s"
++#define ENDFILE_SPEC "%{shared:crtendS.o%s;:crtend.o%s} crtn.o%s"
 +
 +#undef GNU_USER_TARGET_OS_CPP_BUILTINS
 +#define GNU_USER_TARGET_OS_CPP_BUILTINS()                                      \
 +  do {                                                                         \
 +    builtin_define("__badgeros__");                                            \
++    builtin_define("__mlibc__");                                               \
 +    builtin_define("__unix__");                                                \
 +    builtin_assert("system=badgeros");                                         \
 +    builtin_assert("system=unix");                                             \

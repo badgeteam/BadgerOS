@@ -16,15 +16,16 @@ configure() {
         CFLAGS_FOR_TARGET="$TARGET_CFLAGS" \
         CXXFLAGS_FOR_TARGET="$TARGET_CXXFLAGS" \
     ${source_dir}/configure \
-        --with-sysroot=/ \
-        --with-build-sysroot=${sysroot_dir} \
+        --with-sysroot=${sysroot_dir} \
         --prefix=${prefix} \
         --target=${TARGET_TRIPLET} \
         --disable-nls \
         --enable-languages=c,c++ \
         --enable-threads=posix \
         --enable-default-pie \
+        --enable-initfini-array \
         --disable-multilib \
+        --disable-fixincludes \
         --enable-shared \
         --enable-host-shared
 }
