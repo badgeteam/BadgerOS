@@ -22,10 +22,10 @@ index 38f3d03..da6a444 100755
  		;;
 diff --git gcc-workdir/gcc/config/badgeros.h gcc-workdir/gcc/config/badgeros.h
 new file mode 100644
-index 0000000..6d2f220
+index 0000000..233400d
 --- /dev/null
 +++ gcc-workdir/gcc/config/badgeros.h
-@@ -0,0 +1,41 @@
+@@ -0,0 +1,35 @@
 +
 +#undef TARGET_BADGEROS
 +#define TARGET_BADGEROS 1
@@ -40,12 +40,6 @@ index 0000000..6d2f220
 +
 +#undef LIB_SPEC
 +#define LIB_SPEC "-lc"
-+
-+#undef LINK_SPEC
-+#define LINK_SPEC                                                              \
-+  "%{shared:-shared} %{static:-static} %{!shared: %{!static: "                 \
-+  "%{rdynamic:-export-dynamic}}} %{!dynamic-linker:-dynamic-linker "           \
-+  "/usr/lib/ld.so}"
 +
 +#undef STARTFILE_SPEC
 +#define STARTFILE_SPEC                                                         \
@@ -69,10 +63,10 @@ index 0000000..6d2f220
 +#define PID_TYPE "int"
 diff --git gcc-workdir/gcc/config/riscv/badgeros.h gcc-workdir/gcc/config/riscv/badgeros.h
 new file mode 100644
-index 0000000..f3416ea
+index 0000000..d0c92c4
 --- /dev/null
 +++ gcc-workdir/gcc/config/riscv/badgeros.h
-@@ -0,0 +1,35 @@
+@@ -0,0 +1,36 @@
 +
 +#undef GCC_RISCV_BADGEROS
 +#define GCC_RISCV_BADGEROS 1
@@ -90,6 +84,7 @@ index 0000000..f3416ea
 +  "%{mabi=ilp32f:_ilp32f}"                                                     \
 +  "%{mabi=ilp32:_ilp32}"
 +
++#undef LINK_SPEC
 +#define LINK_SPEC                                                              \
 +  "\
 +-melf" XLEN_SPEC DEFAULT_ENDIAN_SPEC "riscv" LD_EMUL_SUFFIX " \

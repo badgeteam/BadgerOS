@@ -2,7 +2,7 @@
 MAKEFLAGS += --silent
 ARCH ?= riscv64
 EFI_PART_SIZE ?= 4MiB
-ROOT_PART_SIZE ?= 59MiB
+ROOT_PART_SIZE ?= 251MiB
 PACKAGES ?= '*'
 
 

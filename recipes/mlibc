@@ -11,8 +11,8 @@ deps="mlibc-headers"
 from_source=mlibc
 
 configure() {
-        CFLAGS="$TARGET_CFLAGS" \
-        CXXFLAGS="$TARGET_CXXFLAGS" \
+        CFLAGS="$TARGET_CFLAGS -g" \
+        CXXFLAGS="$TARGET_CXXFLAGS -g" \
         LDFLAGS="$TARGET_LDFLAGS -Wl,${base_dir}/misc/early_libgcc/libgcc-${JINX_ARCH}.a" \
     meson_configure_noflags \
         -Dno_headers=true \
