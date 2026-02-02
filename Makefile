@@ -3,7 +3,7 @@ MAKEFLAGS += --silent
 ARCH ?= riscv64
 EFI_PART_SIZE ?= 4MiB
 ROOT_PART_SIZE ?= 251MiB
-PACKAGES ?= '*'
+PACKAGES ?= libgcc mlibc-headers mlibc ktest-init
 
 
 .PHONY: image
@@ -22,7 +22,7 @@ sysroot: build/.jinx-parameters
 	mkdir -p build/efiroot/EFI/BOOT
 	
 	# System root folders
-	#        build/sysroot/boot (created later)
+	#        build/sysroot/boot (created later)\
 	mkdir -p build/sysroot/dev
 	mkdir -p build/sysroot/tmp
 	mkdir -p build/sysroot/mnt
@@ -32,8 +32,8 @@ sysroot: build/.jinx-parameters
 	ln -s ../efiroot build/sysroot/boot
 	
 	# Ask Jinx nicely to install everything
-	cd build && ../jinx update '*'
-	cd build && ../jinx install sysroot '*'
+	cd build && ../jinx update $(PACKAGES)
+	cd build && ../jinx reinstall sysroot $(PACKAGES)
 	
 	# System should have an existant empty directory at /boot, so restore that
 	rm build/sysroot/boot
@@ -42,6 +42,21 @@ sysroot: build/.jinx-parameters
 .PHONY: clean-image
 clean-image:
 	rm -rf build/sysroot build/efiroot build/image build/image.hdd
+
+
+.PHONY: qemu
+qemu:
+	qemu-system-riscv64 -s \
+		-M virt,acpi=off -cpu rv64,sv48=false -smp 4 -m 1G \
+		-device pcie-root-port,bus=pcie.0,id=pcisw0 \
+		-device qemu-xhci,bus=pcisw0 -device usb-kbd \
+		-drive if=pflash,unit=0,format=raw,file=$$HOME/the_projects/badgeros-kernel/kernel/build/cache/OVMF_RISCV64.fd \
+		-drive if=none,id=hd0,format=raw,file=build/image.hdd,cache=none \
+		-device ahci,id=achi0 \
+		-device ide-hd,drive=hd0,bus=achi0.0 \
+		-serial mon:stdio -nographic \
+	| $$HOME/the_projects/badgeros-kernel/tools/address-filter.py -L -A riscv64-linux-gnu-addr2line \
+		$$HOME/the_projects/badgeros-kernel/kernel/output/badger-os.elf
 
 
 build/.jinx-parameters:
@@ -59,6 +74,10 @@ host-build: build/.jinx-parameters
 .PHONY: rebuild
 rebuild: build/.jinx-parameters
 	cd build && ../jinx rebuild $(PACKAGES)
+
+.PHONY: regenerate
+regenerate: build/.jinx-parameters
+	cd build && ../jinx regenerate $(PACKAGES)
 
 .PHONY: host-rebuild
 host-rebuild: build/.jinx-parameters

@@ -1,0 +1,13 @@
+diff --git coreutils-clean/build-aux/config.sub coreutils-workdir/build-aux/config.sub
+index 4aaae46..88f6bbd 100755
+--- coreutils-clean/build-aux/config.sub
++++ coreutils-workdir/build-aux/config.sub
+@@ -2216,6 +2216,8 @@ case $kernel-$os-$obj in
+ 		;;
+ 	managarm-mlibc*- | managarm-kernel*- )
+ 		;;
++	badgeros-mlibc*- )
++		;;
+ 	windows*-msvc*-)
+ 		;;
+ 	-dietlibc*- | -llvm*- | -mlibc*- | -musl*- | -newlib*- | -relibc*- \

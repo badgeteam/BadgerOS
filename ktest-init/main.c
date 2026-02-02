@@ -1,7 +1,9 @@
 
 #include <stdio.h>
 
+#include <sys/statvfs.h>
+
 int main(int argc, char **argv) {
-  FILE *thing = fopen("/dev/null", "wb");
-  fwrite("c", 1, 1, thing);
+    printf("Hello, mlibc!\n");
+    return 0;
 }
