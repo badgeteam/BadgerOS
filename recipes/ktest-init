@@ -12,7 +12,7 @@ deps="mlibc libgcc"
 
 build() {
     find /sysroot/usr/lib -type f
-    ${TARGET_CC} -v -g -static ${source_dir}/main.c -o init
+    ${TARGET_CC} -v -g ${source_dir}/main.c -o init
 }
 
 package() {

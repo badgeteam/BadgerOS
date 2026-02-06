@@ -22,7 +22,6 @@ configure() {
         --disable-nls \
         --enable-languages=c,c++ \
         --enable-threads=posix \
-        --enable-default-pie \
         --enable-initfini-array \
         --disable-multilib \
         --disable-fixincludes \

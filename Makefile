@@ -2,7 +2,7 @@
 MAKEFLAGS += --silent
 ARCH ?= riscv64
 EFI_PART_SIZE ?= 4MiB
-ROOT_PART_SIZE ?= 251MiB
+ROOT_PART_SIZE ?= 505MiB
 PACKAGES ?= libgcc mlibc-headers mlibc ktest-init
 
 
@@ -26,6 +26,8 @@ sysroot: build/.jinx-parameters
 	mkdir -p build/sysroot/dev
 	mkdir -p build/sysroot/tmp
 	mkdir -p build/sysroot/mnt
+	ln -sf usr/lib build/sysroot/lib
+	ln -sf usr/bin build/sysroot/bin
 	
 	# Temporarily point sysroot's /boot to efiroot
 	rm -df build/sysroot/boot
@@ -57,6 +59,10 @@ qemu:
 		-serial mon:stdio -nographic \
 	| $$HOME/the_projects/badgeros-kernel/tools/address-filter.py -L -A riscv64-linux-gnu-addr2line \
 		$$HOME/the_projects/badgeros-kernel/kernel/output/badger-os.elf
+
+.PHONY: gdb
+gdb:
+	riscv64-linux-gnu-gdb build/sysroot/sbin/init -x gdbinit
 
 
 build/.jinx-parameters:
