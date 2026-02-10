@@ -22,7 +22,7 @@ sysroot: build/.jinx-parameters
 	mkdir -p build/efiroot/EFI/BOOT
 	
 	# System root folders
-	#        build/sysroot/boot (created later)\
+	#        build/sysroot/boot (created later)
 	mkdir -p build/sysroot/dev
 	mkdir -p build/sysroot/tmp
 	mkdir -p build/sysroot/mnt
