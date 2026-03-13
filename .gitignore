@@ -1,3 +1,4 @@
 build
 sources
 .jinx-cache
+edk2-ovmf

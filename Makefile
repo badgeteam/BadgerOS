@@ -17,7 +17,7 @@ image: sysroot
 		'Root partition' root build/image/root.e2fs 0x8300
 
 .PHONY: sysroot
-sysroot: build/.jinx-parameters
+sysroot: build/.jinx-parameters kernel
 	# EFI root folders
 	mkdir -p build/efiroot/EFI/BOOT
 	
@@ -40,6 +40,7 @@ sysroot: build/.jinx-parameters
 	# Ask Jinx nicely to install everything
 	cd build && ../jinx update $(PACKAGES)
 	cd build && ../jinx reinstall sysroot $(PACKAGES)
+	cp kernel/output/badger-os.stripped.elf build/efiroot/boot/badger-os.elf
 	
 	# System should have an existant empty directory at /boot, so restore that
 	rm build/sysroot/boot
@@ -51,22 +52,30 @@ clean-image:
 
 
 .PHONY: qemu
-qemu:
+qemu: edk2-ovmf
 	qemu-system-riscv64 -s \
 		-M virt,acpi=off -cpu rv64,sv48=false -smp 4 -m 1G \
 		-device pcie-root-port,bus=pcie.0,id=pcisw0 \
 		-device qemu-xhci,bus=pcisw0 -device usb-kbd \
-		-drive if=pflash,unit=0,format=raw,file=$$HOME/the_projects/badgeros-kernel/kernel/build/cache/OVMF_RISCV64.fd \
+		-drive if=pflash,unit=0,format=raw,file=edk2-ovmf/ovmf-code-riscv64.fd,readonly=on \
 		-drive if=none,id=hd0,format=raw,file=build/image.hdd,cache=none \
 		-device ahci,id=achi0 \
 		-device ide-hd,drive=hd0,bus=achi0.0 \
 		-serial mon:stdio -nographic \
-	| $$HOME/the_projects/badgeros-kernel/tools/address-filter.py -L -A riscv64-linux-gnu-addr2line \
-		$$HOME/the_projects/badgeros-kernel/kernel/output/badger-os.elf
+	| kernel/tools/address-filter.py -L -A riscv64-linux-gnu-addr2line \
+		build/efiroot/boot/badger-os.elf
+
+edk2-ovmf:
+	curl -L https://github.com/osdev0/edk2-ovmf-nightly/releases/latest/download/edk2-ovmf.tar.gz | gunzip | tar -xf -
 
 .PHONY: gdb
 gdb:
 	riscv64-linux-gnu-gdb build/sysroot/sbin/init -x gdbinit
+
+
+.PHONY: kernel
+kernel:
+	$(MAKE) -C kernel
 
 
 build/.jinx-parameters:

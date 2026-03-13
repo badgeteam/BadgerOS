@@ -1,3 +1,6 @@
 [submodule "mlibc"]
 	path = mlibc
 	url = https://github.com/badgeteam/badgeros-mlibc/
+[submodule "kernel"]
+	path = kernel
+	url = https://badgeteam@github.com/badgeteam/BadgerOS-Kernel
