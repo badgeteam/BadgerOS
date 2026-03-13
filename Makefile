@@ -26,8 +26,12 @@ sysroot: build/.jinx-parameters
 	mkdir -p build/sysroot/dev
 	mkdir -p build/sysroot/tmp
 	mkdir -p build/sysroot/mnt
-	ln -sf usr/lib build/sysroot/lib
-	ln -sf usr/bin build/sysroot/bin
+	mkdir -p build/sysroot/usr/lib
+	mkdir -p build/sysroot/usr/bin
+	mkdir -p build/sysroot/usr/sbin
+	ln -sf usr/lib  build/sysroot/lib
+	ln -sf usr/bin  build/sysroot/bin
+	ln -sf usr/sbin build/sysroot/sbin
 	
 	# Temporarily point sysroot's /boot to efiroot
 	rm -df build/sysroot/boot

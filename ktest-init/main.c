@@ -6,7 +6,9 @@
 
 void run(char const *bin, char **argv) {
     if (fork() == 0) {
-        execvp(bin, argv);
+        if (execvp(bin, argv)) {
+            perror("execvp");
+        }
     }
 }
 
