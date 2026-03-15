@@ -1,12 +1,14 @@
 
 #include <stdio.h>
 
+#include <dirent.h>
 #include <sys/statvfs.h>
+#include <inttypes.h>
 #include <unistd.h>
 
-void run(char const *bin, char **argv) {
+void run(char **argv) {
     if (fork() == 0) {
-        if (execvp(bin, argv)) {
+        if (execvp(argv[0], argv)) {
             perror("execvp");
         }
     }
@@ -23,8 +25,14 @@ int main(int argc, char **argv, char **envp) {
         printf("env: %s\n", *envp);
         envp++;
     }
+    
+    DIR *dirp = opendir("/");
+    struct dirent *dent;
+    while ((dent = readdir(dirp))) {
+        printf("%s type %02x ino %" PRId64 "\n", dent->d_name, dent->d_type, dent->d_ino);
+    }
 
-    run("/usr/bin/echo", (char *[]){"/usr/bin/echo", "Hello,", "coreutils", "world!", NULL});
+    run((char *[]){"/usr/bin/bash", NULL});
 
     return 0;
 }

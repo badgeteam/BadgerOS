@@ -16,6 +16,6 @@ build() {
 }
 
 package() {
-    mkdir -p ${dest_dir}/sbin
-    install init ${dest_dir}/sbin/init
+    mkdir -p ${dest_dir}/usr/sbin
+    install init ${dest_dir}/usr/sbin/init
 }

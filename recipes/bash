@@ -1,0 +1,39 @@
+#! /bin/sh
+
+name=bash
+version=5.3
+revision=1
+tarball_url="https://ftpmirror.gnu.org/gnu/bash/bash-5.3.tar.gz"
+tarball_blake2b="82d1b54322bbd1e8c2a93380f1b2888a42a1d7186e504f41cee705a0fdd41463d8f20baa1755051e1396192f8ebd089524767d933a9e0b5fb76f2588601539bb"
+source_allow_network=yes
+imagedeps="build-essential"
+hostdeps="gcc pkg-config"
+deps="core-libs"
+# deps="core-libs ncurses readline"
+
+prepare() {
+    autotools_recursive_regen
+}
+
+configure() {
+        bash_cv_getcwd_malloc=y \
+    autotools_configure \
+        --without-curses \
+        --disable-readline \
+        --without-bash-malloc
+}
+
+build() {
+    make
+}
+
+package() {
+    make install DESTDIR="${dest_dir}"
+    mkdir -p "${dest_dir}"/usr/bin
+    ln -sf bash "${dest_dir}"/usr/bin/sh
+    ln -sf bash "${dest_dir}"/usr/bin/rbash
+
+    # mkdir -p "${dest_dir}"/etc
+    # cp -v "${base_dir}"/support/bash/bash.bashrc "${dest_dir}"/etc/
+    # cp -v "${base_dir}"/support/bash/bash.bash_logout "${dest_dir}"/etc/
+}

@@ -1,6 +1,7 @@
 target remote :1234
 
-b _start
+b basic_runtime_init
+b kernel::misc::panic::kekw
 
 define reset
     mon system_reset

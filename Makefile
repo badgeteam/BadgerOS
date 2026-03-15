@@ -3,7 +3,7 @@ MAKEFLAGS += --silent
 ARCH ?= riscv64
 EFI_PART_SIZE ?= 4MiB
 ROOT_PART_SIZE ?= 505MiB
-PACKAGES ?= libgcc mlibc-headers mlibc ktest-init
+PACKAGES ?= libgcc mlibc-headers mlibc ktest-init coreutils bash
 
 
 .PHONY: image
@@ -29,9 +29,9 @@ sysroot: build/.jinx-parameters kernel
 	mkdir -p build/sysroot/usr/lib
 	mkdir -p build/sysroot/usr/bin
 	mkdir -p build/sysroot/usr/sbin
-	ln -sf usr/lib  build/sysroot/lib
-	ln -sf usr/bin  build/sysroot/bin
-	ln -sf usr/sbin build/sysroot/sbin
+	ln -snTf usr/lib  build/sysroot/lib
+	ln -snTf usr/bin  build/sysroot/bin
+	ln -snTf usr/sbin build/sysroot/sbin
 	
 	# Temporarily point sysroot's /boot to efiroot
 	rm -df build/sysroot/boot
@@ -40,7 +40,8 @@ sysroot: build/.jinx-parameters kernel
 	# Ask Jinx nicely to install everything
 	cd build && ../jinx update $(PACKAGES)
 	cd build && ../jinx reinstall sysroot $(PACKAGES)
-	cp kernel/output/badger-os.stripped.elf build/efiroot/boot/badger-os.elf
+	cp kernel/output/badger-os.elf build/efiroot/boot/badger-os.elf
+	riscv64-linux-gnu-strip -g -s build/efiroot/boot/badger-os.elf
 	
 	# System should have an existant empty directory at /boot, so restore that
 	rm build/sysroot/boot
@@ -63,14 +64,14 @@ qemu: edk2-ovmf
 		-device ide-hd,drive=hd0,bus=achi0.0 \
 		-serial mon:stdio -nographic \
 	| kernel/tools/address-filter.py -L -A riscv64-linux-gnu-addr2line \
-		build/efiroot/boot/badger-os.elf
+		kernel/output/badger-os.elf
 
 edk2-ovmf:
 	curl -L https://github.com/osdev0/edk2-ovmf-nightly/releases/latest/download/edk2-ovmf.tar.gz | gunzip | tar -xf -
 
 .PHONY: gdb
 gdb:
-	riscv64-linux-gnu-gdb build/sysroot/sbin/init -x gdbinit
+	riscv64-linux-gnu-gdb kernel/output/badger-os.elf -x gdbinit
 
 
 .PHONY: kernel

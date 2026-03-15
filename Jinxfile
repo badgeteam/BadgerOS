@@ -20,8 +20,8 @@ TARGET_CXX="${TARGET_TRIPLET}-g++"
 
 case ${JINX_ARCH} in
     riscv64 )
-        TARGET_CFLAGS="${TARGET_CFLAGS} -march=rv64gc -mabi=lp64d -static"
-        TARGET_CXXFLAGS="${TARGET_CXXFLAGS} -march=rv64gc -mabi=lp64d -static"
+        TARGET_CFLAGS="${TARGET_CFLAGS} -march=rv64gc -mabi=lp64d"
+        TARGET_CXXFLAGS="${TARGET_CXXFLAGS} -march=rv64gc -mabi=lp64d"
         ;;
     * )
         echo "UNKNOWN ARCHITECTURE!"
