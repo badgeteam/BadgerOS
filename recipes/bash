@@ -18,6 +18,7 @@ prepare() {
 configure() {
         bash_cv_getcwd_malloc=y \
     autotools_configure \
+        CFLAGS=-g \
         --without-curses \
         --disable-readline \
         --without-bash-malloc

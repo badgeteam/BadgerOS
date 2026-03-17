@@ -4,6 +4,7 @@ ARCH ?= riscv64
 EFI_PART_SIZE ?= 4MiB
 ROOT_PART_SIZE ?= 505MiB
 PACKAGES ?= libgcc mlibc-headers mlibc ktest-init coreutils bash
+EXE ?= bin/bash
 
 
 .PHONY: image
@@ -71,7 +72,11 @@ edk2-ovmf:
 
 .PHONY: gdb
 gdb:
-	riscv64-linux-gnu-gdb kernel/output/badger-os.elf -x gdbinit
+	riscv64-linux-gnu-gdb kernel/output/badger-os.elf -x gdbinit-k
+
+.PHONY: user-gdb
+user-gdb:
+	riscv64-linux-gnu-gdb build/sysroot/$(EXE) -x gdbinit-u
 
 
 .PHONY: kernel
