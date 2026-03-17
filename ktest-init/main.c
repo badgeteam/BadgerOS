@@ -25,18 +25,22 @@ void run(char const *const *argv) {
         }
     } else {
         int wstatus;
-        if (waitpid(pid, &wstatus, 0)) {
+        pid_t res = waitpid(pid, &wstatus, 0);
+        if (res > 0) {
             if (WIFEXITED(wstatus)) {
                 printf("Exit %d\n", WEXITSTATUS(wstatus));
             } else if (WIFSIGNALED(wstatus)) {
                 printf("Signal %d\n", WTERMSIG(wstatus));
             }
+        } else {
+            perror("waitpid");
         }
     }
 }
 
-void readline(char *buffer, size_t const buffer_len) {
-    for (size_t i = 0; i < buffer_len; i++) {
+size_t readline(char *buffer, size_t const buffer_len) {
+    size_t i;
+    for (i = 0; i < buffer_len; i++) {
         int c;
         do {
             c = fgetc(stdin);
@@ -49,6 +53,7 @@ void readline(char *buffer, size_t const buffer_len) {
         fputc(c, stdout);
         fflush(stdout);
     }
+    return i;
 }
 
 int main(int argc, char **argv, char **envp) {
@@ -69,20 +74,20 @@ int main(int argc, char **argv, char **envp) {
     }
     
     char const whitespace[] = " \t\r\n";
-    const size_t buffer_len = 1024;
-    char buffer[buffer_len];
-    const size_t argbuf_len = 32;
-    char const *argbuf[argbuf_len+1];
+    const size_t buffer_cap = 1024;
+    char buffer[buffer_cap+1];
+    const size_t argbuf_cap = 32;
+    char const *argbuf[argbuf_cap+1];
     while (1) {
-        readline(buffer, buffer_len);
+        size_t buffer_len = readline(buffer, buffer_cap);
         size_t i = 0;
         size_t narg = 0;
-        while (i < buffer_len && buffer[i] && narg < argbuf_len) {
+        while (i < buffer_len && narg < argbuf_cap) {
             i += strspn(buffer + i, whitespace);
             size_t len = strcspn(buffer + i, whitespace);
             if (len) {
-                buffer[i + len] = 0;
                 argbuf[narg++] = buffer + i;
+                buffer[i + len] = 0;
                 i += len + 1;
             }
         }

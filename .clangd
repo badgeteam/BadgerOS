@@ -1,6 +1,7 @@
 CompileFlags:
   Add: [
     -nostdinc,
+    -D_DEFAULT_SOURCE,
     -Ibuild/builds/mlibc,
     -Imlibc/sysdeps/badgeros/include,
     -Imlibc/sysdeps/generic-helpers/include,
