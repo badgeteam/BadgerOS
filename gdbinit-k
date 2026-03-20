@@ -8,5 +8,3 @@ define reset
     maintenance flush register-cache
     c
 end
-
-reset

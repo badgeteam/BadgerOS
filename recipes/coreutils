@@ -14,7 +14,7 @@ prepare() {
 
 configure() {
     autotools_configure \
-        CFLAGS="$TARGET_CFLAGS -DSLOW_BUT_NO_HACKS" \
+        CFLAGS="$TARGET_CFLAGS -DSLOW_BUT_NO_HACKS -g" \
         --enable-no-install-program="mkfifo,runcon,chroot"
 }
 

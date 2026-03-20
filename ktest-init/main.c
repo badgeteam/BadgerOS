@@ -47,19 +47,14 @@ size_t readline(char *buffer, size_t const buffer_len) {
         } while(c == EOF);
         buffer[i] = c;
         if (c == '\r' || c == '\n') {
-            printf("\n");
             break;
         }
-        fputc(c, stdout);
-        fflush(stdout);
     }
     return i;
 }
 
 int main(int argc, char **argv, char **envp) {
     setenv("PATH", "/usr/bin:/usr/sbin", 1);
-    setenv("MLIBC_RTLD_DEBUG", "1", 1);
-    setenv("MLIBC_RTLD_DEBUG_VERBOSE", "1", 1);
     
     struct sigaction sa;
     sigemptyset(&sa.sa_mask);
