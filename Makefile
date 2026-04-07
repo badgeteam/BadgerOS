@@ -56,7 +56,7 @@ clean-image:
 .PHONY: qemu
 qemu: edk2-ovmf
 	qemu-system-riscv64 -s \
-		-M virt,acpi=off -cpu rv64,sv48=false -smp 4 -m 1G \
+		-M virt,acpi=off -cpu rv64,sv48=false -smp 1 -m 1G \
 		-device pcie-root-port,bus=pcie.0,id=pcisw0 \
 		-device qemu-xhci,bus=pcisw0 -device usb-kbd \
 		-drive if=pflash,unit=0,format=raw,file=edk2-ovmf/ovmf-code-riscv64.fd,readonly=on \
