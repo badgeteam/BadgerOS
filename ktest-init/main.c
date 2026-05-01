@@ -1,17 +1,22 @@
 
 #include <stdio.h>
+#include <stdlib.h>
 
 #include <dirent.h>
-#include <sys/statvfs.h>
+#include <signal.h>
 #include <string.h>
+#include <sys/statvfs.h>
+#include <sys/syscall.h>
 #include <sys/wait.h>
 #include <unistd.h>
-#include <stdlib.h>
-#include <signal.h>
-#include <sys/syscall.h>
 
 void handler(int signo, siginfo_t *info, void *uctx) {
-    printf("Handled signal %d\n", signo);
+    char buf[32];
+    int  len = snprintf(buf, sizeof(buf), "Handled signal %d\n", signo);
+    if (len < 0) {
+        return;
+    }
+    __syscall_fs_write(1, buf, len);
 }
 
 void run(char const *const *argv) {
@@ -20,11 +25,11 @@ void run(char const *const *argv) {
     }
     pid_t pid = fork();
     if (pid == 0) {
-        if (execvp(argv[0], (char**)argv)) {
+        if (execvp(argv[0], (char **)argv)) {
             perror("execvp");
         }
     } else {
-        int wstatus;
+        int   wstatus;
         pid_t res = waitpid(pid, &wstatus, 0);
         if (res > 0) {
             if (WIFEXITED(wstatus)) {
@@ -44,7 +49,7 @@ size_t readline(char *buffer, size_t const buffer_len) {
         int c;
         do {
             c = fgetc(stdin);
-        } while(c == EOF);
+        } while (c == EOF);
         buffer[i] = c;
         if (c == '\r' || c == '\n') {
             break;
@@ -55,37 +60,39 @@ size_t readline(char *buffer, size_t const buffer_len) {
 
 int main(int argc, char **argv, char **envp) {
     setenv("PATH", "/usr/bin:/usr/sbin", 1);
-    
+
     struct sigaction sa;
     sigemptyset(&sa.sa_mask);
-    sa.sa_flags = 0;
+    sa.sa_flags     = 0;
     sa.sa_sigaction = handler;
     if (sigaction(60, &sa, NULL)) {
         perror("sigaction");
     }
-    
+
     if (fork() == 0) {
         printf("Signalling my parent now\n");
         kill(1, 60);
         return 0;
     }
-    
-    char const whitespace[] = " \t\r\n";
-    const size_t buffer_cap = 1024;
-    char buffer[buffer_cap+1];
-    const size_t argbuf_cap = 32;
-    char const *argbuf[argbuf_cap+1];
+
+    run((char const *const[]){"ls", NULL});
+
+    char const   whitespace[] = " \t\r\n";
+    size_t const buffer_cap   = 1024;
+    char         buffer[buffer_cap + 1];
+    size_t const argbuf_cap = 32;
+    char const  *argbuf[argbuf_cap + 1];
     while (1) {
         size_t buffer_len = readline(buffer, buffer_cap);
-        size_t i = 0;
-        size_t narg = 0;
+        size_t i          = 0;
+        size_t narg       = 0;
         while (i < buffer_len && narg < argbuf_cap) {
-            i += strspn(buffer + i, whitespace);
-            size_t len = strcspn(buffer + i, whitespace);
+            i          += strspn(buffer + i, whitespace);
+            size_t len  = strcspn(buffer + i, whitespace);
             if (len) {
-                argbuf[narg++] = buffer + i;
-                buffer[i + len] = 0;
-                i += len + 1;
+                argbuf[narg++]   = buffer + i;
+                buffer[i + len]  = 0;
+                i               += len + 1;
             }
         }
         argbuf[narg] = NULL;
@@ -93,6 +100,6 @@ int main(int argc, char **argv, char **envp) {
             run(argbuf);
         }
     }
-    
+
     return 0;
 }
