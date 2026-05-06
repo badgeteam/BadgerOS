@@ -1,0 +1,21 @@
+#! /bin/sh
+
+name=ktest-init
+version=1.0
+revision=1
+
+hostdeps="gcc"
+imagedeps="build-essential"
+
+source_dir=ktest-init
+deps="mlibc libgcc libstdc++"
+
+build() {
+    find /sysroot/usr/lib -type f
+    ${TARGET_CXX} -v -g ${source_dir}/main.cc -o cpptest
+}
+
+package() {
+    mkdir -p ${dest_dir}/usr/bin
+    install cpptest ${dest_dir}/usr/bin/cpptest
+}

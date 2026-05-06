@@ -41,6 +41,7 @@ sysroot: build/.jinx-parameters kernel
 	# Ask Jinx nicely to install everything
 	cd build && ../jinx update $(PACKAGES)
 	cd build && ../jinx reinstall sysroot $(PACKAGES)
+	cp testdata*.bin build/sysroot/
 	cp kernel/output/badger-os.elf build/efiroot/boot/badger-os.elf
 	riscv64-linux-gnu-strip -g -s build/efiroot/boot/badger-os.elf
 	

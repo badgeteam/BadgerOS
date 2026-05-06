@@ -1,0 +1,317 @@
+diff --git gcc-clean/config.sub gcc-workdir/config.sub
+index 38f3d03..da6a444 100755
+--- gcc-clean/config.sub
++++ gcc-workdir/config.sub
+@@ -1749,7 +1749,7 @@ case $os in
+ 	     | onefs* | tirtos* | phoenix* | fuchsia* | redox* | bme* \
+ 	     | midnightbsd* | amdhsa* | unleashed* | emscripten* | wasi* \
+ 	     | nsk* | powerunix* | genode* | zvmoe* | qnx* | emx* | zephyr* \
+-	     | fiwix* )
++	     | fiwix* | mlibc* )
+ 		;;
+ 	# This one is extra strict with allowed versions
+ 	sco3.2v2 | sco3.2v[4-9]* | sco5v6*)
+@@ -1766,6 +1766,8 @@ esac
+ # As a final step for OS-related things, validate the OS-kernel combination
+ # (given a valid OS), if there is a kernel.
+ case $kernel-$os in
++	badgeros-mlibc* )
++		;;
+ 	linux-gnu* | linux-dietlibc* | linux-android* | linux-newlib* \
+ 		   | linux-musl* | linux-relibc* | linux-uclibc* )
+ 		;;
+diff --git gcc-workdir/gcc/config/badgeros.h gcc-workdir/gcc/config/badgeros.h
+new file mode 100644
+index 0000000..233400d
+--- /dev/null
++++ gcc-workdir/gcc/config/badgeros.h
+@@ -0,0 +1,35 @@
++
++#undef TARGET_BADGEROS
++#define TARGET_BADGEROS 1
++
++#define LD_EMUL_SUFFIX /* append to the linker emulation mode */               \
++  "%{mabi=lp64d:}"                                                             \
++  "%{mabi=lp64f:_lp64f}"                                                       \
++  "%{mabi=lp64:_lp64}"                                                         \
++  "%{mabi=ilp32d:}"                                                            \
++  "%{mabi=ilp32f:_ilp32f}"                                                     \
++  "%{mabi=ilp32:_ilp32}"
++
++#undef LIB_SPEC
++#define LIB_SPEC "-lc"
++
++#undef STARTFILE_SPEC
++#define STARTFILE_SPEC                                                         \
++  "%{!shared:crt0.o%s} %{shared:crtbeginS.o%s;:crtbegin.o%s} crti.o%s"
++
++#undef ENDFILE_SPEC
++#define ENDFILE_SPEC "%{shared:crtendS.o%s;:crtend.o%s} crtn.o%s"
++
++#undef GNU_USER_TARGET_OS_CPP_BUILTINS
++#define GNU_USER_TARGET_OS_CPP_BUILTINS()                                      \
++  do {                                                                         \
++    builtin_define("__badgeros__");                                            \
++    builtin_define("__mlibc__");                                               \
++    builtin_define("__unix__");                                                \
++    builtin_assert("system=badgeros");                                         \
++    builtin_assert("system=unix");                                             \
++    builtin_assert("system=posix");                                            \
++  } while (0);
++
++#undef PID_TYPE
++#define PID_TYPE "int"
+diff --git gcc-workdir/gcc/config/riscv/badgeros.h gcc-workdir/gcc/config/riscv/badgeros.h
+new file mode 100644
+index 0000000..d0c92c4
+--- /dev/null
++++ gcc-workdir/gcc/config/riscv/badgeros.h
+@@ -0,0 +1,36 @@
++
++#undef GCC_RISCV_BADGEROS
++#define GCC_RISCV_BADGEROS 1
++
++#define ICACHE_FLUSH_FUNC "__riscv_flush_icache"
++
++#undef GNU_USER_DYNAMIC_LINKER
++#define GNU_USER_DYNAMIC_LINKER "/lib/ld.so"
++
++#define LD_EMUL_SUFFIX                                                         \
++  "%{mabi=lp64d:}"                                                             \
++  "%{mabi=lp64f:_lp64f}"                                                       \
++  "%{mabi=lp64:_lp64}"                                                         \
++  "%{mabi=ilp32d:}"                                                            \
++  "%{mabi=ilp32f:_ilp32f}"                                                     \
++  "%{mabi=ilp32:_ilp32}"
++
++#undef LINK_SPEC
++#define LINK_SPEC                                                              \
++  "\
++-melf" XLEN_SPEC DEFAULT_ENDIAN_SPEC "riscv" LD_EMUL_SUFFIX " \
++%{mno-relax:--no-relax} \
++%{mbig-endian:-EB} \
++%{mlittle-endian:-EL} \
++%{shared} \
++  %{!shared: \
++    %{!static: \
++      %{!static-pie: \
++    %{rdynamic:-export-dynamic} \
++    -dynamic-linker " GNU_USER_DYNAMIC_LINKER "}} \
++    %{static:-static} %{static-pie:-static -pie --no-dynamic-linker -z text}}"
++
++#define TARGET_OS_CPP_BUILTINS()                                               \
++  do {                                                                         \
++    GNU_USER_TARGET_OS_CPP_BUILTINS();                                         \
++  } while (0)
+diff --git gcc-clean/gcc/config.gcc gcc-workdir/gcc/config.gcc
+index 087aaa7..5867203 100644
+--- gcc-clean/gcc/config.gcc
++++ gcc-workdir/gcc/config.gcc
+@@ -723,6 +723,13 @@ x86_cpus="generic intel"
+ 
+ # Common parts for widely ported systems.
+ case ${target} in
++*-*-badgeros*)
++  extra_options="$extra_options gnu-user.opt"
++  gas=yes
++  gnu_ld=yes
++  default_use_cxa_atexit=yes
++  use_gcc_stdint=provide
++  ;;
+ *-*-darwin*)
+   tmake_file="t-darwin "
+   tm_file="${tm_file} darwin.h"
+@@ -2519,6 +2526,9 @@ microblaze*-*-elf)
+ 	cxx_target_objs="${cxx_target_objs} microblaze-c.o"
+ 	tmake_file="${tmake_file} microblaze/t-microblaze"
+         ;;
++riscv*-*-badgeros*)
++	tm_file="elfos.h gnu-user.h badgeros.h glibc-stdint.h ${tm_file} riscv/badgeros.h"
++	;;
+ riscv*-*-linux*)
+ 	tm_file="elfos.h gnu-user.h linux.h glibc-stdint.h ${tm_file} riscv/linux.h"
+ 	case "x${enable_multilib}" in
+diff --git gcc-clean/libgcc/config.host gcc-workdir/libgcc/config.host
+index 6a88ee5..ae18c92 100644
+--- gcc-clean/libgcc/config.host
++++ gcc-workdir/libgcc/config.host
+@@ -222,6 +222,11 @@ esac
+ 
+ # Common parts for widely ported systems.
+ case ${host} in
++*-*-*-mlibc)
++  extra_parts="$extra_parts crtbegin.o crtbeginS.o crtbeginT.o crtend.o crtendS.o"
++  tmake_file="$tmake_file t-crtstuff-pic"
++  tmake_file="$tmake_file t-slibgcc t-slibgcc-gld t-slibgcc-elf-ver t-libgcc-pic"
++  ;;
+ *-*-darwin*)
+   asm_hidden_op=.private_extern
+   tmake_file="$tmake_file t-darwin ${cpu_type}/t-darwin t-libgcc-pic"
+@@ -1358,6 +1363,11 @@ riscv*-*-freebsd*)
+ 	tmake_file="${tmake_file} riscv/t-crtstuff riscv/t-softfp${host_address} t-softfp riscv/t-elf riscv/t-elf${host_address} t-slibgcc-libgcc"
+ 	extra_parts="$extra_parts crtbegin.o crtend.o crti.o crtn.o crtendS.o crtbeginT.o"
+ 	;;
++riscv*-*-badgeros*)
++	tmake_file="${tmake_file} riscv/t-crtstuff riscv/t-softfp${host_address} t-softfp riscv/t-elf riscv/t-elf${host_address} t-slibgcc-libgcc"
++	extra_parts="$extra_parts crtbegin.o crtend.o crti.o crtn.o crtendS.o crtbeginT.o"
++	# md_unwind_header=riscv/linux-unwind.h # TODO: This may need to be further customized.
++	;;
+ riscv*-*-*)
+ 	tmake_file="${tmake_file} riscv/t-softfp${host_address} t-softfp riscv/t-elf riscv/t-elf${host_address}"
+ 	extra_parts="$extra_parts crtbegin.o crtend.o crti.o crtn.o"
+diff --git gcc-clean/libstdc++-v3/configure gcc-workdir/libstdc++-v3/configure
+index 819a1d8..777008d 100755
+--- gcc-clean/libstdc++-v3/configure
++++ gcc-workdir/libstdc++-v3/configure
+@@ -9377,7 +9377,7 @@ $as_echo_n "checking for $compiler option to produce PIC... " >&6; }
+       lt_prog_compiler_static='-non_shared'
+       ;;
+ 
+-    linux* | k*bsd*-gnu | kopensolaris*-gnu)
++    linux* | k*bsd*-gnu | kopensolaris*-gnu | badgeros*)
+       case $cc_basename in
+       # old Intel for x86_64 which still supported -KPIC.
+       ecc*)
+@@ -9972,7 +9972,7 @@ _LT_EOF
+       archive_expsym_cmds='sed "s,^,_," $export_symbols >$output_objdir/$soname.expsym~$CC -shared $pic_flag $libobjs $deplibs $compiler_flags ${wl}-h,$soname ${wl}--retain-symbols-file,$output_objdir/$soname.expsym ${wl}--image-base,`expr ${RANDOM-$$} % 4096 / 2 \* 262144 + 1342177280` -o $lib'
+       ;;
+ 
+-    gnu* | linux* | tpf* | k*bsd*-gnu | kopensolaris*-gnu | uclinuxfdpiceabi)
++    gnu* | linux* | tpf* | k*bsd*-gnu | kopensolaris*-gnu | uclinuxfdpiceabi | badgeros*)
+       tmp_diet=no
+       if test "$host_os" = linux-dietlibc; then
+ 	case $cc_basename in
+@@ -11554,7 +11554,7 @@ linux*oldld* | linux*aout* | linux*coff*)
+ # project, but have not yet been accepted: they are GCC-local changes
+ # for the time being.  (See
+ # https://lists.gnu.org/archive/html/libtool-patches/2018-05/msg00000.html)
+-linux* | k*bsd*-gnu | kopensolaris*-gnu | gnu* | uclinuxfdpiceabi)
++linux* | k*bsd*-gnu | kopensolaris*-gnu | gnu* | uclinuxfdpiceabi | badgeros*)
+   version_type=linux
+   need_lib_prefix=no
+   need_version=no
+@@ -13549,7 +13549,7 @@ fi
+         inherit_rpath_CXX=yes
+         ;;
+ 
+-      linux* | k*bsd*-gnu | kopensolaris*-gnu)
++      linux* | k*bsd*-gnu | kopensolaris*-gnu | badgeros*)
+         case $cc_basename in
+           KCC*)
+ 	    # Kuck and Associates, Inc. (KAI) C++ Compiler
+@@ -14388,7 +14388,7 @@ $as_echo_n "checking for $compiler option to produce PIC... " >&6; }
+ 	    ;;
+ 	esac
+ 	;;
+-      linux* | k*bsd*-gnu | kopensolaris*-gnu)
++      linux* | k*bsd*-gnu | kopensolaris*-gnu | badgeros*)
+ 	case $cc_basename in
+ 	  KCC*)
+ 	    # KAI C++ Compiler
+@@ -15304,7 +15304,7 @@ linux*oldld* | linux*aout* | linux*coff*)
+ # project, but have not yet been accepted: they are GCC-local changes
+ # for the time being.  (See
+ # https://lists.gnu.org/archive/html/libtool-patches/2018-05/msg00000.html)
+-linux* | k*bsd*-gnu | kopensolaris*-gnu | gnu* | uclinuxfdpiceabi)
++linux* | k*bsd*-gnu | kopensolaris*-gnu | gnu* | uclinuxfdpiceabi | badgeros*)
+   version_type=linux
+   need_lib_prefix=no
+   need_version=no
+@@ -16668,7 +16668,7 @@ fi
+   # Default to "generic".
+   if test $enable_clocale_flag = auto; then
+     case ${target_os} in
+-      linux* | gnu* | kfreebsd*-gnu | knetbsd*-gnu)
++      linux* | gnu* | kfreebsd*-gnu | knetbsd*-gnu | badgeros*)
+ 	enable_clocale_flag=gnu
+ 	;;
+       darwin*)
+@@ -17104,7 +17104,7 @@ fi
+   # Default to "new".
+   if test $enable_libstdcxx_allocator_flag = auto; then
+     case ${target_os} in
+-      linux* | gnu* | kfreebsd*-gnu | knetbsd*-gnu)
++      linux* | gnu* | kfreebsd*-gnu | knetbsd*-gnu | badgeros*)
+ 	enable_libstdcxx_allocator_flag=new
+ 	;;
+       *)
+@@ -21306,7 +21306,7 @@ ac_compiler_gnu=$ac_cv_cxx_compiler_gnu
+       vxworks*)
+         ac_has_nanosleep=yes
+         ;;
+-      gnu* | linux* | kfreebsd*-gnu | knetbsd*-gnu)
++      gnu* | linux* | kfreebsd*-gnu | knetbsd*-gnu | badgeros*)
+         # Don't use link test for freestanding library, in case gcc_no_link=yes
+         if test x"$is_hosted" = xyes; then
+           # Versions of glibc before 2.17 needed -lrt for clock_gettime.
+@@ -21733,7 +21733,7 @@ $as_echo "$ac_has_nanosleep" >&6; }
+ 
+   if test x"$ac_has_clock_monotonic" != x"yes"; then
+     case ${target_os} in
+-      linux* | uclinux*)
++      linux* | uclinux* | badgeros*)
+ 	{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for clock_gettime syscall" >&5
+ $as_echo_n "checking for clock_gettime syscall... " >&6; }
+ 	cat confdefs.h - <<_ACEOF >conftest.$ac_ext
+@@ -38856,7 +38856,7 @@ $as_echo "#define HAVE_TLS 1" >>confdefs.h
+ 
+   fi
+     ;;
+-  *-linux* | *-uclinux* | *-gnu* | *-kfreebsd*-gnu | *-cygwin* | *-solaris*)
++  *-linux* | *-uclinux* | *-gnu* | *-kfreebsd*-gnu | *-cygwin* | *-solaris* | *-mlibc*)
+ 
+   # All these tests are for C++; save the language and the compiler flags.
+   # The CXXFLAGS thing is suspicious, but based on similar bits previously
+@@ -54346,7 +54346,7 @@ fi
+   if test "x${with_libstdcxx_zoneinfo}" = xyes; then
+     # Pick a default when no specific path is set.
+     case "$target_os" in
+-      gnu* | linux* | kfreebsd*-gnu | knetbsd*-gnu)
++      gnu* | linux* | kfreebsd*-gnu | knetbsd*-gnu | badgeros*)
+ 	# Not all distros ship tzdata.zi in this dir.
+ 	zoneinfo_dir="/usr/share/zoneinfo"
+ 	;;
+diff --git gcc-clean/libstdc++-v3/configure.host gcc-workdir/libstdc++-v3/configure.host
+index 253e5a9..8aa783e 100644
+--- gcc-clean/libstdc++-v3/configure.host
++++ gcc-workdir/libstdc++-v3/configure.host
+@@ -268,6 +268,9 @@ case "${host_os}" in
+   linux-musl*)
+     os_include_dir="os/generic"
+     ;;
++  badgeros*)
++    os_include_dir="os/gnu-linux"
++    ;;
+   gnu* | linux* | kfreebsd*-gnu | uclinux*)
+     if [ "$uclibc" = "yes" ]; then
+       os_include_dir="os/uclibc"
+diff --git gcc-clean/libstdc++-v3/crossconfig.m4 gcc-workdir/libstdc++-v3/crossconfig.m4
+index b3269cb..35a1f49 100644
+--- gcc-clean/libstdc++-v3/crossconfig.m4
++++ gcc-workdir/libstdc++-v3/crossconfig.m4
+@@ -67,6 +67,25 @@ case "${host}" in
+     AC_DEFINE(HAVE_USELOCALE)
+     ;;
+ 
++  *-badgeros*)
++    SECTION_FLAGS='-ffunction-sections -fdata-sections'
++    AC_SUBST(SECTION_FLAGS)
++    GLIBCXX_CHECK_COMPILER_FEATURES
++    GLIBCXX_CHECK_LINKER_FEATURES
++    GLIBCXX_CHECK_MATH_SUPPORT
++    GLIBCXX_CHECK_STDLIB_SUPPORT
++    AC_DEFINE(_GLIBCXX_USE_DEV_RANDOM)
++    AC_DEFINE(_GLIBCXX_USE_RANDOM_TR1)
++    GCC_CHECK_TLS
++    AC_CHECK_FUNCS(__cxa_thread_atexit_impl)
++    AC_CHECK_FUNCS(aligned_alloc posix_memalign memalign _aligned_malloc)
++    AC_CHECK_FUNCS(timespec_get)
++    AC_CHECK_FUNCS(sockatmark)
++    AC_CHECK_FUNCS(uselocale)
++    AC_CHECK_FUNCS(secure_getenv)
++    AM_ICONV
++    ;;
++
+   *-darwin*)
+     # Darwin versions vary, but the linker should work in a cross environment,
+     # so we just check for all the features here.
