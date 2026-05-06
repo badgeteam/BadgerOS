@@ -22,42 +22,30 @@ index 38f3d03..da6a444 100755
  		;;
 diff --git gcc-workdir/gcc/config/badgeros.h gcc-workdir/gcc/config/badgeros.h
 new file mode 100644
-index 0000000..233400d
+index 0000000..efd04ca
 --- /dev/null
 +++ gcc-workdir/gcc/config/badgeros.h
-@@ -0,0 +1,35 @@
+@@ -0,0 +1,23 @@
 +
 +#undef TARGET_BADGEROS
 +#define TARGET_BADGEROS 1
 +
-+#define LD_EMUL_SUFFIX /* append to the linker emulation mode */               \
-+  "%{mabi=lp64d:}"                                                             \
-+  "%{mabi=lp64f:_lp64f}"                                                       \
-+  "%{mabi=lp64:_lp64}"                                                         \
-+  "%{mabi=ilp32d:}"                                                            \
-+  "%{mabi=ilp32f:_ilp32f}"                                                     \
-+  "%{mabi=ilp32:_ilp32}"
-+
-+#undef LIB_SPEC
-+#define LIB_SPEC "-lc"
-+
 +#undef STARTFILE_SPEC
-+#define STARTFILE_SPEC                                                         \
-+  "%{!shared:crt0.o%s} %{shared:crtbeginS.o%s;:crtbegin.o%s} crti.o%s"
++#define STARTFILE_SPEC "%{!shared:crt0.o%s} %{shared:crtbeginS.o%s;:crtbegin.o%s} crti.o%s"
 +
 +#undef ENDFILE_SPEC
 +#define ENDFILE_SPEC "%{shared:crtendS.o%s;:crtend.o%s} crtn.o%s"
 +
 +#undef GNU_USER_TARGET_OS_CPP_BUILTINS
-+#define GNU_USER_TARGET_OS_CPP_BUILTINS()                                      \
-+  do {                                                                         \
-+    builtin_define("__badgeros__");                                            \
-+    builtin_define("__mlibc__");                                               \
-+    builtin_define("__unix__");                                                \
-+    builtin_assert("system=badgeros");                                         \
-+    builtin_assert("system=unix");                                             \
-+    builtin_assert("system=posix");                                            \
-+  } while (0);
++#define GNU_USER_TARGET_OS_CPP_BUILTINS()                                                                              \
++    do {                                                                                                               \
++        builtin_define("__badgeros__");                                                                                \
++        builtin_define("__mlibc__");                                                                                   \
++        builtin_define("__unix__");                                                                                    \
++        builtin_assert("system=badgeros");                                                                             \
++        builtin_assert("system=unix");                                                                                 \
++        builtin_assert("system=posix");                                                                                \
++    } while (0);
 +
 +#undef PID_TYPE
 +#define PID_TYPE "int"
@@ -104,10 +92,10 @@ index 0000000..d0c92c4
 +    GNU_USER_TARGET_OS_CPP_BUILTINS();                                         \
 +  } while (0)
 diff --git gcc-clean/gcc/config.gcc gcc-workdir/gcc/config.gcc
-index 087aaa7..5867203 100644
+index 087aaa7..a8d74e5 100644
 --- gcc-clean/gcc/config.gcc
 +++ gcc-workdir/gcc/config.gcc
-@@ -723,6 +723,13 @@ x86_cpus="generic intel"
+@@ -723,6 +723,15 @@ x86_cpus="generic intel"
  
  # Common parts for widely ported systems.
  case ${target} in
@@ -116,21 +104,40 @@ index 087aaa7..5867203 100644
 +  gas=yes
 +  gnu_ld=yes
 +  default_use_cxa_atexit=yes
-+  use_gcc_stdint=provide
++  use_gcc_stdint=wrap
++  tmake_file="${tmake_file} t-slibgcc"
++  thread_file='posix'
 +  ;;
  *-*-darwin*)
    tmake_file="t-darwin "
    tm_file="${tm_file} darwin.h"
-@@ -2519,6 +2526,9 @@ microblaze*-*-elf)
+@@ -2519,6 +2528,13 @@ microblaze*-*-elf)
  	cxx_target_objs="${cxx_target_objs} microblaze-c.o"
  	tmake_file="${tmake_file} microblaze/t-microblaze"
          ;;
 +riscv*-*-badgeros*)
 +	tm_file="elfos.h gnu-user.h badgeros.h glibc-stdint.h ${tm_file} riscv/badgeros.h"
++	tmake_file="${tmake_file} riscv/t-riscv"
++	gnu_ld=yes
++	gad=yes
++	gcc_cv_initfini_array=yes
 +	;;
  riscv*-*-linux*)
  	tm_file="elfos.h gnu-user.h linux.h glibc-stdint.h ${tm_file} riscv/linux.h"
  	case "x${enable_multilib}" in
+diff --git gcc-clean/libatomic/configure.tgt gcc-workdir/libatomic/configure.tgt
+index 6db039d..e4fc391 100644
+--- gcc-clean/libatomic/configure.tgt
++++ gcc-workdir/libatomic/configure.tgt
+@@ -151,7 +151,7 @@ case "${target}" in
+   *-*-linux* | *-*-gnu* | *-*-k*bsd*-gnu \
+   | *-*-netbsd* | *-*-freebsd* | *-*-openbsd* | *-*-dragonfly* \
+   | *-*-solaris2* | *-*-sysv4* | *-*-irix6* | *-*-osf* | *-*-hpux11* \
+-  | *-*-darwin* | *-*-aix* | *-*-cygwin*)
++  | *-*-darwin* | *-*-aix* | *-*-cygwin* | *-*-mlibc*)
+ 	# POSIX system.  The OS is supported.
+ 	config_path="${config_path} posix"
+ 	;;
 diff --git gcc-clean/libgcc/config.host gcc-workdir/libgcc/config.host
 index 6a88ee5..ae18c92 100644
 --- gcc-clean/libgcc/config.host

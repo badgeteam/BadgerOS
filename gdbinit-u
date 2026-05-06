@@ -4,6 +4,7 @@ add-symbol-file build/sysroot/usr/lib/libc.so -o 0x41000000
 set substitute-path ../../../base_dir .
 set substitute-path /base_dir .
 
+b _start
 b main
 
 define reset
