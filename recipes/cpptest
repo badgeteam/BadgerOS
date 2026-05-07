@@ -12,7 +12,7 @@ deps="mlibc libgcc libstdc++"
 
 build() {
     find /sysroot/usr/lib -type f
-    ${TARGET_CXX} -static -v -Wl,--verbose -g ${source_dir}/main.cc -o cpptest
+    ${TARGET_CXX} -v -Wl,--verbose -g ${source_dir}/main.cc -o cpptest
 }
 
 package() {

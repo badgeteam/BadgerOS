@@ -167,10 +167,44 @@ index 6a88ee5..ae18c92 100644
  	tmake_file="${tmake_file} riscv/t-softfp${host_address} t-softfp riscv/t-elf riscv/t-elf${host_address}"
  	extra_parts="$extra_parts crtbegin.o crtend.o crti.o crtn.o"
 diff --git gcc-clean/libstdc++-v3/configure gcc-workdir/libstdc++-v3/configure
-index 819a1d8..52df448 100755
+index 819a1d8..b6255ff 100755
 --- gcc-clean/libstdc++-v3/configure
 +++ gcc-workdir/libstdc++-v3/configure
-@@ -38856,7 +38856,7 @@ $as_echo "#define HAVE_TLS 1" >>confdefs.h
+@@ -11548,6 +11548,16 @@ linux*oldld* | linux*aout* | linux*coff*)
+   dynamic_linker=no
+   ;;
+ 
++badgeros*)
++  version_type=linux
++  need_lib_prefix=no
++  need_version=no
++  library_names_spec='${libname}${release}${shared_ext}$versuffix ${libname}${release}${shared_ext}${major} ${libname}${shared_ext}'
++  soname_spec='${libname}${release}${shared_ext}$major'
++  shlibpath_var=LD_LIBRARY_PATH
++  hardcode_into_libs=yes
++  ;;
++
+ # This must be Linux ELF.
+ 
+ # uclinux* changes (here and below) have been submitted to the libtool
+@@ -15298,6 +15308,16 @@ linux*oldld* | linux*aout* | linux*coff*)
+   dynamic_linker=no
+   ;;
+ 
++badgeros*)
++  version_type=linux
++  need_lib_prefix=no
++  need_version=no
++  library_names_spec='${libname}${release}${shared_ext}$versuffix ${libname}${release}${shared_ext}${major} ${libname}${shared_ext}'
++  soname_spec='${libname}${release}${shared_ext}$major'
++  shlibpath_var=LD_LIBRARY_PATH
++  hardcode_into_libs=yes
++  ;;
++
+ # This must be Linux ELF.
+ 
+ # uclinux* changes (here and below) have been submitted to the libtool
+@@ -38856,7 +38876,7 @@ $as_echo "#define HAVE_TLS 1" >>confdefs.h
  
    fi
      ;;
@@ -180,20 +214,26 @@ index 819a1d8..52df448 100755
    # All these tests are for C++; save the language and the compiler flags.
    # The CXXFLAGS thing is suspicious, but based on similar bits previously
 diff --git gcc-clean/libstdc++-v3/crossconfig.m4 gcc-workdir/libstdc++-v3/crossconfig.m4
-index b3269cb..1f66e0f 100644
+index b3269cb..5d92a27 100644
 --- gcc-clean/libstdc++-v3/crossconfig.m4
 +++ gcc-workdir/libstdc++-v3/crossconfig.m4
-@@ -67,6 +67,13 @@ case "${host}" in
-     AC_DEFINE(HAVE_USELOCALE)
+@@ -299,6 +299,19 @@ dnl # functions in the list guarded by
+ dnl # long_double_math_on_this_cpu in configure.ac, right after
+ dnl # the expansion of the present macro.
      ;;
- 
-+  *-badgeros*)
++
++  *-mlibc*)
 +    GLIBCXX_CHECK_COMPILER_FEATURES
 +    GLIBCXX_CHECK_LINKER_FEATURES
 +    GLIBCXX_CHECK_MATH_SUPPORT
 +    GLIBCXX_CHECK_STDLIB_SUPPORT
++    AC_DEFINE([_GLIBCXX_USE_DEV_RANDOM])
++    AC_DEFINE([_GLIBCXX_USE_RANDOM_TR1])
++    GCC_CHECK_TLS
++    AC_CHECK_FUNCS([aligned_alloc posix_memalign memalign _aligned_malloc])
++    AC_CHECK_FUNCS([timespec_get])
 +    ;;
 +
-   *-darwin*)
-     # Darwin versions vary, but the linker should work in a cross environment,
-     # so we just check for all the features here.
+   *)
+     AC_MSG_ERROR([No support for this host/target combination.])
+    ;;

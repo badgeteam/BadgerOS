@@ -3,7 +3,7 @@ MAKEFLAGS += --silent
 ARCH ?= riscv64
 EFI_PART_SIZE ?= 4MiB
 ROOT_PART_SIZE ?= 505MiB
-PACKAGES ?= libgcc mlibc-headers mlibc ktest-init cpptest coreutils bash
+PACKAGES ?= libgcc mlibc-headers mlibc libstdc++ ncurses readline ktest-init cpptest coreutils bash
 EXE ?= bin/bash
 
 

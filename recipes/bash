@@ -8,8 +8,7 @@ tarball_blake2b="82d1b54322bbd1e8c2a93380f1b2888a42a1d7186e504f41cee705a0fdd4146
 source_allow_network=yes
 imagedeps="build-essential"
 hostdeps="gcc pkg-config"
-deps="core-libs"
-# deps="core-libs ncurses readline"
+deps="core-libs ncurses readline"
 
 prepare() {
     autotools_recursive_regen
@@ -19,8 +18,8 @@ configure() {
         bash_cv_getcwd_malloc=y \
     autotools_configure \
         CFLAGS=-g \
-        --without-curses \
-        --disable-readline \
+        --with-curses \
+        --enable-readline \
         --without-bash-malloc
 }
 

@@ -27,6 +27,7 @@ void run(char const *const *argv) {
     if (pid == 0) {
         if (execvp(argv[0], (char **)argv)) {
             perror("execvp");
+            exit(1);
         }
     } else {
         int   wstatus;
