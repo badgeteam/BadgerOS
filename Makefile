@@ -3,12 +3,17 @@ MAKEFLAGS += --silent
 ARCH ?= riscv64
 EFI_PART_SIZE ?= 4MiB
 ROOT_PART_SIZE ?= 505MiB
-PACKAGES ?= libgcc mlibc-headers mlibc ktest-init coreutils bash
+PACKAGES ?= limine libgcc mlibc-headers mlibc ktest-init coreutils bash
 EXE ?= bin/bash
 
 
 .PHONY: image
 image: sysroot
+	# Temporarily move /boot out to make FS images
+	rm -rf build/efiroot
+	mv build/sysroot/boot build/efiroot
+	mkdir build/sysroot/boot
+	
 	mkdir -p build/image
 	./scripts/make_fatfs.sh $(EFI_PART_SIZE) build/efiroot build/image/efi.fatfs
 	./scripts/make_e2fs.sh $(ROOT_PART_SIZE) build/sysroot build/image/root.e2fs
@@ -16,14 +21,14 @@ image: sysroot
 		build/image.hdd \
 		'EFI partition'  boot build/image/efi.fatfs 0x0700 \
 		'Root partition' root build/image/root.e2fs 0x8300
+	
+	# Restore /boot
+	rmdir build/sysroot/boot
+	mv build/efiroot build/sysroot/boot
 
 .PHONY: sysroot
 sysroot: build/.jinx-parameters kernel
-	# EFI root folders
-	mkdir -p build/efiroot/EFI/BOOT
-	
-	# System root folders
-	#        build/sysroot/boot (created later)
+	mkdir -p build/sysroot/boot
 	mkdir -p build/sysroot/dev
 	mkdir -p build/sysroot/tmp
 	mkdir -p build/sysroot/mnt
@@ -34,19 +39,11 @@ sysroot: build/.jinx-parameters kernel
 	ln -snTf usr/bin  build/sysroot/bin
 	ln -snTf usr/sbin build/sysroot/sbin
 	
-	# Temporarily point sysroot's /boot to efiroot
-	rm -df build/sysroot/boot
-	ln -s ../efiroot build/sysroot/boot
-	
 	# Ask Jinx nicely to install everything
 	cd build && ../jinx update $(PACKAGES)
 	cd build && ../jinx reinstall sysroot $(PACKAGES)
-	cp kernel/output/badger-os.elf build/efiroot/boot/badger-os.elf
-	riscv64-linux-gnu-strip -g -s build/efiroot/boot/badger-os.elf
-	
-	# System should have an existant empty directory at /boot, so restore that
-	rm build/sysroot/boot
-	mkdir -p build/sysroot/boot
+	cp kernel/output/badger-os.elf build/sysroot/boot/boot/badger-os.elf
+	riscv64-linux-gnu-strip -g -s build/sysroot/boot/boot/badger-os.elf
 
 .PHONY: clean-image
 clean-image:
@@ -56,7 +53,7 @@ clean-image:
 .PHONY: qemu
 qemu: edk2-ovmf
 	qemu-system-riscv64 -s \
-		-M virt,acpi=off -cpu rv64,sv48=false -smp 1 -m 1G \
+		-M virt,acpi=off -cpu rv64,sv48=false -smp 2 -m 1G \
 		-device pcie-root-port,bus=pcie.0,id=pcisw0 \
 		-device qemu-xhci,bus=pcisw0 -device usb-kbd \
 		-drive if=pflash,unit=0,format=raw,file=edk2-ovmf/ovmf-code-riscv64.fd,readonly=on \

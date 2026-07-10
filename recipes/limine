@@ -1,0 +1,27 @@
+#! /bin/sh
+
+name=limine
+version=12.4.1
+revision=1
+tarball_url="https://github.com/Limine-Bootloader/Limine/releases/download/v${version}/limine-binary.tar.gz"
+tarball_sha256="ad78b1c74712d04363ad224efa35ecc88f08978882295db5264a822c0a1f327e"
+
+prepare() {
+    make -C "${source_dir}"
+}
+
+package() {
+    mkdir -p "${dest_dir}/boot/boot"
+    mkdir -p "${dest_dir}/boot/EFI/BOOT"
+    
+    cp "${base_dir}/misc/limine.conf" "${dest_dir}/boot/boot"
+    cp "${source_dir}/LICENSE" "${dest_dir}/boot/EFI/BOOT/LIMINE.TXT"
+    case ${JINX_ARCH} in
+        riscv64 )
+            cp "${source_dir}/BOOTRISCV64.EFI" "${dest_dir}/boot/EFI/BOOT"
+            ;;
+        x86_64 )
+            cp "${source_dir}/BOOTX64.EFI" "${dest_dir}/boot/EFI/BOOT"
+            ;;
+    esac
+}
