@@ -59,6 +59,7 @@ size_t readline(char *buffer, size_t const buffer_len) {
 }
 
 int main(int argc, char **argv, char **envp) {
+    printf("Userspace isn't dead (yet)\n");
     setenv("PATH", "/usr/bin:/usr/sbin", 1);
 
     struct sigaction sa;
