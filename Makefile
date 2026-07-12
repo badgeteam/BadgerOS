@@ -65,6 +65,42 @@ qemu: edk2-ovmf
 		kernel/output/badger-os.elf \
 	| tee log
 
+.PHONY: qemu-record
+qemu-record: edk2-ovmf
+	mkdir -p build
+	rm -f build/replay.bin
+	qemu-system-riscv64 -s \
+		-M virt,acpi=off -cpu rv64,sv48=false -smp 1 -m 1G \
+		-icount shift=auto,rr=record,rrfile=build/replay.bin \
+		-device pcie-root-port,bus=pcie.0,id=pcisw0 \
+		-device qemu-xhci,bus=pcisw0 -device usb-kbd \
+		-drive if=pflash,unit=0,format=raw,file=edk2-ovmf/ovmf-code-riscv64.fd,readonly=on \
+		-drive if=none,id=hd0-direct,format=raw,file=build/image.hdd \
+		-drive driver=blkreplay,if=none,id=hd0,image=hd0-direct \
+		-device ahci,id=achi0 \
+		-device ide-hd,drive=hd0,bus=achi0.0 \
+		-serial mon:stdio -nographic \
+	| kernel/tools/address-filter.py -L -A riscv64-linux-gnu-addr2line \
+		kernel/output/badger-os.elf \
+	| tee log
+
+.PHONY: qemu-replay
+qemu-replay: edk2-ovmf
+	qemu-system-riscv64 -s \
+		-M virt,acpi=off -cpu rv64,sv48=false -smp 1 -m 1G \
+		-icount shift=auto,rr=replay,rrfile=build/replay.bin \
+		-device pcie-root-port,bus=pcie.0,id=pcisw0 \
+		-device qemu-xhci,bus=pcisw0 -device usb-kbd \
+		-drive if=pflash,unit=0,format=raw,file=edk2-ovmf/ovmf-code-riscv64.fd,readonly=on \
+		-drive if=none,id=hd0-direct,format=raw,file=build/image.hdd \
+		-drive driver=blkreplay,if=none,id=hd0,image=hd0-direct \
+		-device ahci,id=achi0 \
+		-device ide-hd,drive=hd0,bus=achi0.0 \
+		-serial mon:stdio -nographic \
+	| kernel/tools/address-filter.py -L -A riscv64-linux-gnu-addr2line \
+		kernel/output/badger-os.elf \
+	| tee log-replay
+
 edk2-ovmf:
 	curl -L https://github.com/osdev0/edk2-ovmf-nightly/releases/latest/download/edk2-ovmf.tar.gz | gunzip | tar -xf -
 

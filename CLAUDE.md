@@ -38,6 +38,8 @@ Note: In mlibc, our sysdeps live under `mlibc/sysdeps/badgeros`
 
 # Commands you are allowed to use:
 - `make qemu` - start the virtual machine up (does not build the image)
+- `make qemu-record` - start the VM with deterministic record/replay recording enabled (single-core, saves execution trace to `build/replay.bin`)
+- `make qemu-replay` - deterministically replay a previously recorded `build/replay.bin` trace (single-core, no live input accepted)
 - `make image` - build the filesystem image with the operating system installed
 - `make sysroot` - collect the files for the distribution's root directory
 - `make kernel` - compile just the kernel
@@ -45,3 +47,4 @@ Note: In mlibc, our sysdeps live under `mlibc/sysdeps/badgeros`
 **IMPORTANT about the emulator**:
 The operating system **does not support shutdown yet**, exit by entering `^Ax`.
 I also made this target save the entire log output to `log`.
+`qemu-record`/`qemu-replay` force `-smp 1` since QEMU's record/replay subsystem does not support multi-core execution.
