@@ -75,7 +75,7 @@ qemu-record: edk2-ovmf
 		-device pcie-root-port,bus=pcie.0,id=pcisw0 \
 		-device qemu-xhci,bus=pcisw0 -device usb-kbd \
 		-drive if=pflash,unit=0,format=raw,file=edk2-ovmf/ovmf-code-riscv64.fd,readonly=on \
-		-drive if=none,id=hd0-direct,format=raw,file=build/image.hdd \
+		-drive if=none,id=hd0-direct,format=raw,file=build/image.hdd,snapshot=on \
 		-drive driver=blkreplay,if=none,id=hd0,image=hd0-direct \
 		-device ahci,id=achi0 \
 		-device ide-hd,drive=hd0,bus=achi0.0 \
@@ -92,7 +92,7 @@ qemu-replay: edk2-ovmf
 		-device pcie-root-port,bus=pcie.0,id=pcisw0 \
 		-device qemu-xhci,bus=pcisw0 -device usb-kbd \
 		-drive if=pflash,unit=0,format=raw,file=edk2-ovmf/ovmf-code-riscv64.fd,readonly=on \
-		-drive if=none,id=hd0-direct,format=raw,file=build/image.hdd \
+		-drive if=none,id=hd0-direct,format=raw,file=build/image.hdd,snapshot=on \
 		-drive driver=blkreplay,if=none,id=hd0,image=hd0-direct \
 		-device ahci,id=achi0 \
 		-device ide-hd,drive=hd0,bus=achi0.0 \
