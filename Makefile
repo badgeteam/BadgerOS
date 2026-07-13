@@ -98,8 +98,7 @@ qemu-replay: edk2-ovmf
 		-device ide-hd,drive=hd0,bus=achi0.0 \
 		-serial mon:stdio -nographic \
 	| kernel/tools/address-filter.py -L -A riscv64-linux-gnu-addr2line \
-		kernel/output/badger-os.elf \
-	| tee log-replay
+		kernel/output/badger-os.elf
 
 edk2-ovmf:
 	curl -L https://github.com/osdev0/edk2-ovmf-nightly/releases/latest/download/edk2-ovmf.tar.gz | gunzip | tar -xf -
