@@ -5,6 +5,8 @@ EFI_PART_SIZE ?= 4MiB
 ROOT_PART_SIZE ?= 505MiB
 PACKAGES ?= limine libgcc mlibc-headers mlibc ktest-init coreutils bash
 EXE ?= bin/bash
+SMP ?= 2
+MEM ?= 2G
 
 
 .PHONY: image
@@ -53,7 +55,7 @@ clean-image:
 .PHONY: qemu
 qemu: edk2-ovmf
 	qemu-system-riscv64 -s \
-		-M virt,acpi=off -cpu rv64,sv48=false -smp 2 -m 1G \
+		-M virt,acpi=off -cpu rv64,sv48=false -smp $(SMP) -m $(MEM) \
 		-device pcie-root-port,bus=pcie.0,id=pcisw0 \
 		-device qemu-xhci,bus=pcisw0 -device usb-kbd \
 		-drive if=pflash,unit=0,format=raw,file=edk2-ovmf/ovmf-code-riscv64.fd,readonly=on \
@@ -70,7 +72,7 @@ qemu-record: edk2-ovmf
 	mkdir -p build
 	rm -f build/replay.bin
 	qemu-system-riscv64 -s \
-		-M virt,acpi=off -cpu rv64,sv48=false -smp 1 -m 1G \
+		-M virt,acpi=off -cpu rv64,sv48=false -smp 1 -m $(MEM) \
 		-icount shift=auto,rr=record,rrfile=build/replay.bin \
 		-device pcie-root-port,bus=pcie.0,id=pcisw0 \
 		-device qemu-xhci,bus=pcisw0 -device usb-kbd \
@@ -87,7 +89,7 @@ qemu-record: edk2-ovmf
 .PHONY: qemu-replay
 qemu-replay: edk2-ovmf
 	qemu-system-riscv64 -s \
-		-M virt,acpi=off -cpu rv64,sv48=false -smp 1 -m 1G \
+		-M virt,acpi=off -cpu rv64,sv48=false -smp 1 -m $(MEM) \
 		-icount shift=auto,rr=replay,rrfile=build/replay.bin \
 		-device pcie-root-port,bus=pcie.0,id=pcisw0 \
 		-device qemu-xhci,bus=pcisw0 -device usb-kbd \
@@ -110,6 +112,10 @@ gdb:
 .PHONY: user-gdb
 user-gdb:
 	riscv64-linux-gnu-gdb build/sysroot/$(EXE) -x gdbinit-u
+
+.PHONY: ldso-gdb
+ldso-gdb:
+	riscv64-linux-gnu-gdb -x gdbinit-ldso
 
 
 .PHONY: kernel

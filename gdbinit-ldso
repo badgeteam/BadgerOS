@@ -1,0 +1,13 @@
+target remote :1234
+
+add-symbol-file build/sysroot/usr/lib/ld.so -o 0x2000000000
+set substitute-path ../../../base_dir .
+set substitute-path /base_dir .
+
+b _start
+
+define reset
+    mon system_reset
+    maintenance flush register-cache
+    c
+end

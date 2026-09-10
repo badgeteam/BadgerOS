@@ -62,6 +62,10 @@ int main(int argc, char **argv, char **envp) {
     printf("Userspace isn't dead (yet)\n");
     setenv("PATH", "/usr/bin:/usr/sbin", 1);
 
+    float a = 3.1415f;
+    float b = 1.41f;
+    printf("Floats %f + %f = %f\n", a, b, a + b);
+
     struct sigaction sa;
     sigemptyset(&sa.sa_mask);
     sa.sa_flags     = 0;
