@@ -1,121 +1,113 @@
 
 MAKEFLAGS += --silent
 ARCH ?= riscv64
+STAGE2_SIZE ?= 2MiB
 EFI_PART_SIZE ?= 4MiB
-ROOT_PART_SIZE ?= 505MiB
+ROOT_PART_SIZE ?= 503MiB
 PACKAGES ?= limine libgcc mlibc-headers mlibc ktest-init coreutils bash
 EXE ?= bin/bash
 SMP ?= 2
 MEM ?= 2G
+QEMU ?= qemu-system-$(ARCH)
+QEMUFLAGS ?=
+LIMINE ?= $(BUILD)/builds/limine/limine
+BUILD ?= ./build/$(ARCH)
+IMAGE ?= image-$(ARCH).hdd
+JINX ?= $(shell realpath jinx)
+
+ifeq "$(ARCH)" "x86_64"
+MACHINE ?= -M q35,smm=off
+endif
+ifeq "$(ARCH)" "riscv64"
+MACHINE ?= -M virt,acpi=off -cpu rv64
+endif
+
+ifeq "$(ARCH)" "x86_64"
+TOOLCHAIN ?=
+else
+TOOLCHAIN ?= $(ARCH)-linux-gnu-
+endif
+
 
 
 .PHONY: image
 image: sysroot
 	# Temporarily move /boot out to make FS images
-	rm -rf build/efiroot
-	mv build/sysroot/boot build/efiroot
-	mkdir build/sysroot/boot
+	rm -rf $(BUILD)/efiroot
+	mv $(BUILD)/sysroot/boot $(BUILD)/efiroot
+	mkdir $(BUILD)/sysroot/boot
 	
-	mkdir -p build/image
-	./scripts/make_fatfs.sh $(EFI_PART_SIZE) build/efiroot build/image/efi.fatfs
-	./scripts/make_e2fs.sh $(ROOT_PART_SIZE) build/sysroot build/image/root.e2fs
+	mkdir -p $(BUILD)/image
+	dd if=/dev/null of=$(BUILD)/image/stage2 bs=1 seek=$(STAGE2_SIZE)
+	./scripts/make_fatfs.sh $(EFI_PART_SIZE) $(BUILD)/efiroot $(BUILD)/image/efi.fatfs
+	./scripts/make_e2fs.sh $(ROOT_PART_SIZE) $(BUILD)/sysroot $(BUILD)/image/root.e2fs
 	./scripts/make_image.sh \
-		build/image.hdd \
-		'EFI partition'  boot build/image/efi.fatfs 0x0700 \
-		'Root partition' root build/image/root.e2fs 0x8300
+		$(IMAGE) \
+		'BIOS stage2'	 bios $(BUILD)/image/stage2    0xef02 \
+		'EFI partition'  boot $(BUILD)/image/efi.fatfs 0x0700 \
+		'Root partition' root $(BUILD)/image/root.e2fs 0x8300
+	
+ifeq "$(ARCH)" "x86_64"
+	$(LIMINE) bios-install $(IMAGE)
+endif
 	
 	# Restore /boot
-	rmdir build/sysroot/boot
-	mv build/efiroot build/sysroot/boot
+	rmdir $(BUILD)/sysroot/boot
+	mv $(BUILD)/efiroot $(BUILD)/sysroot/boot
 
 .PHONY: sysroot
-sysroot: build/.jinx-parameters kernel
-	mkdir -p build/sysroot/boot
-	mkdir -p build/sysroot/dev
-	mkdir -p build/sysroot/tmp
-	mkdir -p build/sysroot/mnt
-	mkdir -p build/sysroot/usr/lib
-	mkdir -p build/sysroot/usr/bin
-	mkdir -p build/sysroot/usr/sbin
-	ln -snTf usr/lib  build/sysroot/lib
-	ln -snTf usr/bin  build/sysroot/bin
-	ln -snTf usr/sbin build/sysroot/sbin
+sysroot: $(BUILD)/.jinx-parameters kernel
+	mkdir -p $(BUILD)/sysroot/boot
+	mkdir -p $(BUILD)/sysroot/dev
+	mkdir -p $(BUILD)/sysroot/tmp
+	mkdir -p $(BUILD)/sysroot/mnt
+	mkdir -p $(BUILD)/sysroot/usr/lib
+	mkdir -p $(BUILD)/sysroot/usr/bin
+	mkdir -p $(BUILD)/sysroot/usr/sbin
+	ln -snTf usr/lib  $(BUILD)/sysroot/lib
+	ln -snTf usr/bin  $(BUILD)/sysroot/bin
+	ln -snTf usr/sbin $(BUILD)/sysroot/sbin
 	
 	# Ask Jinx nicely to install everything
-	cd build && ../jinx update $(PACKAGES)
-	cd build && ../jinx reinstall sysroot $(PACKAGES)
-	cp kernel/output/badger-os.elf build/sysroot/boot/boot/badger-os.elf
-	riscv64-linux-gnu-strip -g -s build/sysroot/boot/boot/badger-os.elf
+	cd $(BUILD) && $(JINX) update $(PACKAGES)
+	cd $(BUILD) && $(JINX) reinstall sysroot $(PACKAGES)
+	cp kernel/output/badger-os.elf $(BUILD)/sysroot/boot/boot/badger-os.elf
+	$(TOOLCHAIN)strip $(BUILD)/sysroot/boot/boot/badger-os.elf
 
 .PHONY: clean-image
 clean-image:
-	rm -rf build/sysroot build/efiroot build/image build/image.hdd
+	rm -rf $(BUILD)/sysroot $(BUILD)/efiroot $(BUILD)/image $(IMAGE)
 
 
 .PHONY: qemu
 qemu: edk2-ovmf
-	qemu-system-riscv64 -s \
-		-M virt,acpi=off -cpu rv64,sv48=false -smp $(SMP) -m $(MEM) \
+	$(QEMU) $(QEMUFLAGS) -s \
+		$(MACHINE) -smp $(SMP) -m $(MEM) \
 		-device pcie-root-port,bus=pcie.0,id=pcisw0 \
 		-device qemu-xhci,bus=pcisw0 -device usb-kbd \
-		-drive if=pflash,unit=0,format=raw,file=edk2-ovmf/ovmf-code-riscv64.fd,readonly=on \
-		-drive if=none,id=hd0,format=raw,file=build/image.hdd,cache=none \
+		-drive if=pflash,unit=0,format=raw,file=edk2-ovmf/ovmf-code-$(ARCH).fd,readonly=on \
+		-drive if=none,id=hd0,format=raw,file=$(IMAGE),cache=none \
 		-device ahci,id=achi0 \
 		-device ide-hd,drive=hd0,bus=achi0.0 \
 		-serial mon:stdio -nographic \
-	| kernel/tools/address-filter.py -L -A riscv64-linux-gnu-addr2line \
+	| kernel/tools/address-filter.py -L -A $(TOOLCHAIN)addr2line \
 		kernel/output/badger-os.elf \
 	| tee log
-
-.PHONY: qemu-record
-qemu-record: edk2-ovmf
-	mkdir -p build
-	rm -f build/replay.bin
-	qemu-system-riscv64 -s \
-		-M virt,acpi=off -cpu rv64,sv48=false -smp 1 -m $(MEM) \
-		-icount shift=auto,rr=record,rrfile=build/replay.bin \
-		-device pcie-root-port,bus=pcie.0,id=pcisw0 \
-		-device qemu-xhci,bus=pcisw0 -device usb-kbd \
-		-drive if=pflash,unit=0,format=raw,file=edk2-ovmf/ovmf-code-riscv64.fd,readonly=on \
-		-drive if=none,id=hd0-direct,format=raw,file=build/image.hdd,snapshot=on \
-		-drive driver=blkreplay,if=none,id=hd0,image=hd0-direct \
-		-device ahci,id=achi0 \
-		-device ide-hd,drive=hd0,bus=achi0.0 \
-		-serial mon:stdio -nographic \
-	| kernel/tools/address-filter.py -L -A riscv64-linux-gnu-addr2line \
-		kernel/output/badger-os.elf \
-	| tee log
-
-.PHONY: qemu-replay
-qemu-replay: edk2-ovmf
-	qemu-system-riscv64 -s \
-		-M virt,acpi=off -cpu rv64,sv48=false -smp 1 -m $(MEM) \
-		-icount shift=auto,rr=replay,rrfile=build/replay.bin \
-		-device pcie-root-port,bus=pcie.0,id=pcisw0 \
-		-device qemu-xhci,bus=pcisw0 -device usb-kbd \
-		-drive if=pflash,unit=0,format=raw,file=edk2-ovmf/ovmf-code-riscv64.fd,readonly=on \
-		-drive if=none,id=hd0-direct,format=raw,file=build/image.hdd,snapshot=on \
-		-drive driver=blkreplay,if=none,id=hd0,image=hd0-direct \
-		-device ahci,id=achi0 \
-		-device ide-hd,drive=hd0,bus=achi0.0 \
-		-serial mon:stdio -nographic \
-	| kernel/tools/address-filter.py -L -A riscv64-linux-gnu-addr2line \
-		kernel/output/badger-os.elf
 
 edk2-ovmf:
 	curl -L https://github.com/osdev0/edk2-ovmf-nightly/releases/latest/download/edk2-ovmf.tar.gz | gunzip | tar -xf -
 
 .PHONY: gdb
 gdb:
-	riscv64-linux-gnu-gdb kernel/output/badger-os.elf -x gdbinit-k
+	$(TOOLCHAIN)gdb kernel/output/badger-os.elf -x gdbinit-k
 
 .PHONY: user-gdb
 user-gdb:
-	riscv64-linux-gnu-gdb build/sysroot/$(EXE) -x gdbinit-u
+	$(TOOLCHAIN)gdb $(BUILD)/sysroot/$(EXE) -x gdbinit-u
 
 .PHONY: ldso-gdb
 ldso-gdb:
-	riscv64-linux-gnu-gdb -x gdbinit-ldso
+	$(TOOLCHAIN)gdb -x gdbinit-ldso
 
 
 .PHONY: kernel
@@ -123,29 +115,29 @@ kernel:
 	$(MAKE) -C kernel
 
 
-build/.jinx-parameters:
-	mkdir -p build
-	cd build && ../jinx init .. ARCH=$(ARCH)
+$(BUILD)/.jinx-parameters:
+	mkdir -p $(BUILD)
+	cd $(BUILD) && $(JINX) init ../.. ARCH=$(ARCH)
 
 .PHONY: build
-build: build/.jinx-parameters
-	cd build && ../jinx build $(PACKAGES)
+build: $(BUILD)/.jinx-parameters
+	cd $(BUILD) && $(JINX) build $(PACKAGES)
 
 .PHONY: host-build
-host-build: build/.jinx-parameters
-	cd build && ../jinx host-build $(PACKAGES)
+host-build: $(BUILD)/.jinx-parameters
+	cd $(BUILD) && $(JINX) host-build $(PACKAGES)
 
 .PHONY: rebuild
-rebuild: build/.jinx-parameters
-	cd build && ../jinx rebuild $(PACKAGES)
+rebuild: $(BUILD)/.jinx-parameters
+	cd $(BUILD) && $(JINX) rebuild $(PACKAGES)
 
 .PHONY: regenerate
-regenerate: build/.jinx-parameters
-	cd build && ../jinx regenerate $(PACKAGES)
+regenerate: $(BUILD)/.jinx-parameters
+	cd $(BUILD) && $(JINX) regenerate $(PACKAGES)
 
 .PHONY: host-rebuild
-host-rebuild: build/.jinx-parameters
-	cd build && ../jinx host-rebuild $(PACKAGES)
+host-rebuild: $(BUILD)/.jinx-parameters
+	cd $(BUILD) && $(JINX) host-rebuild $(PACKAGES)
 
 .PHONY: clean
 clean:

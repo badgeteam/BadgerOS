@@ -6,8 +6,8 @@ revision=1
 tarball_url="https://github.com/Limine-Bootloader/Limine/releases/download/v${version}/limine-binary.tar.gz"
 tarball_sha256="ad78b1c74712d04363ad224efa35ecc88f08978882295db5264a822c0a1f327e"
 
-prepare() {
-    make -C "${source_dir}"
+build() {
+    cc -std=c99 -g "${source_dir}/limine.c" -o "limine" -static
 }
 
 package() {

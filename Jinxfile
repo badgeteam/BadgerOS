@@ -1,7 +1,6 @@
 #! /bin/sh
 
 JINX_MAJOR_VER=0.8
-JINX_ARCH=riscv64
 TARGET_TRIPLET=${JINX_ARCH}-unknown-badgeros-mlibc
 
 JINX_DEBIAN_SNAPSHOT=20251202T083052Z
@@ -22,6 +21,10 @@ case ${JINX_ARCH} in
     riscv64 )
         TARGET_CFLAGS="${TARGET_CFLAGS} -march=rv64gc -mabi=lp64d"
         TARGET_CXXFLAGS="${TARGET_CXXFLAGS} -march=rv64gc -mabi=lp64d"
+        ;;
+    x86_64 )
+        TARGET_CFLAGS="${TARGET_CFLAGS}"
+        TARGET_CXXFLAGS="${TARGET_CXXFLAGS}"
         ;;
     * )
         echo "UNKNOWN ARCHITECTURE!"

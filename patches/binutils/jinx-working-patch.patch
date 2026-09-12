@@ -1,3 +1,16 @@
+diff --git binutils-clean/bfd/config.bfd binutils-workdir/bfd/config.bfd
+index 4e5a838..9984f81 100644
+--- binutils-clean/bfd/config.bfd
++++ binutils-workdir/bfd/config.bfd
+@@ -730,7 +730,7 @@ case "${targ}" in
+     targ_selvecs=i386_elf32_vec
+     want64=true
+     ;;
+-  x86_64-*-gnu*)
++  x86_64-*-gnu* | x86_64-*-mlibc*)
+     targ_defvec=x86_64_elf64_vec
+     targ_selvecs="i386_elf32_vec iamcu_elf32_vec x86_64_elf32_vec"
+     want64=true
 diff --git binutils-clean/config.sub binutils-workdir/config.sub
 index 4aaae46..82811d0 100755
 --- binutils-clean/config.sub
@@ -19,8 +32,34 @@ index 4aaae46..82811d0 100755
  	linux-gnu*- | linux-android*- | linux-dietlibc*- | linux-llvm*- \
  		    | linux-mlibc*- | linux-musl*- | linux-newlib*- \
  		    | linux-relibc*- | linux-uclibc*- | linux-ohos*- )
+diff --git binutils-clean/gas/configure.ac binutils-workdir/gas/configure.ac
+index 30fa5eb..6944106 100644
+--- binutils-clean/gas/configure.ac
++++ binutils-workdir/gas/configure.ac
+@@ -260,7 +260,8 @@ for this_target in $target $canon_targets ; do
+ 	AC_DEFINE(STRICTCOFF, 1, [Using strict COFF?])
+ 	;;
+ 
+-      i386-*-linux-* | x86_64-*-linux-*)
++      i386-*-linux-* | x86_64-*-linux-* \
++	  | x86_64-*-badgeros-*)
+ 	if test ${this_target} = $target \
+ 	   && test ${ac_default_generate_x86_used_note} = unset; then
+ 	  ac_default_generate_x86_used_note=1
+diff --git binutils-clean/gas/configure.tgt binutils-workdir/gas/configure.tgt
+index 7c81bff..9894a84 100644
+--- binutils-clean/gas/configure.tgt
++++ binutils-workdir/gas/configure.tgt
+@@ -225,6 +225,7 @@ case ${generic_target} in
+   h8300-*-elf)				fmt=elf ;;
+   h8300-*-linux*)			fmt=elf em=linux ;;
+ 
++  i386-*-badgeros* | i386-*-mlibc*)	fmt=elf ;;
+   i386-*-beospe*)			fmt=coff em=pe ;;
+   i386-*-beos*)				fmt=elf ;;
+   i386-*-elfiamcu)			fmt=elf arch=iamcu ;;
 diff --git binutils-clean/ld/configure.tgt binutils-workdir/ld/configure.tgt
-index ea01ccf..825a26d 100644
+index ea01ccf..fa87736 100644
 --- binutils-clean/ld/configure.tgt
 +++ binutils-workdir/ld/configure.tgt
 @@ -829,7 +829,7 @@ riscv64be*-*-linux*)	targ_emul=elf64briscv
@@ -32,3 +71,12 @@ index ea01ccf..825a26d 100644
  			targ_extra_emuls="elf64lriscv_lp64f elf64lriscv_lp64 elf32lriscv elf32lriscv_ilp32f elf32lriscv_ilp32 elf64briscv elf64briscv_lp64f elf64briscv_lp64 elf32briscv elf32briscv_ilp32f elf32briscv_ilp32"
  			targ_extra_libpath=$targ_extra_emuls
  			;;
+@@ -1016,7 +1016,7 @@ x86_64-*-linux-*)	targ_emul=elf_x86_64
+ 			targ_extra_libpath="elf_i386 elf32_x86_64"
+ 			tdir_elf_i386=`echo ${targ_alias} | sed -e 's/x86_64/i386/'`
+ 			;;
+-x86_64-*-redox*)	targ_emul=elf_x86_64
++x86_64-*-redox* | x86_64-*-badgeros*)	targ_emul=elf_x86_64
+ 			targ_extra_emuls=elf_i386
+ 			;;
+ x86_64-*-solaris2*)	targ_emul=elf_x86_64_sol2
