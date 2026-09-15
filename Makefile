@@ -88,9 +88,9 @@ qemu: edk2-ovmf
 		-drive if=none,id=hd0,format=raw,file=$(IMAGE),cache=none \
 		-device ahci,id=achi0 \
 		-device ide-hd,drive=hd0,bus=achi0.0 \
-		-serial mon:stdio -nographic
-# 	| kernel/tools/address-filter.py -L -A $(TOOLCHAIN)addr2line $(KERNEL) \
-# 	| tee log
+		-serial mon:stdio -nographic \
+	| kernel/tools/address-filter.py -L -A $(TOOLCHAIN)addr2line $(KERNEL) \
+	| tee log
 
 edk2-ovmf:
 	curl -L https://github.com/osdev0/edk2-ovmf-nightly/releases/latest/download/edk2-ovmf.tar.gz | gunzip | tar -xf -
