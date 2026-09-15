@@ -1,0 +1,27 @@
+#! /bin/sh
+
+name=kernel
+version=0.1
+revision=1
+
+hostdeps="gcc"
+imagedeps="build-essential rustup clang"
+source_dir="kernel"
+
+allow_network="yes"
+
+build() {
+    # Fake home directory so rustup can write to it.
+    mkdir -p fakehome
+        HOME=`realpath fakehome` \
+    make -C ${source_dir} \
+        ARCH=${JINX_ARCH} \
+        BUILD_DIR=`pwd`/target \
+        ARTIFACT_DIR=`pwd`/output
+}
+
+package() {
+    mkdir -p ${dest_dir}/boot/boot
+    install output/kernel ${dest_dir}/boot/boot/badgeros
+    $TARGET_STRIP ${dest_dir}/boot/boot/badgeros
+}

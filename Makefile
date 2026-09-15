@@ -4,7 +4,7 @@ ARCH ?= riscv64
 STAGE2_SIZE ?= 2MiB
 EFI_PART_SIZE ?= 4MiB
 ROOT_PART_SIZE ?= 503MiB
-PACKAGES ?= limine libgcc mlibc-headers mlibc ktest-init coreutils bash
+PACKAGES ?= limine kernel libgcc mlibc-headers mlibc ktest-init coreutils bash
 EXE ?= bin/bash
 SMP ?= 2
 MEM ?= 2G
@@ -14,6 +14,7 @@ LIMINE ?= $(BUILD)/builds/limine/limine
 BUILD ?= ./build/$(ARCH)
 IMAGE ?= image-$(ARCH).hdd
 JINX ?= $(shell realpath jinx)
+KERNEL = $(BUILD)/builds/kernel/output/kernel
 
 ifeq "$(ARCH)" "x86_64"
 MACHINE ?= -M q35,smm=off
@@ -56,7 +57,7 @@ endif
 	mv $(BUILD)/efiroot $(BUILD)/sysroot/boot
 
 .PHONY: sysroot
-sysroot: $(BUILD)/.jinx-parameters kernel
+sysroot: $(BUILD)/.jinx-parameters
 	mkdir -p $(BUILD)/sysroot/boot
 	mkdir -p $(BUILD)/sysroot/dev
 	mkdir -p $(BUILD)/sysroot/tmp
@@ -71,8 +72,6 @@ sysroot: $(BUILD)/.jinx-parameters kernel
 	# Ask Jinx nicely to install everything
 	cd $(BUILD) && $(JINX) update $(PACKAGES)
 	cd $(BUILD) && $(JINX) reinstall sysroot $(PACKAGES)
-	cp kernel/output/badger-os.elf $(BUILD)/sysroot/boot/boot/badger-os.elf
-	$(TOOLCHAIN)strip $(BUILD)/sysroot/boot/boot/badger-os.elf
 
 .PHONY: clean-image
 clean-image:
@@ -89,17 +88,16 @@ qemu: edk2-ovmf
 		-drive if=none,id=hd0,format=raw,file=$(IMAGE),cache=none \
 		-device ahci,id=achi0 \
 		-device ide-hd,drive=hd0,bus=achi0.0 \
-		-serial mon:stdio -nographic \
-	| kernel/tools/address-filter.py -L -A $(TOOLCHAIN)addr2line \
-		kernel/output/badger-os.elf \
-	| tee log
+		-serial mon:stdio -nographic
+# 	| kernel/tools/address-filter.py -L -A $(TOOLCHAIN)addr2line $(KERNEL) \
+# 	| tee log
 
 edk2-ovmf:
 	curl -L https://github.com/osdev0/edk2-ovmf-nightly/releases/latest/download/edk2-ovmf.tar.gz | gunzip | tar -xf -
 
 .PHONY: gdb
 gdb:
-	$(TOOLCHAIN)gdb kernel/output/badger-os.elf -x gdbinit-k
+	$(TOOLCHAIN)gdb $(KERNEL) -x gdbinit-k
 
 .PHONY: user-gdb
 user-gdb:
@@ -108,11 +106,6 @@ user-gdb:
 .PHONY: ldso-gdb
 ldso-gdb:
 	$(TOOLCHAIN)gdb -x gdbinit-ldso
-
-
-.PHONY: kernel
-kernel:
-	$(MAKE) -C kernel
 
 
 $(BUILD)/.jinx-parameters:
