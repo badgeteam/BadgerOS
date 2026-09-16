@@ -1,12 +1,12 @@
 
 MAKEFLAGS += --silent
-ARCH ?= riscv64
+ARCH ?= x86_64
 STAGE2_SIZE ?= 2MiB
 EFI_PART_SIZE ?= 4MiB
 ROOT_PART_SIZE ?= 503MiB
 PACKAGES ?= limine kernel libgcc mlibc-headers mlibc ktest-init coreutils bash
 EXE ?= bin/bash
-SMP ?= 2
+SMP ?= 1
 MEM ?= 2G
 QEMU ?= qemu-system-$(ARCH)
 QEMUFLAGS ?=
