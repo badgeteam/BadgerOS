@@ -13,7 +13,27 @@ allow_network="yes"
 build() {
     # Fake home directory so rustup can write to it.
     mkdir -p fakehome
+    
+    KERNEL_CFLAGS="${TARGET_CFLAGS} -nostdinc -ffreestanding"
+    KERNEL_CFLAGS="${KERNEL_CFLAGS} -isystem ${source_dir}/lib/c-hdrs/include"
+    
+case ${JINX_ARCH} in
+    riscv64 )
+        KERNEL_CFLAGS="${KERNEL_CFLAGS} -march=rv64gc -mabi=lp64d"
+        ;;
+    x86_64 )
+        KERNEL_CFLAGS="${KERNEL_CFLAGS} -mgeneral-regs-only -mno-red-zone"
+        ;;
+    * )
+        echo "UNKNOWN ARCHITECTURE!"
+        echo "Don't know how to build BadgerOS for ${JINX_ARCH}"
+        exit 1
+        ;;
+esac
+    
         HOME=`realpath fakehome` \
+        TARGET_CC=${TARGET_CC} \
+        TARGET_CFLAGS="${KERNEL_CFLAGS}" \
     make -C ${source_dir} \
         ARCH=${JINX_ARCH} \
         BUILD_DIR=`pwd`/target \

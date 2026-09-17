@@ -1,5 +1,8 @@
 target remote :1234
 
+set substitute-path /build_dir/ build/x86_64/
+set substitute-path src/ kernel/src/
+
 b basic_runtime_init
 b kernel::misc::panic::kekw
 
